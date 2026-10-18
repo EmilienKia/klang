@@ -48,6 +48,18 @@ K module to call or inherit from the exported symbols.
     found, **2** on I/O or parse error.  With **--json**, the output is emitted
     as JSON.  With **--list-children**, direct child symbols are listed too.
 
+**docgen** [**--md**] [**--html**] *file.kdi* [*destination-directory*]
+:   Generate API documentation from *file.kdi*. The destination defaults to the
+    current directory. With no format option, both Markdown and static HTML are
+    generated. **--markdown** is an alias for **--md**; **--static-html** is an
+    alias for **--html**.
+
+    Documentation briefs support inline CommonMark, including emphasis, bold,
+    links, and inline code. Extended documentation and callable descriptions
+    support paragraphs, headings, nested lists, block quotes, and code blocks.
+    Brief formatting is retained in compact summaries without introducing block
+    layout. See **DOCUMENTATION MARKDOWN** below.
+
 **to-json** *file.kdi*
 :   Convert a `.kdi` CBOR file to a human-readable `.kdi.json` file in the same
     directory.  The output file name is *file.kdi.json*.
@@ -127,6 +139,41 @@ See **doc/spec/kdi/kdi-schema-abstract.md** for the full abstract schema and
 
 A human-readable JSON equivalent can be produced with `kditool json-dump`.
 
+# DOCUMENTATION MARKDOWN
+
+**docgen** uses cmark-gfm to interpret documentation stored in KDI fields.
+The fields themselves remain source text: **doc**, **doc --json**, and format
+conversion commands do not replace them with rendered HTML or a Markdown tree.
+
+The supported syntax is CommonMark, not every optional GitHub Flavored Markdown
+extension. Use `*emphasis*`, `**strong emphasis**`, links, and backticks for inline
+code. Underline is not part of this dialect; `__text__` means strong emphasis.
+
+Extended documentation can contain multiple paragraphs, headings, nested lists,
+quotations, and code blocks. Source-comment indentation and blank lines are
+significant. For example:
+
+    /// **Process** a value.
+    ///
+    /// Details:
+    ///
+    /// - Keep the original value.
+    /// - Return the result.
+    ///
+    /// ```
+    /// value + 1
+    /// ```
+
+Code blocks without a language are treated as K and emitted with the `k`
+language identifier. Explicit languages are preserved. Generated HTML uses
+ordinary `pre`/`code` elements without syntax highlighting.
+
+Raw HTML is displayed as literal text, not active markup. Link and image targets
+are restricted to relative URLs and the `http`, `https`, and `mailto` schemes.
+Markdown output may normalize formatting and escape text for its surrounding
+table or list while preserving the documentation's structure. Documentation
+headings are placed below their containing generated section.
+
 # EXAMPLES
 
 Dump the content of a library description file:
@@ -146,6 +193,14 @@ Show the documentation of one symbol:
     kditool doc libmath.utils.kdi math::utils::StringBuilder
     kditool doc --json libmath.utils.kdi _KFN...
     kditool doc --list-children libmath.utils.kdi math::utils::StringBuilder
+
+Generate static HTML API documentation:
+
+    kditool docgen --html libmath.utils.kdi api-docs
+
+Generate both Markdown and HTML API documentation:
+
+    kditool docgen libmath.utils.kdi api-docs
 
 Translate symbol names:
 

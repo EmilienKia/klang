@@ -17,6 +17,7 @@
  */
 
 #include "kdi_docgen.hpp"
+#include "kdi_doc_markdown.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -341,34 +342,9 @@ std::string code(const std::string& value) {
     return "`" + md_escape(value) + "`";
 }
 
-std::string compact_brief(std::string brief, size_t max_len = 96) {
-    if (brief.empty())
-        return {};
-
-    std::string normalized;
-    normalized.reserve(brief.size());
-    bool previous_space = false;
-    for (char ch : brief) {
-        if (std::isspace(static_cast<unsigned char>(ch))) {
-            if (!normalized.empty() && !previous_space)
-                normalized.push_back(' ');
-            previous_space = true;
-        } else {
-            normalized.push_back(ch);
-            previous_space = false;
-        }
-    }
-
-    while (!normalized.empty() && normalized.back() == ' ')
-        normalized.pop_back();
-
-    if (normalized.size() <= max_len)
-        return normalized;
-
-    if (max_len <= 3)
-        return normalized.substr(0, max_len);
-
-    return normalized.substr(0, max_len - 3) + "...";
+std::string compact_brief(const std::string& brief) {
+    return doc_markdown::inline_fragment(brief, doc_markdown::format::markdown,
+                                         doc_markdown::inline_context::table, 96);
 }
 
 std::string compact_doc_brief(const std::optional<kdi_doc_block>& doc) {
@@ -383,34 +359,56 @@ std::string compact_doc_brief(const std::optional<kdi_doc_function>& doc) {
     return compact_brief(doc->brief);
 }
 
-void append_doc_block(std::ostringstream& out, const kdi_doc_block& doc) {
+void append_doc_block(std::ostringstream& out, const kdi_doc_block& doc, int heading = 2) {
     if (!doc.brief.empty())
-        out << "\n**Brief**\n\n" << doc.brief << "\n";
+        out << "\n**Brief**\n\n"
+            << doc_markdown::inline_fragment(doc.brief, doc_markdown::format::markdown) << "\n";
     if (!doc.description.empty())
-        out << "\n**Description**\n\n" << doc.description << "\n";
+        out << "\n**Description**\n\n"
+            << doc_markdown::block_fragment(doc.description, doc_markdown::format::markdown, heading);
 }
 
-void append_doc_block(std::ostringstream& out, const std::optional<kdi_doc_block>& doc) {
+void append_doc_block(std::ostringstream& out, const std::optional<kdi_doc_block>& doc, int heading = 2) {
     if (!doc.has_value())
         return;
-    append_doc_block(out, *doc);
+    append_doc_block(out, *doc, heading);
+}
+
+void append_doc_field(std::ostringstream& out, const std::string& name, const std::string& description) {
+    out << "- " << doc_markdown::literal_code(name) << ":\n\n";
+    std::istringstream block(doc_markdown::block_fragment(description, doc_markdown::format::markdown));
+    std::string line;
+    while (std::getline(block, line))
+        out << (line.empty() ? "" : "    ") << line << "\n";
+    out << "\n";
 }
 
 void append_doc_function(std::ostringstream& out, const std::optional<kdi_doc_function>& doc) {
     if (!doc.has_value())
         return;
-    append_doc_block(out, static_cast<const kdi_doc_block&>(*doc));
+    append_doc_block(out, static_cast<const kdi_doc_block&>(*doc), 3);
     if (!doc->params.empty()) {
         out << "\n**Parameters**\n\n";
         for (const auto& param : doc->params)
-            out << "- `" << param.name << "`: " << param.description << "\n";
+            append_doc_field(out, param.name, param.description);
     }
     if (doc->returns.has_value())
-        out << "\n**Returns**\n\n- " << *doc->returns << "\n";
+        out << "\n**Returns**\n\n"
+            << doc_markdown::block_fragment(*doc->returns, doc_markdown::format::markdown);
     if (!doc->throws.empty()) {
         out << "\n**Throws**\n\n";
         for (const auto& t : doc->throws)
-            out << "- `" << t.type_name << "`: " << t.description << "\n";
+            append_doc_field(out, t.type_name, t.description);
+    }
+    if (!doc->template_params.empty()) {
+        out << "\n**Template Parameters**\n\n";
+        for (const auto& param : doc->template_params)
+            append_doc_field(out, param.name, param.description);
+    }
+    if (!doc->tags.empty()) {
+        out << "\n**Tags**\n\n";
+        for (const auto& tag : doc->tags)
+            append_doc_field(out, "@" + tag.tag, tag.value);
     }
 }
 
@@ -1046,7 +1044,7 @@ void write_aggregate_body(std::ostringstream& out,
             out << "- [" << code(var.name) << "](#" << anchor << "): " << code(type_to_string(var.type)) << " (static)";
             const std::string brief = compact_doc_brief(var.doc);
             if (!brief.empty())
-                out << " - " << md_escape(brief);
+                out << " - " << brief;
             out << "\n";
         }
     }
@@ -1061,14 +1059,14 @@ void write_aggregate_body(std::ostringstream& out,
             out << "- [" << code(make_signature(agg.name, ctor.params, nullptr)) << "](#" << anchor << ")";
             const std::string brief = compact_doc_brief(ctor.doc);
             if (!brief.empty())
-                out << " - " << md_escape(brief);
+                out << " - " << brief;
             out << "\n";
         }
         if (agg.destructor.has_value()) {
             out << "- [" << code("~" + agg.name + "()") << "](#dtor)";
             const std::string brief = compact_doc_brief(agg.destructor->doc);
             if (!brief.empty())
-                out << " - " << md_escape(brief);
+                out << " - " << brief;
             out << "\n";
         }
         for (size_t i = 0; i < methods.size(); ++i) {
@@ -1078,7 +1076,7 @@ void write_aggregate_body(std::ostringstream& out,
                 << "](#" << anchor << ")";
             const std::string brief = compact_doc_brief(method.doc);
             if (!brief.empty())
-                out << " - " << md_escape(brief);
+                out << " - " << brief;
             out << "\n";
         }
     }
@@ -1110,7 +1108,7 @@ void write_aggregate_body(std::ostringstream& out,
         for (const auto& nested : nested_rows) {
             out << "- [" << nested.name << "](" << nested.link << ")";
             if (!nested.brief.empty())
-                out << " - " << md_escape(nested.brief);
+                out << " - " << nested.brief;
             out << "\n";
         }
     }
@@ -1130,7 +1128,7 @@ void write_aggregate_body(std::ostringstream& out,
         out << "\n### <a id=\"" << anchor << "\"></a>" << md_escape(var.name) << "\n\n";
         out << "- Type: " << code(type_to_string(var.type)) << "\n";
         out << "- Static: `true`\n";
-        append_doc_block(out, var.doc);
+        append_doc_block(out, var.doc, 3);
     }
 
     out << "\n## Member Details\n";
@@ -1575,7 +1573,7 @@ bool write_namespace_tree(const kdi_namespace& ns,
             out << "- [" << child.name << "](" << rel_link(ns_dir, child_path) << ")";
             const std::string brief = compact_doc_brief(child.doc);
             if (!brief.empty())
-                out << " - " << md_escape(brief);
+                out << " - " << brief;
             out << "\n";
         }
     }
@@ -1604,7 +1602,7 @@ bool write_namespace_tree(const kdi_namespace& ns,
         out << "|---|---|---|\n";
         for (const auto& row : rows)
             out << "| [" << code(row.name) << "](" << row.file << ") | " << code(row.kind)
-                << " | " << md_escape(row.brief) << " |\n";
+                << " | " << row.brief << " |\n";
     }
 
     std::vector<std::string> fn_anchors(functions.size());
@@ -1618,7 +1616,7 @@ bool write_namespace_tree(const kdi_namespace& ns,
             const auto& fn = functions[i];
             fn_anchors[i] = "fn-" + make_slug(fn.name) + "-" + std::to_string(i);
             out << "| [" << code(make_signature(fn.name, fn.params, &fn.return_type))
-                << "](#" << fn_anchors[i] << ") | " << md_escape(compact_doc_brief(fn.doc)) << " |\n";
+                << "](#" << fn_anchors[i] << ") | " << compact_doc_brief(fn.doc) << " |\n";
         }
     }
 
@@ -1644,7 +1642,7 @@ bool write_namespace_tree(const kdi_namespace& ns,
             const auto& var = variables[i];
             var_anchors[i] = "var-" + make_slug(var.name) + "-" + std::to_string(i);
             out << "| [" << code(var.name) << "](#" << var_anchors[i] << ") | " << code(type_to_string(var.type))
-                << " | " << md_escape(compact_doc_brief(var.doc)) << " |\n";
+                << " | " << compact_doc_brief(var.doc) << " |\n";
         }
     }
 
@@ -1665,7 +1663,7 @@ bool write_namespace_tree(const kdi_namespace& ns,
         out << "- Type: " << code(type_to_string(var.type)) << "\n";
         out << "- Visibility: " << code(visibility_to_string(var.visibility)) << "\n";
         out << "- Const: `" << (var.is_const ? "true" : "false") << "`\n";
-        append_doc_block(out, var.doc);
+        append_doc_block(out, var.doc, 3);
     }
 
     if (!write_file(ns_dir / "index.md", out.str(), error_message))
@@ -1772,7 +1770,7 @@ bool write_reference_indexes(const fs::path& module_root,
     for (const auto& ref : refs) {
         by_name << "| [`" << ref.name << "`](" << ref.link << ") | `" << ref.kind << "` | `"
                 << (ref.scope.empty() ? "<root>" : ref.scope) << "` | `"
-                << ref.type_desc << "` | " << md_escape(ref.brief) << " |\n";
+                << ref.type_desc << "` | " << ref.brief << " |\n";
     }
     if (!write_file(module_root / "name-references.md", by_name.str(), error_message))
         return false;
@@ -1796,7 +1794,7 @@ bool write_reference_indexes(const fs::path& module_root,
         }
         by_type << "| [`" << ref.name << "`](" << ref.link << ") | `"
                 << (ref.scope.empty() ? "<root>" : ref.scope)
-                << "` | `" << ref.type_desc << "` | " << md_escape(ref.brief) << " |\n";
+                << "` | `" << ref.type_desc << "` | " << ref.brief << " |\n";
     }
 
     return write_file(module_root / "typed-references.md", by_type.str(), error_message);
@@ -1883,6 +1881,4 @@ bool kdi_generate_markdown_doc(const kdi_file& file,
 }
 
 } // namespace kdi
-
-
 

@@ -17,12 +17,15 @@
  */
 
 #include <catch2/catch_all.hpp>
+#include <cmark-gfm.h>
 
 #include "kdi.hpp"
 #include "kdi_docgen.hpp"
 
 #include <filesystem>
 #include <fstream>
+#include <cstdlib>
+#include <memory>
 #include <sstream>
 
 using namespace kdi;
@@ -715,4 +718,196 @@ TEST_CASE("docgen: destination path must not be a file", "[docgen]") {
     fs::remove(destination_file, ec);
 }
 
+namespace {
 
+struct docgen_output {
+    fs::path path;
+
+    explicit docgen_output(const std::string& name) : path(fs::current_path() / name) {
+        fs::remove_all(path);
+    }
+    ~docgen_output() {
+        std::error_code ec;
+        fs::remove_all(path, ec);
+    }
+};
+
+void generate_both(const kdi_file& file, const fs::path& destination) {
+    std::string error;
+    REQUIRE(kdi_generate_markdown_doc(file, destination.string(), &error));
+    REQUIRE(kdi_generate_html_doc(file, destination.string(), &error));
+}
+
+std::string render_generated_markdown(const std::string& markdown) {
+    // Trust generated Markdown here: re-sanitizing it would hide unsafe output.
+    std::unique_ptr<char, decltype(&std::free)> html(
+        cmark_markdown_to_html(markdown.data(), markdown.size(), CMARK_OPT_UNSAFE), std::free);
+    REQUIRE(html);
+    return html.get();
+}
+
+} // namespace
+
+TEST_CASE("docgen: rich inline briefs survive summaries and reference tables", "[docgen][markdown]") {
+    auto file = make_docgen_model();
+    const std::string code_literal = "a|*b*_[c](d) `q`\\tail";
+    const std::string brief = "__Bold__ *soft* | ``" + code_literal + "`` [left|right](https://example.test/a|b)";
+    file.unit.root_ns.functions.front().doc->brief = brief;
+    file.unit.root_ns.variables.front().doc->brief = brief;
+    file.unit.root_ns.aggregates.front().doc->brief = brief;
+    file.unit.root_ns.aggregates.front().methods.front().doc->brief = brief;
+    file.unit.root_ns.aggregates.front().nested.front().doc->brief = brief;
+    file.unit.root_ns.enums.front().doc->brief = brief;
+    file.unit.root_ns.namespaces.front().doc->brief = brief;
+    file.unit.root_ns.template_defs.front().aggregate_signature->methods.front().doc = kdi_doc_function{};
+    file.unit.root_ns.template_defs.front().aggregate_signature->methods.front().doc->brief = brief;
+    auto overload = file.unit.root_ns.functions.front();
+    overload.params.push_back({"value", kdi_type::make_int(32, true)});
+    file.unit.root_ns.functions.push_back(overload);
+
+    docgen_output output("kdi-docgen-inline-output");
+    generate_both(file, output.path);
+    const auto root = output.path / "demo::mod";
+    for (const auto& page : {"index", "Thing", "Container", "name-references", "typed-references"}) {
+        CAPTURE(page);
+        const auto markdown = read_text_file(root / (std::string(page) + ".md"));
+        REQUIRE(markdown.find("**Bold** *soft* \\| <code>a&#124;") != std::string::npos);
+        REQUIRE(markdown.find("[left\\|right](") != std::string::npos);
+        const auto reparsed = render_generated_markdown(markdown);
+        INFO(reparsed);
+        REQUIRE(reparsed.find("<code>" + code_literal + "</code>") != std::string::npos);
+        REQUIRE(reparsed.find("<em>b</em>") == std::string::npos);
+        REQUIRE(reparsed.find("href=\"d\"") == std::string::npos);
+        const auto html = read_text_file(root / (std::string(page) + ".html"));
+        REQUIRE(html.find("<strong>Bold</strong> <em>soft</em> | <code>" + code_literal + "</code>") != std::string::npos);
+        REQUIRE(html.find(">left|right</a>") != std::string::npos);
+        REQUIRE(html.find("<td class=\"tk\"><p>") == std::string::npos);
+    }
+    const auto enum_markdown = read_text_file(root / "Color.md");
+    REQUIRE(enum_markdown.find("**Bold** *soft* | ") != std::string::npos);
+    REQUIRE(render_generated_markdown(enum_markdown).find("<code>" + code_literal + "</code>") != std::string::npos);
+    REQUIRE(enum_markdown.find("[left|right](") != std::string::npos);
+    const auto enum_html = read_text_file(root / "Color.html");
+    REQUIRE(enum_html.find("<strong>Bold</strong> <em>soft</em> | <code>" + code_literal + "</code>") != std::string::npos);
+    REQUIRE(read_text_file(root / "index.md").find("#fn-makething-1") != std::string::npos);
+    REQUIRE(read_text_file(root / "index.html").find("id=\"fn-makething-1\"") != std::string::npos);
+    REQUIRE(file.unit.root_ns.functions.front().doc->brief == brief);
+}
+
+TEST_CASE("docgen: block documentation renders through direct JSON and CBOR models", "[docgen][markdown]") {
+    const std::string encoding = GENERATE("direct", "json", "cbor");
+    auto file = make_docgen_model();
+    auto& doc = *file.unit.root_ns.functions.front().doc;
+    doc.description =
+        "# Usage\n\nA **bold** paragraph.\n\nAnother paragraph.\n\n"
+        "- Outer\n  - Inner\n\n> A quote.\n\n"
+        "```\nif (x < 2) {\n  call(x);\n}\n```\n\n"
+        "``` \t\nemptyInfo();\n```\n\n"
+        "```cpp extra\n  int x = 1;\n```\n\n"
+        "    indented();\n      deeper();\n\n"
+        "## Details\n\n###### Deep\n";
+    const auto original_description = doc.description;
+    doc.params.push_back({"x<y`z`\\tail", "First **parameter** paragraph.\n\nSecond parameter paragraph.\n\n- Item\n  - Nested\n"});
+    doc.returns = "First *return* paragraph.\n\nSecond return paragraph.";
+    doc.throws.push_back({"Error<T>", "First exception paragraph.\n\n> Exception quote."});
+    doc.template_params.push_back({"T", "First template paragraph.\n\nSecond template paragraph."});
+    doc.tags.push_back({"note", "First tag paragraph.\n\nSecond tag paragraph."});
+    file.unit.root_ns.doc = kdi_doc_block{"Module brief.", "# Module notes\n\nText."};
+    if (encoding == "json") {
+        std::stringstream stream;
+        kdi_write_json(file, stream);
+        file = kdi_read_json(stream);
+    } else if (encoding == "cbor") {
+        std::stringstream stream;
+        kdi_write_cbor(file, stream);
+        file = kdi_read_cbor(stream);
+    }
+
+    docgen_output output("kdi-docgen-block-output-" + encoding);
+    generate_both(file, output.path);
+    const auto root = output.path / "demo::mod";
+    const auto html = read_text_file(root / "index.html");
+    REQUIRE(html.find("<h3>Module notes</h3>") != std::string::npos);
+    REQUIRE(html.find("<h4>Usage</h4>") != std::string::npos);
+    REQUIRE(html.find("<h5>Details</h5>") != std::string::npos);
+    REQUIRE(html.find("<h6>Deep</h6>") != std::string::npos);
+    REQUIRE(html.find("<p>A <strong>bold</strong> paragraph.</p>\n<p>Another paragraph.</p>") != std::string::npos);
+    REQUIRE(html.find("<li>Outer\n<ul>\n<li>Inner</li>") != std::string::npos);
+    REQUIRE(html.find("<blockquote>\n<p>A quote.</p>") != std::string::npos);
+    REQUIRE(html.find("<pre><code class=\"language-k\">if (x &lt; 2) {\n  call(x);\n}\n</code></pre>") != std::string::npos);
+    REQUIRE(html.find("<pre><code class=\"language-k\">emptyInfo();\n</code></pre>") != std::string::npos);
+    REQUIRE(html.find("<pre><code class=\"language-k\">indented();\n  deeper();\n</code></pre>") != std::string::npos);
+    REQUIRE(html.find("<pre><code class=\"language-cpp\">  int x = 1;\n</code></pre>") != std::string::npos);
+    REQUIRE(html.find("<dt>x&lt;y`z`\\tail</dt><dd><p>First <strong>parameter</strong> paragraph.</p>\n<p>Second parameter paragraph.</p>") != std::string::npos);
+    REQUIRE(html.find("<dt>Error&lt;T&gt;</dt><dd><p>First exception paragraph.</p>\n<blockquote>") != std::string::npos);
+    REQUIRE(html.find("<p>Second return paragraph.</p>") != std::string::npos);
+    REQUIRE(html.find("<p>Second template paragraph.</p>") != std::string::npos);
+    REQUIRE(html.find("<p>Second tag paragraph.</p>") != std::string::npos);
+    REQUIRE(html.find("id=\"fn-makething-0\"") != std::string::npos);
+    REQUIRE(html.find("<h4 id=") == std::string::npos);
+
+    const auto markdown = read_text_file(root / "index.md");
+    INFO(markdown);
+    REQUIRE(markdown.find("### Module notes") != std::string::npos);
+    REQUIRE(markdown.find("#### Usage") != std::string::npos);
+    REQUIRE(markdown.find("##### Details") != std::string::npos);
+    REQUIRE(markdown.find("###### Deep") != std::string::npos);
+    REQUIRE(markdown.find("k\nif (x < 2) {\n  call(x);\n}\n") != std::string::npos);
+    REQUIRE(markdown.find("k\nemptyInfo();\n") != std::string::npos);
+    REQUIRE(markdown.find("k\nindented();\n  deeper();\n") != std::string::npos);
+    REQUIRE(markdown.find("cpp extra\n  int x = 1;\n") != std::string::npos);
+    REQUIRE(markdown.find("- <code>x&lt;y&#96;z&#96;&#92;tail</code>:\n\n    First **parameter** paragraph.\n\n    Second parameter paragraph.") != std::string::npos);
+    REQUIRE(render_generated_markdown(markdown).find("<code>x&lt;y`z`\\tail</code>") != std::string::npos);
+    REQUIRE(markdown.find("> Exception quote.") != std::string::npos);
+    REQUIRE(markdown.find("**Template Parameters**") != std::string::npos);
+    REQUIRE(markdown.find("**Tags**") != std::string::npos);
+    REQUIRE(file.unit.root_ns.functions.front().doc->description == original_description);
+}
+
+TEST_CASE("docgen: malformed briefs and unsafe content stay inert in both formats", "[docgen][markdown]") {
+    auto file = make_docgen_model();
+    auto& doc = *file.unit.root_ns.functions.front().doc;
+    doc.brief = "# Heading\n\nFirst **bold**.\n\n- One\n- Two\n\n```\ncode\n```\n";
+    doc.description =
+        "<script>alert('bad')</script>\n\n"
+        "A <img src=x onerror=alert(1)> tag.\n\n"
+        "[unsafe](javascript:alert%281%29) [encoded](java&#x73;cript:alert%281%29)\n\n"
+        "![unsafe image](data:text/html,unsafe) [file](file:///etc/passwd)\n\n"
+        "[safe](https://example.test/) [relative](../Thing.html) [mail](mailto:api@example.test)";
+    file.unit.root_ns.namespaces.front().doc->brief = "**" + std::string(110, 'x') + "**";
+    docgen_output output("kdi-docgen-safe-output");
+    generate_both(file, output.path);
+    const auto root = output.path / "demo::mod";
+    const auto html = read_text_file(root / "index.html");
+    REQUIRE(html.find("<p class=\"doc-brief\">Heading First <strong>bold</strong>. One Two <code>") != std::string::npos);
+    REQUIRE(html.find("<h1>Heading</h1>") == std::string::npos);
+    REQUIRE(html.find("<script>") == std::string::npos);
+    REQUIRE(html.find("<img src=x") == std::string::npos);
+    REQUIRE(html.find("&lt;script&gt;") != std::string::npos);
+    REQUIRE(html.find("href=\"javascript:") == std::string::npos);
+    REQUIRE(html.find("src=\"data:") == std::string::npos);
+    REQUIRE(html.find("href=\"file:") == std::string::npos);
+    REQUIRE(html.find("href=\"https://example.test/\"") != std::string::npos);
+    REQUIRE(html.find("href=\"../Thing.html\"") != std::string::npos);
+    REQUIRE(html.find("href=\"mailto:api@example.test\"") != std::string::npos);
+    REQUIRE(html.find("<strong>" + std::string(93, 'x') + "</strong>...") != std::string::npos);
+    REQUIRE(html.find("<td class=\"tk\"><p>") == std::string::npos);
+
+    const auto markdown = read_text_file(root / "index.md");
+    INFO(markdown);
+    const auto reparsed = render_generated_markdown(markdown);
+    INFO(reparsed);
+    REQUIRE(reparsed.find("<script>") == std::string::npos);
+    REQUIRE(reparsed.find("<img src=x") == std::string::npos);
+    REQUIRE(reparsed.find("&lt;script&gt;") != std::string::npos);
+    REQUIRE(reparsed.find("&lt;img src=x onerror=alert(1)&gt;") != std::string::npos);
+    REQUIRE(reparsed.find("href=\"javascript:") == std::string::npos);
+    REQUIRE(reparsed.find("src=\"data:") == std::string::npos);
+    REQUIRE(reparsed.find("href=\"file:") == std::string::npos);
+    REQUIRE(markdown.find("\n<script>") == std::string::npos);
+    REQUIRE(markdown.find("](javascript:") == std::string::npos);
+    REQUIRE(markdown.find("](data:") == std::string::npos);
+    REQUIRE(markdown.find("](file:") == std::string::npos);
+    REQUIRE(markdown.find("[safe](https://example.test/)") != std::string::npos);
+    REQUIRE(markdown.find("**" + std::string(93, 'x') + "**...") != std::string::npos);
+}

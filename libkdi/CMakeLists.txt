@@ -17,6 +17,8 @@ add_library(kdi STATIC
     src/kdi_docgen.hpp
     src/kdi_docgen.cpp
     src/kdi_docgen_html.cpp
+    src/kdi_doc_markdown.hpp
+    src/kdi_doc_markdown.cpp
     src/kdi_dump.hpp
     src/kdi_dump.cpp
     src/kdi_mangling.h
@@ -34,6 +36,7 @@ target_include_directories(kdi PUBLIC
 )
 
 target_link_libraries(kdi PUBLIC ${LIBCBOR_LIBRARIES} nlohmann_json::nlohmann_json)
+target_link_libraries(kdi PRIVATE CmarkGFM::Core)
 
 target_compile_options(kdi PRIVATE
     -Wno-unused-result
@@ -70,7 +73,7 @@ add_executable(kdi-tests
     tests/test_docgen.cpp
 )
 
-target_link_libraries(kdi-tests PRIVATE kdi Catch2::Catch2WithMain)
+target_link_libraries(kdi-tests PRIVATE kdi Catch2::Catch2WithMain CmarkGFM::Core)
 target_compile_definitions(kdi-tests PRIVATE
     KDITOOL_PATH="$<TARGET_FILE:kdi-tool>"
 )

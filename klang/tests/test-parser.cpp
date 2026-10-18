@@ -1401,7 +1401,255 @@ foo(b: int) : int;
     const auto& d = *unit->declarations[0]->doc;
     REQUIRE(d.entries.size() == 1);
     CHECK(d.entries[0].tag     == "param");
-    CHECK(d.entries[0].content == "b second value line1\nline2");
+    CHECK(d.entries[0].content == "b second value line1\n  line2");
+}
+
+TEST_CASE("Doc-comment Markdown layout survives line and decorated block extraction",
+          "[parser][doc-comment][markdown]") {
+    std::string text;
+    SECTION("Forward lines with optional padding and CRLF") {
+        text =
+            "///Brief.  \r\n"
+            "///\r\n"
+            "/// - outer\r\n"
+            "///   - inner\r\n"
+            "///\r\n"
+            "///\r\n"
+            "///     code();  \r\n"
+            "///     @param literal code\r\n"
+            "///\t@return tabbed code\r\n"
+            "/// ---\r\n"
+            "foo() : int;";
+    }
+    SECTION("Decorated block") {
+        text =
+            "/**\n"
+            " * Brief.  \n"
+            " *\n"
+            " * - outer\n"
+            " *   - inner\n"
+            " *\n"
+            " *\n"
+            " *     code();  \n"
+            " *     @param literal code\n"
+            " * \t@return tabbed code\n"
+            " * ---\n"
+            " */\n"
+            "foo() : int;";
+    }
+    test_logger log;
+    k::source src{text};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    const auto& d = *unit->declarations[0]->doc;
+    CHECK(d.brief == "Brief.  ");
+    CHECK(d.description ==
+          "- outer\n  - inner\n\n\n    code();  \n"
+          "    @param literal code\n\t@return tabbed code\n---");
+    CHECK(d.entries.empty());
+}
+
+TEST_CASE("Doc-comment undecorated blocks remove only common indentation and delimiter padding",
+          "[parser][doc-comment][markdown]") {
+    std::string text;
+    std::string brief = "Brief.  ";
+    std::string description;
+    SECTION("Common margin with additional Markdown indentation") {
+        text =
+            "/**\n"
+            "    Brief.  \n"
+            "    \n"
+            "    - outer\n"
+            "      - inner\n"
+            "\n"
+            "        *pointer = value;  \n"
+            "        @param literal code\n"
+            "    Final line.   */\n"
+            "foo() : int;";
+        description =
+            "- outer\n  - inner\n\n    *pointer = value;  \n"
+            "    @param literal code\nFinal line.  ";
+    }
+    SECTION("Inline opening text anchors indentation of code-only continuation") {
+        text =
+            "/** Brief.  \n"
+            "\n"
+            "    @param literal code\n"
+            "    *pointer = value;  \n"
+            "*/\n"
+            "foo() : int;";
+        description = "    @param literal code\n    *pointer = value;  ";
+    }
+    SECTION("Inline Markdown markers are not block decoration") {
+        brief = GENERATE(std::string("*Emphasis*"), std::string("**Bold**"),
+                         std::string("![alt](url)"));
+        description = brief;
+        text = "/**\n" + brief + "\n\n" + description + "\n*/\nfoo() : int;";
+    }
+    test_logger log;
+    k::source src{text};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    const auto& d = *unit->declarations[0]->doc;
+    CHECK(d.brief == brief);
+    CHECK(d.description == description);
+    CHECK(d.entries.empty());
+}
+
+TEST_CASE("Doc-comment fences keep tag-like text and blank lines in the brief",
+          "[parser][doc-comment][markdown]") {
+    const std::string fence = GENERATE(std::string("````k"), std::string("~~~k"));
+    const std::string close = fence.substr(0, fence.size() - 1);
+    const bool block = GENERATE(false, true);
+    CAPTURE(fence, block);
+    std::string text = block ? "/**\n" : "";
+    for (const auto& line : std::vector<std::string>{
+             fence, "@param literal not a directive", "", "  \\return also literal",
+             "```", "    nested();  ", close, "", "Description after code.",
+             "@return real result"}) {
+        text += (block ? " * " : "/// ") + line + "\n";
+    }
+    text += block ? " */\nfoo() : int;" : "foo() : int;";
+    test_logger log;
+    k::source src{text};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    const auto& d = *unit->declarations[0]->doc;
+    CHECK(d.brief == fence + "\n@param literal not a directive\n\n"
+          "  \\return also literal\n```\n    nested();  \n" + close);
+    CHECK(d.description == "Description after code.");
+    REQUIRE(d.entries.size() == 1);
+    CHECK(d.entries[0].tag == "return");
+    CHECK(d.entries[0].content == "real result");
+}
+
+TEST_CASE("Doc-comment container fences protect tags without hiding subsequent directives",
+          "[parser][doc-comment][markdown]") {
+    std::string text, brief;
+    std::vector<std::pair<std::string, std::string>> entries;
+    SECTION("List and quote containers") {
+        const std::string opening = GENERATE(
+            std::string("- "), std::string("+ "), std::string("* "),
+            std::string("1. "), std::string("100. "), std::string("> "),
+            std::string("> - "), std::string("- > "), std::string("- - "));
+        std::string continuation = opening;
+        for (char& c : continuation) {
+            if (c != '>') c = ' ';
+        }
+        CAPTURE(opening);
+        SECTION("Explicit closing fence") {
+            brief =
+                opening + "```k\n" + continuation + "@param literal\n" +
+                continuation + "- ```\n" + continuation + "@throws still literal\n" +
+                continuation + "```";
+            for (const auto& line : std::vector<std::string>{
+                     opening + "```k", continuation + "@param literal",
+                     continuation + "- ```", continuation + "@throws still literal",
+                     continuation + "```"}) {
+                text += "/// " + line + "\n";
+            }
+            text +=
+                "/// @return real\n"
+                "/// - ordinary item\n"
+                "/// @note directive after plain list\n";
+            entries = {{"return", "real\n- ordinary item"}, {"note", "directive after plain list"}};
+        }
+        SECTION("Container exit ends an unclosed fence") {
+            brief = opening + "```k\n" + continuation + "code";
+            text =
+                "/// " + opening + "```k\n"
+                "/// " + continuation + "code\n"
+                "/// @return real\n";
+            entries = {{"return", "real"}};
+        }
+    }
+    SECTION("Quote continuation and closing markers need no padding space") {
+        const std::string opening = GENERATE(std::string("> "), std::string(">"));
+        brief = opening + "```k\n>code\n>```";
+        text =
+            "/// " + opening + "```k\n"
+            "/// >code\n"
+            "/// >```\n"
+            "/// @return real\n";
+        entries = {{"return", "real"}};
+    }
+    SECTION("An unclosed top-level fence protects tags through EOF") {
+        brief = "```k\ncode\n@return literal";
+        text =
+            "/// ```k\n"
+            "/// code\n"
+            "/// @return literal\n";
+    }
+    text += "foo() : int;";
+    test_logger log;
+    k::source src{text};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    const auto& d = *unit->declarations[0]->doc;
+    CHECK(d.brief == brief);
+    REQUIRE(d.entries.size() == entries.size());
+    for (size_t i = 0; i < entries.size(); ++i) {
+        CHECK(d.entries[i].tag == entries[i].first);
+        CHECK(d.entries[i].content == entries[i].second);
+    }
+}
+
+TEST_CASE("Doc-comment tagged continuations preserve Markdown and fence boundaries",
+          "[parser][doc-comment][markdown]") {
+    test_logger log;
+    k::source src{
+        "/** Brief.\n"
+        " * @param value first line  \n"
+        " *\n"
+        " * - outer\n"
+        " *   - inner\n"
+        " *\n"
+        " *\n"
+        " * ~~~k\n"
+        " * @param literal code\n"
+        " *\n"
+        " *     indented();  \n"
+        " * ~~~\n"
+        " *\n"
+        " *     @return indented code\n"
+        " * @return result  \n"
+        " * @example ```k\n"
+        " * @throws literal code\n"
+        " * ```\n"
+        " * @note final tag\n"
+        " */\n"
+        "foo(value: int) : int;"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+
+    REQUIRE(unit->declarations.size() == 1);
+    REQUIRE(unit->declarations[0]->doc.has_value());
+    const auto& d = *unit->declarations[0]->doc;
+    CHECK(d.brief == "Brief.");
+    REQUIRE(d.entries.size() == 4);
+    CHECK(d.entries[0].tag == "param");
+    CHECK(d.entries[0].content ==
+          "value first line  \n\n- outer\n  - inner\n\n\n~~~k\n"
+          "@param literal code\n\n    indented();  \n~~~\n\n"
+          "    @return indented code");
+    CHECK(d.entries[1].tag == "return");
+    CHECK(d.entries[1].content == "result  ");
+    CHECK(d.entries[2].tag == "example");
+    CHECK(d.entries[2].content == "```k\n@throws literal code\n```");
+    CHECK(d.entries[3].tag == "note");
+    CHECK(d.entries[3].content == "final tag");
 }
 
 TEST_CASE("No doc-comment leaves node doc as nullopt",
@@ -1592,5 +1840,3 @@ TEST_CASE("Parse nested namespace with trailing :: throws ERR_QNAME_AFTER_INTERM
                 == static_cast<unsigned int>(k::diag::parser_diag::ERR_QNAME_AFTER_INTERMEDIATE_SEP));
     }
 }
-
-

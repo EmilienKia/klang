@@ -24,6 +24,10 @@
  *
  * Documentation generators for KDI files.
  * Supports Markdown and static HTML output formats.
+ * Documentation fragments use core CommonMark (cmark-gfm, without extensions).
+ * Briefs are normalized to inline content; descriptions support block content.
+ * Raw HTML is displayed as literal text and link schemes are restricted to
+ * relative URLs, HTTP, HTTPS and mailto. Stored documentation is not modified.
  */
 
 #include "kdi_file.hpp"
@@ -72,4 +76,3 @@ bool kdi_generate_html_doc(const kdi_file& file,
 } // namespace kdi
 
 #endif // LIBKDI_DOCGEN_HPP
-

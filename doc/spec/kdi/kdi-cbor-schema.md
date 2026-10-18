@@ -176,6 +176,41 @@ DocFunction = DocBlock + {
 }
 ```
 
+Documentation fields retain their original text in both CBOR and JSON. Markdown
+trees and rendered HTML are not part of the KDI payload; the schema version
+remains `0.1`.
+
+Documentation generators interpret `brief` as inline CommonMark: emphasis,
+strong emphasis, links, images, and inline code are supported without introducing
+block layout into summary tables. `description` and callable documentation
+descriptions support block CommonMark, including multiple paragraphs, headings,
+nested lists, block quotes, and code blocks. Parameter names, exception type
+names, and tag keys remain literal identifiers rather than Markdown.
+
+Source-comment extraction must preserve relative indentation, internal blank
+lines, and significant trailing spaces after removing comment delimiters and
+conventional comment decoration. These characters can affect Markdown structure
+and code literals. Previously generated KDI files remain readable, but discarded
+source whitespace cannot be recovered by a generator.
+
+A code block whose info string is absent or contains only whitespace is treated
+as K code, with the language identifier `k`. Explicit info strings are preserved.
+This rule also applies to indented code blocks. HTML output uses ordinary
+`pre`/`code` elements without syntax highlighting; Markdown output uses fenced
+code blocks.
+
+Embedded raw HTML is displayed as literal text rather than active markup in
+both generated formats. Link and image targets are restricted to relative URLs
+and the `http`, `https`, and `mailto` schemes. Generators may normalize Markdown
+spelling and must escape fragments for their surrounding context, particularly
+table cells, without discarding inline formatting. Documentation headings are
+subordinate to their containing generated section and do not introduce explicit
+anchors that could collide with declaration anchors.
+
+The supported dialect is CommonMark as implemented by cmark-gfm; optional GFM
+extensions are not implied. In particular, `__text__` denotes strong emphasis,
+not underline. Arbitrary HTML is not an alternative underline mechanism.
+
 ---
 
 ## Type encoding

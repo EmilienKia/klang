@@ -25,18 +25,23 @@ namespace k::model::doc {
 namespace {
 
 /// Split content at the first whitespace character.
-/// Returns { first_word, rest_trimmed }.
+/// Returns { first_word, description }, preserving continuation-line layout.
 std::pair<std::string, std::string> split_first_word(const std::string& content) {
-    auto pos = content.find_first_of(" \t");
+    auto pos = content.find_first_of(" \t\r\n");
     if (pos == std::string::npos) {
         return { content, {} };
     }
     std::string first = content.substr(0, pos);
-    std::string rest  = content.substr(pos + 1);
-    // Trim leading whitespace from rest.
-    size_t start = 0;
-    while (start < rest.size() && (rest[start] == ' ' || rest[start] == '\t')) ++start;
-    return { first, rest.substr(start) };
+    size_t start = pos;
+    while (start < content.size() && (content[start] == ' ' || content[start] == '\t')) ++start;
+    // Consume the name-line terminator, never the indentation of its successor.
+    if (start < content.size() && content[start] == '\r') {
+        ++start;
+        if (start < content.size() && content[start] == '\n') ++start;
+    } else if (start < content.size() && content[start] == '\n') {
+        ++start;
+    }
+    return { first, content.substr(start) };
 }
 
 } // anonymous namespace

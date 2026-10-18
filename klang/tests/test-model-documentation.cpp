@@ -108,7 +108,7 @@ TEST_CASE("Model docs: namespace/aggregate/enum/variable/function docs are attac
     CHECK(fn_doc->params[0].name == "a");
     CHECK(fn_doc->params[0].description == "first value");
     CHECK(fn_doc->params[1].name == "b");
-    CHECK(fn_doc->params[1].description == "second value line1\nline2");
+    CHECK(fn_doc->params[1].description == "second value line1\n  line2");
     REQUIRE(fn_doc->returns.has_value());
     CHECK(fn_doc->returns->description == "computed sum");
     REQUIRE(fn_doc->throws.size() == 1);
@@ -140,6 +140,47 @@ TEST_CASE("Model docs: backward doc-comment attaches to variable doc", "[model][
     auto x_doc = x_elem->get_documentation_as<doc::variable_doc>();
     REQUIRE(x_doc != nullptr);
     CHECK(x_doc->brief == "backward variable doc");
+}
+
+TEST_CASE("Model docs: named tag descriptions retain multiline Markdown",
+          "[model][documentation][markdown]") {
+    const std::string tag = GENERATE(std::string("param"), std::string("throws"), std::string("tparam"));
+    const std::string name = tag == "param" ? "value" : tag == "throws" ? "Error" : "T";
+    std::string suffix, description;
+    SECTION("Description starts on the following line") {
+        suffix = "\n * **Bold**  \n";
+        description = "**Bold**  ";
+    }
+    SECTION("Name-line padding does not consume blank lines or code indentation") {
+        suffix = "  \n *\n *     code();  \n";
+        description = "\n    code();  ";
+    }
+    CAPTURE(tag);
+    auto comp = compile_model(
+        "module model_documentation_05;\n"
+        "/**\n * @" + tag + " " + name + suffix +
+        " */\nfoo(value: int) : int { return value; }\n");
+    REQUIRE(comp != nullptr);
+    REQUIRE(comp->get_unit() != nullptr);
+    auto root = comp->get_unit()->get_root_namespace();
+    REQUIRE(root != nullptr);
+    auto fn = root->get_function("foo");
+    REQUIRE(fn != nullptr);
+    auto fn_doc = fn->get_documentation_as<doc::function_doc>();
+    REQUIRE(fn_doc != nullptr);
+    if (tag == "param") {
+        REQUIRE(fn_doc->params.size() == 1);
+        CHECK(fn_doc->params[0].name == name);
+        CHECK(fn_doc->params[0].description == description);
+    } else if (tag == "throws") {
+        REQUIRE(fn_doc->throws.size() == 1);
+        CHECK(fn_doc->throws[0].type_name == name);
+        CHECK(fn_doc->throws[0].description == description);
+    } else {
+        REQUIRE(fn_doc->template_params.size() == 1);
+        CHECK(fn_doc->template_params[0].name == name);
+        CHECK(fn_doc->template_params[0].description == description);
+    }
 }
 
 TEST_CASE("Model docs: documentation on nested namespace attaches to innermost namespace", "[model][documentation][namespace]") {

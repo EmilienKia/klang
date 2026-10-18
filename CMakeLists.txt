@@ -113,6 +113,19 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBCBOR REQUIRED libcbor)
 pkg_check_modules(LIBFFI REQUIRED IMPORTED_TARGET libffi)
 pkg_check_modules(GMP REQUIRED IMPORTED_TARGET gmp)
+pkg_check_modules(CMARK_GFM REQUIRED libcmark-gfm)
+# Only the core CommonMark parser is needed. Some pkg-config files also list
+# the optional extensions library, whose development files may not be installed.
+find_library(CMARK_GFM_CORE_LIBRARY NAMES cmark-gfm HINTS ${CMARK_GFM_LIBRARY_DIRS})
+if(NOT CMARK_GFM_CORE_LIBRARY)
+    message(FATAL_ERROR "The cmark-gfm core library is required for KDI documentation")
+endif()
+add_library(CmarkGFM::Core UNKNOWN IMPORTED)
+set_target_properties(CmarkGFM::Core PROPERTIES
+    IMPORTED_LOCATION "${CMARK_GFM_CORE_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${CMARK_GFM_INCLUDE_DIRS}"
+    INTERFACE_COMPILE_OPTIONS "${CMARK_GFM_CFLAGS_OTHER}"
+)
 
 find_package(Catch2 REQUIRED)
 find_package(nlohmann_json REQUIRED)

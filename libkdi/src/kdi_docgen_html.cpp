@@ -24,6 +24,7 @@
  */
 
 #include "kdi_docgen.hpp"
+#include "kdi_doc_markdown.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -612,32 +613,9 @@ static std::string hcode(const std::string& v) {
     return "<code>" + html_escape(v) + "</code>";
 }
 
-static std::string compact_brief_h(std::string brief, size_t max_len = 96) {
-    if (brief.empty())
-        return {};
-
-    std::string normalized;
-    normalized.reserve(brief.size());
-    bool previous_space = false;
-    for (char ch : brief) {
-        if (std::isspace(static_cast<unsigned char>(ch))) {
-            if (!normalized.empty() && !previous_space)
-                normalized.push_back(' ');
-            previous_space = true;
-        } else {
-            normalized.push_back(ch);
-            previous_space = false;
-        }
-    }
-
-    while (!normalized.empty() && normalized.back() == ' ')
-        normalized.pop_back();
-
-    if (normalized.size() <= max_len)
-        return normalized;
-    if (max_len <= 3)
-        return normalized.substr(0, max_len);
-    return normalized.substr(0, max_len - 3) + "...";
+static std::string compact_brief_h(const std::string& brief) {
+    return doc_markdown::inline_fragment(brief, doc_markdown::format::html,
+                                         doc_markdown::inline_context::table, 96);
 }
 
 static std::string compact_doc_brief_h(const std::optional<kdi_doc_block>& doc) {
@@ -782,34 +760,57 @@ static std::string make_breadcrumbs(
 
 // ─── Doc block helpers ────────────────────────────────────────────────────────
 
-static void append_doc_block_html(std::ostringstream& out, const kdi_doc_block& doc) {
+static void append_doc_block_html(std::ostringstream& out, const kdi_doc_block& doc, int heading = 2) {
     if (!doc.brief.empty())
-        out << "<p class=\"doc-brief\">" << html_escape(doc.brief) << "</p>\n";
+        out << "<p class=\"doc-brief\">"
+            << doc_markdown::inline_fragment(doc.brief, doc_markdown::format::html) << "</p>\n";
     if (!doc.description.empty())
-        out << "<p class=\"doc-desc\">" << html_escape(doc.description) << "</p>\n";
+        out << "<div class=\"doc-desc\">"
+            << doc_markdown::block_fragment(doc.description, doc_markdown::format::html, heading)
+            << "</div>\n";
 }
 
-static void append_doc_block_html(std::ostringstream& out, const std::optional<kdi_doc_block>& doc) {
-    if (doc.has_value()) append_doc_block_html(out, *doc);
+static void append_doc_block_html(std::ostringstream& out, const std::optional<kdi_doc_block>& doc,
+                                  int heading = 2) {
+    if (doc.has_value()) append_doc_block_html(out, *doc, heading);
 }
 
 static void append_doc_function_html(std::ostringstream& out, const std::optional<kdi_doc_function>& doc) {
     if (!doc.has_value()) return;
-    append_doc_block_html(out, static_cast<const kdi_doc_block&>(*doc));
+    append_doc_block_html(out, static_cast<const kdi_doc_block&>(*doc), 3);
     if (!doc->params.empty()) {
         out << "<dl class=\"dparams\">\n";
         for (const auto& p : doc->params)
             out << "  <dt>" << html_escape(p.name) << "</dt>"
-                << "<dd>" << html_escape(p.description) << "</dd>\n";
+                << "<dd>" << doc_markdown::block_fragment(p.description, doc_markdown::format::html)
+                << "</dd>\n";
         out << "</dl>\n";
     }
     if (doc->returns.has_value())
-        out << "<p class=\"doc-desc\"><strong>Returns:</strong> " << html_escape(*doc->returns) << "</p>\n";
+        out << "<div class=\"doc-desc\"><strong>Returns:</strong>"
+            << doc_markdown::block_fragment(*doc->returns, doc_markdown::format::html) << "</div>\n";
     if (!doc->throws.empty()) {
         out << "<dl class=\"dparams\">\n";
         for (const auto& t : doc->throws)
             out << "  <dt>" << html_escape(t.type_name) << "</dt>"
-                << "<dd>" << html_escape(t.description) << "</dd>\n";
+                << "<dd>" << doc_markdown::block_fragment(t.description, doc_markdown::format::html)
+                << "</dd>\n";
+        out << "</dl>\n";
+    }
+    if (!doc->template_params.empty()) {
+        out << "<strong>Template Parameters:</strong><dl class=\"dparams\">\n";
+        for (const auto& p : doc->template_params)
+            out << "  <dt>" << html_escape(p.name) << "</dt>"
+                << "<dd>" << doc_markdown::block_fragment(p.description, doc_markdown::format::html)
+                << "</dd>\n";
+        out << "</dl>\n";
+    }
+    if (!doc->tags.empty()) {
+        out << "<strong>Tags:</strong><dl class=\"dparams\">\n";
+        for (const auto& tag : doc->tags)
+            out << "  <dt>@" << html_escape(tag.tag) << "</dt>"
+                << "<dd>" << doc_markdown::block_fragment(tag.value, doc_markdown::format::html)
+                << "</dd>\n";
         out << "</dl>\n";
     }
 }
@@ -1397,7 +1398,7 @@ static void write_aggregate_body_html(std::ostringstream& content,
                     << " <span class=\"tag t-stat\">static</span></td>"
                     << "<td class=\"tt\">" << hcode(type_to_string_h(v.type)) << "</td>"
                     << "<td>" << vis_tag(v.visibility) << "</td>"
-                    << "<td class=\"tk\">" << html_escape(compact_doc_brief_h(v.doc)) << "</td></tr>\n";
+                    << "<td class=\"tk\">" << compact_doc_brief_h(v.doc) << "</td></tr>\n";
         }
         content << "</tbody></table>\n";
     }
@@ -1415,13 +1416,13 @@ static void write_aggregate_body_html(std::ostringstream& content,
             content << "<tr><td class=\"ts\"><a href=\"#" << id << "\">"
                     << html_escape(make_sig(agg.name, c.params, nullptr)) << "</a></td>"
                     << "<td>" << vis_tag(c.visibility) << "</td>"
-                    << "<td class=\"tk\">" << html_escape(compact_doc_brief_h(c.doc)) << "</td></tr>\n";
+                    << "<td class=\"tk\">" << compact_doc_brief_h(c.doc) << "</td></tr>\n";
         }
         if (agg.destructor.has_value()) {
             content << "<tr><td class=\"ts\"><a href=\"#dtor\">"
                     << html_escape("~" + agg.name + "()") << "</a></td>"
                     << "<td>" << vis_tag(agg.destructor->visibility) << "</td>"
-                    << "<td class=\"tk\">" << html_escape(compact_doc_brief_h(agg.destructor->doc)) << "</td></tr>\n";
+                    << "<td class=\"tk\">" << compact_doc_brief_h(agg.destructor->doc) << "</td></tr>\n";
         }
         for (size_t i = 0; i < methods.size(); ++i) {
             const auto& m = methods[i];
@@ -1431,7 +1432,7 @@ static void write_aggregate_body_html(std::ostringstream& content,
                     << "<td>" << vis_tag(m.visibility)
                     << (m.is_static ? " <span class=\"tag t-stat\">static</span>" : "")
                     << "</td>"
-                    << "<td class=\"tk\">" << html_escape(compact_doc_brief_h(m.doc)) << "</td></tr>\n";
+                    << "<td class=\"tk\">" << compact_doc_brief_h(m.doc) << "</td></tr>\n";
         }
         content << "</tbody></table>\n";
     }
@@ -1461,7 +1462,7 @@ static void write_aggregate_body_html(std::ostringstream& content,
             }
             content << "<tr><td class=\"tn\"><a href=\"" << link << "\">"
                     << html_escape(name) << "</a></td>"
-                    << "<td class=\"tk\">" << html_escape(brief) << "</td></tr>\n";
+                    << "<td class=\"tk\">" << brief << "</td></tr>\n";
         }
         content << "</tbody></table>\n";
     }
@@ -1493,7 +1494,7 @@ static void write_aggregate_body_html(std::ostringstream& content,
                     << vis_tag(v.visibility)
                     << " <span>Type: " << hcode(type_to_string_h(v.type)) << "</span>"
                     << "</div>\n";
-            append_doc_block_html(content, v.doc);
+            append_doc_block_html(content, v.doc, 3);
             content << "  </div>\n</div>\n";
         }
     }
@@ -2031,7 +2032,7 @@ static bool write_namespace_tree_html(const kdi_namespace& ns,
             const fs::path child_idx = ns_dir_from_root(ctx, child) / "index.html";
             content << "<tr><td class=\"tn\"><a href=\"" << rel_link_h(ns_dir, child_idx)
                     << "\">" << html_escape(child.name) << "</a></td>"
-                    << "<td class=\"tk\">" << html_escape(compact_doc_brief_h(child.doc)) << "</td></tr>\n";
+                    << "<td class=\"tk\">" << compact_doc_brief_h(child.doc) << "</td></tr>\n";
         }
         content << "</tbody></table>\n";
     }
@@ -2058,7 +2059,7 @@ static bool write_namespace_tree_html(const kdi_namespace& ns,
             content << "<tr><td class=\"tn\"><a href=\"" << row.file << "\">"
                     << html_escape(row.name) << "</a></td>"
                     << "<td class=\"tk\">" << kind_badge(row.kind) << "</td>"
-                    << "<td class=\"tk\">" << html_escape(row.brief) << "</td></tr>\n";
+                    << "<td class=\"tk\">" << row.brief << "</td></tr>\n";
         content << "</tbody></table>\n";
     }
 
@@ -2078,7 +2079,7 @@ static bool write_namespace_tree_html(const kdi_namespace& ns,
                     << "<td>" << vis_tag(fn.visibility)
                     << (fn.is_static ? " <span class=\"tag t-stat\">static</span>" : "")
                     << "</td>"
-                    << "<td class=\"tk\">" << html_escape(compact_doc_brief_h(fn.doc)) << "</td></tr>\n";
+                    << "<td class=\"tk\">" << compact_doc_brief_h(fn.doc) << "</td></tr>\n";
         }
         content << "</tbody></table>\n";
     }
@@ -2112,7 +2113,7 @@ static bool write_namespace_tree_html(const kdi_namespace& ns,
                     << html_escape(v.name) << "</a></td>"
                     << "<td class=\"tt\">" << hcode(type_to_string_h(v.type)) << "</td>"
                     << "<td>" << vis_tag(v.visibility) << "</td>"
-                    << "<td class=\"tk\">" << html_escape(compact_doc_brief_h(v.doc)) << "</td></tr>\n";
+                    << "<td class=\"tk\">" << compact_doc_brief_h(v.doc) << "</td></tr>\n";
         }
         content << "</tbody></table>\n";
     }
@@ -2148,7 +2149,7 @@ static bool write_namespace_tree_html(const kdi_namespace& ns,
                     << (v.is_const ? " <span class=\"tag t-const\">const</span>" : "")
                     << " <span>Type: " << hcode(type_to_string_h(v.type)) << "</span>"
                     << "</div>\n";
-            append_doc_block_html(content, v.doc);
+            append_doc_block_html(content, v.doc, 3);
             content << "  </div>\n</div>\n";
         }
     }
@@ -2230,7 +2231,7 @@ static bool write_reference_indexes_html(const html_ctx& ctx,
                     << "<td class=\"tk\">" << kind_badge(r.kind) << "</td>"
                     << "<td class=\"tk\">" << html_escape(r.scope.empty() ? "<root>" : r.scope) << "</td>"
                     << "<td class=\"tt\">" << hcode(r.type_desc) << "</td>"
-                    << "<td class=\"tk\">" << html_escape(r.brief) << "</td>"
+                    << "<td class=\"tk\">" << r.brief << "</td>"
                     << "</tr>\n";
         content << "</tbody></table>\n";
 
@@ -2269,7 +2270,7 @@ static bool write_reference_indexes_html(const html_ctx& ctx,
                     << "<td class=\"tn\"><a href=\"" << r.link << "\">" << html_escape(r.name) << "</a></td>"
                     << "<td class=\"tk\">" << html_escape(r.scope.empty() ? "<root>" : r.scope) << "</td>"
                     << "<td class=\"tt\">" << hcode(r.type_desc) << "</td>"
-                    << "<td class=\"tk\">" << html_escape(r.brief) << "</td>"
+                    << "<td class=\"tk\">" << r.brief << "</td>"
                     << "</tr>\n";
         }
         if (!current_kind.empty()) content << "</tbody></table>\n";
@@ -2372,6 +2373,5 @@ bool kdi_generate_html_doc(const kdi_file& file,
 }
 
 } // namespace kdi
-
 
 

@@ -54,9 +54,13 @@ Comment
 (*    /**  — forward block         doc-block-fwd                            *)
 (*    /*!  — backward block        doc-block-bwd                            *)
 (*                                                                          *)
-(*  During lexical cleaning, per-line '*'/'!' decoration, the opening       *)
-(*  marker, the closing '*/', and pure-decoration border lines (===, ---…)  *)
-(*  are stripped so that the parser receives only the meaningful text.      *)
+(*  Cleaning removes delimiters, optional single-space padding, common      *)
+(*  block indentation, aligned '*'/'!' decoration and paired '=' banners.   *)
+(*  Relative indentation, internal blank lines and trailing spaces remain.  *)
+(*  Markdown rules, heading underlines and fences are not decoration.        *)
+(*  Tag recognition and brief splitting are suspended inside code fences;   *)
+(*  lines indented by four or more columns do not introduce tags.            *)
+(*  Blank lines framing documentation sections are ignored.                  *)
 (*                                                                          *)
 (*  Attachment rules:                                                       *)
 (*    Forward (///,/**) comments attach to the next declaration.           *)
@@ -90,16 +94,16 @@ DocBody
 
 DocBriefSection
     = DocFreeLine , { DocFreeLine }
-    (* First contiguous group of non-blank, non-tag lines. *)
+    (* First free-text group; blank lines inside fences remain in this group. *)
     ;
 
 DocDescriptionSection
-    = DocBlankLine , DocFreeLine , { DocFreeLine }
-    (* Additional free-text section preceded by a blank line. *)
+    = DocBlankLine , { DocBlankLine } , DocFreeLine , { DocFreeLine }
+    (* Additional free-text section preceded by one or more blank lines. *)
     ;
 
 DocEntry
-    = ( '@' | '\' ) , DocTagName , DocEntryContent
+    = DocTagPadding , ( '@' | '\' ) , DocTagName , DocEntryContent
     (*  A named tag.  DocTagName is stored lower-cased.                          *)
     (*  The semantic meaning of DocTagName is resolved at model-building time,    *)
     (*  NOT at parse time — keeping the tag vocabulary open and extensible        *)
@@ -114,9 +118,14 @@ DocEntry
     ;
 
 DocEntryContent
-    = { DocFreeLine }
-    (* Continuation lines: lines not starting with '@' or '\'.                   *)
-    (* May be empty.  Multi-line content is joined with '\n'.                    *)
+    = { DocFreeLine | DocBlankLine }
+    (* Continuation lines end at the next tag outside Markdown code.             *)
+    (* Internal blanks, indentation and trailing spaces are retained.             *)
+    (* May be empty. Multi-line content is joined with '\n'.                      *)
+    ;
+
+DocTagPadding
+    = ? optional leading indentation of fewer than four columns ?
     ;
 
 DocTagName
@@ -124,11 +133,12 @@ DocTagName
     ;
 
 DocFreeLine
-    = ? any cleaned text line not starting with '@' or '\' ?
+    = ? a nonblank cleaned line that does not introduce a documentation tag,
+        or any line inside a Markdown code fence ?
     ;
 
 DocBlankLine
-    = ? a line whose content is empty after lexical cleaning ?
+    = ? a whitespace-only cleaned line outside a Markdown code fence ?
     ;
 
 DocLineText

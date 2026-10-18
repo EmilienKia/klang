@@ -47,6 +47,17 @@
 - **Comments:**
   - End-of-line: `// …` until end of line.
   - Block: `/* … */` — non-nestable.
+  - Documentation: `///` and `/** … */` attach to the next declaration;
+    `//!` and `/*! … */` attach backward. A one-line comment can provide an
+    inline brief; the first free-text paragraph is the brief and subsequent
+    paragraphs form the description. Lines beginning with `@tag` or `\tag`
+    outside Markdown code start tagged sections.
+  - Documentation extraction removes delimiters, optional single-space
+    delimiter padding and conventional block decoration/common indentation,
+    but preserves relative indentation, internal blank lines and significant
+    trailing spaces (including Markdown hard breaks), also in tag continuations.
+    Fenced and indented code retain tag-like text literally. The compiler stores
+    Markdown text without rendering it; see [lexical.md](basic/lexical.md#documentation-comments).
 - **Tokens:** identifiers, keywords, literals, punctuators, operators.
 - **Identifiers:** sequence of letters (`A-Z`, `a-z`, `_`) and digits (`0-9`), starting with a letter. Identifiers composed solely of `_` are reserved. Must not be a keyword.
 - **Punctuators:** `(` `)` `{` `}` `[` `]` `;` `,` `::` `...` `@`

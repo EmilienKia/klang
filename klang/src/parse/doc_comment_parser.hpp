@@ -33,11 +33,14 @@ namespace k::parse {
  *
  * The function:
  *   1. Cleans the raw text of each lexeme (strips opening/closing markers,
- *      per-line '*'/'!' decoration, pure-decoration border lines).
+ *      common block indentation, per-line '*'/'!' decoration, paired '='
+ *      banners, and one optional space of delimiter padding).
  *   2. Concatenates the cleaned texts in source order.
  *   3. Splits the result into brief, description, and tagged sections
  *      (@param, @return/@returns, @throws/@throw/@exception,
  *       @tparam/@typeparam, and any other generic @tag).
+ *      Markdown indentation, internal blank lines and trailing spaces are
+ *      preserved; tag-like text in fenced or indented code is not a tag.
  *
  * Returns std::nullopt when the resulting documentation is empty (all
  * fields would be empty after cleaning).
@@ -51,4 +54,3 @@ std::optional<ast::documentation> parse_documentation(
 } // namespace k::parse
 
 #endif // KLANG_PARSE_DOC_COMMENT_PARSER_HPP
-
