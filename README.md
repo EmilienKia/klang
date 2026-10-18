@@ -62,7 +62,7 @@ Building Klang requires:
 - CMake 3.17 or newer
 - A C++20 compiler and a C/C++ linker toolchain
 - LLVM development files discoverable by CMake
-- `pkg-config`, `libcbor`, and `libffi` development files
+- `pkg-config`, `libcbor`, `libffi`, and GMP (`libgmp-dev`) development files
 - Catch2, nlohmann_json, fmt, and Boost (components: program_options, system,
   filesystem)
 
@@ -77,6 +77,11 @@ may instead use a bounded internal worker pool; this is not a transport fallback
 [`k::ffi` reference](doc/spec/stdlib/ffi.md) describes owner-retaining symbol
 lookup and fixed-signature C calls. This runtime API is distinct from
 compile-time `@ffi::Extern("C")` declarations.
+
+GMP's C library (`libgmp`, not `libgmpxx`) is required for the core
+[`k::BigInteger`](doc/spec/stdlib/big-integer.md) arbitrary-precision integer
+class. Shared runtime consumers need the GMP shared library; static consumers
+obtain `-lgmp` through `pkg-config --libs --static libk`.
 
 The standard library build generates `libk.pc` alongside `libk.so`, `libk.a`,
 and `k.kdi` in `cmake-build-debug/libk/libk`. Native consumers can use

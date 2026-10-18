@@ -34,6 +34,7 @@ jobs:
             pkg-config \
             build-essential \
             libcbor-dev \
+            libgmp-dev \
             libboost-filesystem-dev \
             libboost-program-options-dev \
             libboost-system-dev \

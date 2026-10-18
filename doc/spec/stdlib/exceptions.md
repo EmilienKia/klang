@@ -34,7 +34,12 @@ Throwable (_code: int)                    root of all throwable types
     │   ├── NullDereferenceError (code=8)
     │   ├── NullAssignationError (code=9)
     │   └── NullCastError (code=10)
-    └── IndexOutOfBoundsError (code=11)
+    ├── IndexOutOfBoundsError (code=11)
+    └── ArithmeticError (code=12)
+        ├── DivisionByZeroError (code=13)
+        ├── NumericOverflowError (code=14)
+        │   └── InvalidSignedToUnsignedError (code=15)
+        └── NumberFormatError (code=16)
 ```
 
 ---
@@ -159,6 +164,34 @@ satisfy the allocation request.
 |-----------|-------------|
 | `OutOfMemory()` | Construct with code 1 |
 | `OutOfMemory(code: int)` | Construct with a custom code |
+
+---
+
+## Arithmetic Errors
+
+These errors are unchecked: callers may catch them but need not declare a
+`throws` clause. All are in namespace `::k`, defined in `exception.k`.
+
+| Type | Base | Default code | Meaning |
+|------|------|--------------|---------|
+| `ArithmeticError` | `FatalError` | 12 | Base of exact arithmetic, numeric-conversion, and numeric-text errors |
+| `DivisionByZeroError` | `ArithmeticError` | 13 | Integer division or remainder by zero |
+| `NumericOverflowError` | `ArithmeticError` | 14 | A value does not fit the requested bounded integer type |
+| `InvalidSignedToUnsignedError` | `NumericOverflowError` | 15 | A negative value cannot be converted to an unsigned integer |
+| `NumberFormatError` | `ArithmeticError` | 16 | Malformed integer text or a parsing base outside 2 through 62 |
+
+`ArithmeticError` and `NumericOverflowError` provide default and `(code: int)`
+constructors. Their final subclasses provide default constructors.
+Catch `NumericOverflowError` to handle both out-of-range casts and negative
+to unsigned conversion, or catch `ArithmeticError` for the entire family.
+`NumberFormatError` is final and is not a `NumericOverflowError`; it provides
+the default constructor `NumberFormatError()` with code 16.
+
+[`BigInteger`](big-integer.md) uses these errors for division, remainder, and
+checked integer casts, and its static `fromString` factories use
+`NumberFormatError` for invalid text or bases. Its ordinary arithmetic and
+parsing are unbounded and do not throw `NumericOverflowError` merely because
+a result exceeds 64 bits.
 
 ---
 

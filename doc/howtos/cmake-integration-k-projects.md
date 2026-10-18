@@ -20,6 +20,10 @@ For an external CMake project building K sources, assume that the Klang toolchai
   metadata are required when building Klang. Shared runtime consumers need
   the matching native shared dependencies at execution; archive consumers
   must supply libffi and the rest of the native dependency closure at link time.
+- **Exact integer dependency:** GMP's C development library and its `gmp`
+  pkg-config metadata are required to build the core `k::BigInteger` API.
+  Shared runtime consumers need `libgmp`; archive consumers must link `-l gmp`.
+  The C++ GMP wrapper library (`libgmpxx`) is not used.
 
 These external examples assume a populated toolchain prefix, which may also
 be staged by manually copying `klangc`, `kditool`, `libk.so`, `libk.a`,
@@ -70,7 +74,7 @@ relocated native shared/archive runtime paths and archive-only K consumer
 source, object and executable paths.
 
 Shared metadata provides `-L… -lk`. Static metadata additionally supplies
-libffi, liburing, native thread, dynamic-loader and math dependencies, and
+libffi, liburing, GMP, native thread, dynamic-loader and math dependencies, and
 ICU dependencies only if ICU support was enabled when building the runtime.
 Link native consumers with a **C++ driver**, such as `clang++`, even if
 their own source is C: K exceptions use the C++ ABI runtime.
@@ -112,7 +116,7 @@ searched before `-I` directories; use `--no-lib-path-env` when an inherited
 
 ```bash
 klangc --no-lib-path-env -I /path/to/static-runtime -L /path/to/static-runtime \
-    main.k native_helper.o -l ffi -l uring -l pthread -l dl -l m -o myapp
+    main.k native_helper.o -l ffi -l uring -l gmp -l pthread -l dl -l m -o myapp
 ```
 
 This example lists the basic native dependencies. Also pass the configured

@@ -18,6 +18,7 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/object.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rtti.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/exception.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/big_integer.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/memory.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/shared.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/expected.k
@@ -712,8 +713,31 @@ add_custom_command(
     VERBATIM
 )
 
+set(BIG_INTEGER_FFI_C ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/big_integer_ffi.c)
+set(BIG_INTEGER_FFI_OBJ ${LIBK_OUTPUT_DIR}/big_integer_ffi.o)
+set(BIG_INTEGER_C_FLAGS ${GMP_CFLAGS_OTHER})
+foreach(_dir IN LISTS GMP_INCLUDE_DIRS)
+    list(APPEND BIG_INTEGER_C_FLAGS -I${_dir})
+endforeach()
+foreach(_dir IN LISTS GMP_LIBRARY_DIRS)
+    list(APPEND LIBK_EXTRA_LINK_ARGS -L ${_dir})
+endforeach()
+foreach(_lib IN LISTS GMP_LIBRARIES)
+    list(APPEND LIBK_EXTRA_LINK_ARGS -l ${_lib})
+endforeach()
+add_custom_command(
+    OUTPUT ${BIG_INTEGER_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS} ${BIG_INTEGER_C_FLAGS}
+            -o ${BIG_INTEGER_FFI_OBJ} ${BIG_INTEGER_FFI_C}
+    DEPENDS ${BIG_INTEGER_FFI_C}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/big_integer_ffi.h
+    COMMENT "Compiling K GMP BigInteger bridge (big_integer_ffi.c)"
+    VERBATIM
+)
+
 set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ}
                    ${SHARED_FFI_OBJ}
+                   ${BIG_INTEGER_FFI_OBJ}
                    ${TIME_OBJ} ${RUNTIME_TLS_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
                    ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ}
                    ${SYNC_PRIMITIVES_OBJ} ${SYNC_FFI_OBJ}
@@ -831,6 +855,16 @@ target_link_libraries(libk-tests-ffi-native PRIVATE
 add_test(NAME libk-tests-ffi-native COMMAND libk-tests-ffi-native)
 set_tests_properties(libk-tests-ffi-native PROPERTIES TIMEOUT 120)
 
+set_source_files_properties(${BIG_INTEGER_FFI_OBJ}
+    PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
+add_executable(libk-tests-big-integer-native
+    tests/test-big-integer-native.cpp ${BIG_INTEGER_FFI_OBJ})
+target_include_directories(libk-tests-big-integer-native PRIVATE src/runtime)
+target_link_libraries(libk-tests-big-integer-native PRIVATE
+    Catch2::Catch2WithMain PkgConfig::GMP)
+add_test(NAME libk-tests-big-integer-native COMMAND libk-tests-big-integer-native)
+set_tests_properties(libk-tests-big-integer-native PROPERTIES TIMEOUT 120)
+
 # ── Public K runtime C FFI tests ───────────────────────────────────────────
 add_library(klang-ffi-native-fixture SHARED tests/ffi/native_fixture.c)
 set_target_properties(klang-ffi-native-fixture PROPERTIES
@@ -921,6 +955,7 @@ libk_add_test_sharded(libk-tests-types 120 3
     tests/test-shared-weak.cpp
     tests/test-memory.cpp
     tests/test-math.cpp
+    tests/test-big-integer.cpp
     tests/test-application.cpp
     tests/test-symbol-mangling-native.cpp
 )

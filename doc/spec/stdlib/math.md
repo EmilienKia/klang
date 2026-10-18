@@ -8,6 +8,9 @@
 The `k::math` namespace provides basic mathematical utility functions through
 the `Math` static final class.  All methods are public and static.
 
+For arbitrary-precision signed integers, see [`::k::BigInteger`](big-integer.md).
+`BigInteger` is in the core `k` namespace, not `k::math`.
+
 `k::math` is compiled into the base `k` module (`libk.so`), which is
 automatically linked with every K program.  No explicit `import` declaration
 is needed — `k::math::Math` is directly accessible in any K compilation unit.

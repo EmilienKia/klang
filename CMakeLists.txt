@@ -12,6 +12,7 @@ enable_testing()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBCBOR REQUIRED libcbor)
 pkg_check_modules(LIBFFI REQUIRED IMPORTED_TARGET libffi)
+pkg_check_modules(GMP REQUIRED IMPORTED_TARGET gmp)
 
 find_package(Catch2 REQUIRED)
 find_package(nlohmann_json REQUIRED)

@@ -24,6 +24,7 @@ Contents:
 | Type / Namespace | Description | Source |
 |------------------|-------------|--------|
 | [`Object`](object.md) | Root base class for all K classes. | `src/object.k` |
+| [`BigInteger`](big-integer.md) | Exact arbitrary-precision signed integers, strict text parsing in bases 2–62, checked bounded casts, and unchecked arithmetic errors. | `src/big_integer.k`, `src/exception.k` |
 | [`Application`, `EnvironmentMap`](application.md) | Abstract program entry-point object and read-only `env()` accessor; normal/unwind exit drains I/O before field destruction. | `src/application.k` |
 | [`Module`, `LoadModuleError`](module.md) | Dynamic libraries loaded at run time through `Application::loadModule()`. | `src/module.k`, `src/application.k` |
 | [`k::ffi`](ffi.md) | Owner-retaining native symbol lookup and runtime, fixed-signature C foreign calls backed by libffi. | `src/ffi_symbol.k`, `src/ffi_runtime.k` |
@@ -37,7 +38,7 @@ Contents:
 | [`Entry<K,V>`, `MutableEntry<K,V>`, `Map<K,V>`, `MutableMap<K,V>`, `OrderedMap<K,V>`, `MutableOrderedMap<K,V>`, `SortedMap<K,V>`, `MutableSortedMap<K,V>`, `ListMap<K,V>`, `TreeMap<K,V>`, `HashMap<K,V>`](collections-map.md) | Generic map (dictionary) framework: interfaces + three concrete implementations (list-backed insertion-ordered map, AVL-tree-backed sorted map, hash-table-backed map). | `src/map.k` |
 | [`Expected<R,E>`](expected.md) | Discriminated-union wrapper holding either a successful result of type `R` or an error of type `E`. Static factories: `Expected<R,E>::expected()`, `::unexpected()`, `::error()`. | `src/expected.k` |
 | [`RTTI Types`](rtti.md) | Runtime type information: `Visibility`, `TypeInfo`, `AggregateType`, `Class`, `Interface`, `AnnotationType`, `Annotation`, `Function`, `Unit`. | `src/rtti.k` |
-| [`Exception Types`](exceptions.md) | Exception hierarchy for error handling: `Throwable`, `Exception` (checked), `FatalError` (unchecked), `OutOfMemory`, `NullPointerException`, `IndexOutOfBoundsException`, `IllegalArgumentException`, `IllegalStateException`, `ConstructionException`, `NullPointerError`, `NullDereferenceError`, `NullAssignationError`, `NullCastError`, `IndexOutOfBoundsError`. | `src/exception.k` |
+| [`Exception Types`](exceptions.md) | Checked `Exception` and unchecked `FatalError` hierarchies, including memory, pointer, bounds, and arithmetic errors (`ArithmeticError`, `DivisionByZeroError`, `NumericOverflowError`, `InvalidSignedToUnsignedError`, `NumberFormatError`). | `src/exception.k` |
 | [`Meta-Annotations`](rtti.md#11-meta-annotation-types) | Meta-annotation types: `Retention` (with `Policy` enum), `Inherited`, `Target` (with `ElementType` enum). Control annotation retention, inheritance, and applicability. | `src/annotations.k` |
 | [`I/O Streams`](io.md) | Byte-oriented I/O stream abstractions: `InputStream`, `OutputStream`, `Array*Stream`, `Filter*Stream`, `Buffered*Stream`, `DataInput`/`DataOutput`, `Data*Stream`, `PrintStream`, `File*Stream`, and standard I/O handles. | `src/io/` |
 | [`Threading and Time`](threading.md) | Portable runtime threading layer: `Duration`, `Instant`, `Runnable`, `Thread`, and the `ThreadInterruptionException` / `TimeoutException` / `CancellationException` / `ExecutionException` hierarchy. | `src/time.k`, `src/thread.k`, `src/thread_exceptions.k` |
@@ -53,8 +54,9 @@ Contents:
 *(More types and namespaces will be added as the language evolves.)*
 
 Runtime foreign calls use the required native `libffi` dependency. This API
-does not replace compile-time `@ffi::Extern("C")` declarations. Native
-consumers of `libk.a` must also link its transitive dependencies, available
+does not replace compile-time `@ffi::Extern("C")` declarations.
+Exact integers use the required GMP C library (`libgmp`, not `libgmpxx`).
+Native consumers of `libk.a` must also link its transitive dependencies, available
 through the generated build-tree `libk.pc` with `pkg-config --libs --static
 libk`, and use a C++ linker driver for K exception support. See
 [CMake integration](../../howtos/cmake-integration-k-projects.md#12-build-tree-package-metadata-and-static-consumers)

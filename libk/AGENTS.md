@@ -151,6 +151,7 @@ Unless fully qualified, paths below are relative to `libk/libk/src/`.
 - `libk-tests-rtti-exceptions`: functional RTTI and exception handling tests.
 - `libk-tests-strings`: string and string builder tests.
 - `libk-tests-types`: foundational types, optional, expected, shared, math, and application tests.
+- `libk-tests-big-integer-native`: GMP bridge arithmetic, ownership, checked conversions, and formatting; public K API cases run in `libk-tests-types`.
 - `libk-tests-module`: dynamic module loading (`Application::loadModule`, `Module`); builds K/C fixture libraries from `libk/tests/modules/`.
 - `libk-tests-io`: synchronous stream/file/path I/O tests (2 Catch2 shards: `-shard-0/1`).
 - `libk-tests-collections-sequential`: sequential collection tests (List, Vector, Sequences).
@@ -186,7 +187,7 @@ If in a working session, only `libk` changes (`.c` and/or `.k`), only recompile 
 ```bash
 # Build libk tests
 cd cmake-build-debug && ninja -j3 libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-io libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests libk-tests-module
-ninja -C cmake-build-debug -j3 libk_stdlib libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-io libk-tests-io-text libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests libk-tests-io-proactor libk-tests-io-proactor-kernel libk-tests-io-foundations-api libk-tests-file-channel-fully libk-tests-stream-channels libk-tests-datagram-channels libk-tests-application-lifecycle libk-tests-executor libk-tests-uuid libk-tests-time
+ninja -C cmake-build-debug -j3 libk_stdlib libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-big-integer-native libk-tests-io libk-tests-io-text libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests libk-tests-io-proactor libk-tests-io-proactor-kernel libk-tests-io-foundations-api libk-tests-file-channel-fully libk-tests-stream-channels libk-tests-datagram-channels libk-tests-application-lifecycle libk-tests-executor libk-tests-uuid libk-tests-time
 
 # Run libk tests
 /usr/bin/ctest --test-dir cmake-build-debug -j1 -R "^(libk-tests-.*|libk-thread-io-tests)$" --output-on-failure

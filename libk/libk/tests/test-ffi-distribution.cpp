@@ -349,12 +349,14 @@ TEST_CASE("Distributed libk metadata includes native static dependencies and rel
     const auto requirements = pkg_config(package, {"--print-requires-private"}).out;
     CHECK(requirements.find("libffi") != std::string::npos);
     CHECK(requirements.find("liburing") != std::string::npos);
+    CHECK(requirements.find("gmp") != std::string::npos);
     const auto shared = pkg_flags(package, {"--libs"});
     REQUIRE(contains(shared, "-lk"));
     const auto native = pkg_flags(package, {"--libs", "--static"});
     CHECK(contains(native, "-lk"));
     CHECK(contains(native, "-lffi"));
     CHECK(contains(native, "-luring"));
+    CHECK(contains(native, "-lgmp"));
     CHECK(contains(native, "-ldl"));
     CHECK(contains(native, "-lm"));
     CHECK((contains(native, "-pthread") || contains(native, "-lpthread")));

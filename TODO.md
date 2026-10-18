@@ -91,6 +91,122 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **Unsigned conversion-operator lookup omits short/int/long targets (blocks BigInteger casts).**
+      The BigInteger standard library now builds after the frozen-observer
+      fix, but its public cast cases fail with diagnostic `00945`:
+      "Casting between non-primitive types is not yet supported: cannot cast
+      from 'struct:k::BigInteger' to 'unsigned short'".
+      `BigInteger` already declares `const operator() : unsigned short`, and
+      its checked native conversion is implemented; the failure occurs before
+      calling either function.
+      `klang/src/parse/parser_declarations.cpp:2382` declares the conversion
+      name `__operator_cv_ushort`, but the primitive-name helper in
+      `klang/src/gen/gen_operators_helpers.hpp:49-62` omits the unsigned
+      short/int/long primitive-kind cases and returns `"unknown"`.
+      Consequently, the exact-name lookup in
+      `klang/src/gen/gen_operators_overload.cpp:789-796` cannot find the
+      declared operator, and `klang/src/gen/gen_expr_cast.cpp:1587` reports
+      the generic unsupported-cast diagnostic. Independent per-type cases
+      also reproduce `00945` for `unsigned int` and `unsigned long`, whose
+      declared names are `__operator_cv_uint` and `__operator_cv_ulong`.
+      Minimal independent source for a future compiler regression:
+      ```k
+      module k;
+      struct Value {
+          const operator() : unsigned short {
+              return (unsigned short) 7;
+          }
+      }
+      read() : unsigned short {
+          value: Value;
+          return (unsigned short) value;
+      }
+      ```
+      Expected result: the cast selects the declared conversion and returns 7.
+      Cover all unsigned conversion targets, including imported operators,
+      when correcting the lookup-name mapping. BigInteger cases keep these
+      conversions enabled and failing rather than skipping them or replacing
+      them with casts through another primitive. No compiler fix is included
+      in the library implementation.
+
+- [ ] **Observer upcasts can remove pointee const on existing unwrapped conversion paths.**
+      Source inspection of `compute_cast_weight()` in
+      `klang/src/gen/resolvers_type_ref.cpp` and `adapt_from_pointer()` in
+      `klang/src/gen/gen_adapt_type.cpp` shows that the same-pointee branch
+      rejects const removal, but the subsequent Derived-to-Base upcast branch
+      strips pointee qualifiers before checking inheritance and does not repeat
+      that rejection. A future focused regression should reject:
+      ```k
+      module k;
+      struct Base {}
+      struct Derived : public Base {}
+      write(value: Base*) {}
+      inspect(value: const Derived*) {
+          write(value);
+      }
+      ```
+      Runtime reproduction of this separate source-inspected issue is pending.
+      Audit the matching link/view upcast paths and preserve valid const-adding
+      upcasts and null/base-subobject adjustment. The const stored-observer fix
+      explicitly rejects const removal on its newly supported frozen-slot
+      paths; correcting existing unwrapped conversions is separate work.
+
+- [x] **Const pointer lvalue conversion to compatible const-pointer parameters is fixed.**
+      Building `libk_stdlib` with the new `k::BigInteger` previously stopped at
+      `libk/libk/src/big_integer.k:50`, in the call
+      `__k_big_integer_binary(result._native, _native, other._native, operation)`.
+      Diagnostic `00510` says argument 3, `const NativeBigInteger*&`, cannot
+      convert to the declared `const NativeBigInteger*` parameter.
+      `other` is a `const BigInteger&` and its stored handle is a
+      `NativeBigInteger*`. Reading that frozen pointer binding and adding
+      pointee const must be permitted; it does not mutate the pointer or remove
+      const. `doc/spec/language/summary.md:241` explicitly distinguishes
+      const aggregate pointer bindings from their pointees.
+      Minimal independent source for a future compiler regression:
+      ```k
+      module k;
+      struct Native {}
+      read(value: const Native*) {}
+      struct Box {
+          native: Native* = null;
+          const inspect(other: const Box&) {
+              read(other.native);
+          }
+      }
+      ```
+      `klang/src/gen/gen_expr_member.cpp:414-418` constructs a reference to a
+      const-qualified pointer binding. In
+      `klang/src/gen/resolvers_type_ref.cpp:3114-3127`, pointer conversion checks
+      inspect the wrapped subtype without stripping that binding qualifier,
+      missing the pointer case; the later identity-only reference load cannot
+      also add pointee const.
+      The resolver now loads frozen observer bindings while preserving pointee
+      const, with focused positive and negative conversion regressions.
+      Const, cast, and alias suites pass, and `libk_stdlib` builds successfully.
+      The compiler fix is committed independently of the pending BigInteger
+      implementation; no const-removal workaround was applied.
+
+- [ ] **Resolve two-operand static member operators with a primitive left operand.**
+      The planned `k::BigInteger` API declares primitive-left operations on
+      the class itself, for example
+      `static operator +(lhs: int, rhs: const BigInteger&) : BigInteger`
+      and `static operator <=>(lhs: int, rhs: const BigInteger&) : int`.
+      Automatic resolution must discover these declarations for expressions
+      such as `3 + big`, `3 - big`, `3 / big`, `3 % big`, `3 <=> big`,
+      `3 < big`, and `3 == big`, where `big` is a `k::BigInteger`.
+      Currently, `klang/src/gen/gen_operators_arithmetic.cpp` gates operator
+      overload resolution on the left operand being an aggregate; free
+      operator lookup in `klang/src/gen/gen_operators_overload.cpp` does not
+      replace the required static-member lookup on the right operand.
+      Verify declaration validation and candidate discovery for static
+      operators with two explicit operands, bind both operands without an
+      implicit receiver, preserve operand order for noncommutative operations,
+      and cover comparison synthesis from the static spaceship operator.
+      Add regressions for signed/unsigned primitive-left expressions and
+      unchanged aggregate-left and primitive-only behavior. This compiler work
+      is deferred; do not replace the BigInteger API with free operators or
+      change compiler resolution as part of the initial library implementation.
+
 - [ ] **Deleted aggregate copy operations lose diagnostics or enforcement.**
       While checking the FFI wrapping how-to, a wrapper declared as
       `public final class Counter` with a module-level opaque handle and

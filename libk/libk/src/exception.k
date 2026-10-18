@@ -161,6 +161,38 @@ public:
     OutOfMemory(code: int) : FatalError(code) {}
 }
 
+/** Unchecked errors in exact arithmetic and checked numeric conversion. */
+public class ArithmeticError : public FatalError {
+public:
+    ArithmeticError() : FatalError(12) {}
+    ArithmeticError(code: int) : FatalError(code) {}
+}
+
+/** Integer division or remainder with a zero divisor. */
+public final class DivisionByZeroError : public ArithmeticError {
+public:
+    DivisionByZeroError() : ArithmeticError(13) {}
+}
+
+/** A numeric value cannot be represented by the requested bounded type. */
+public class NumericOverflowError : public ArithmeticError {
+public:
+    NumericOverflowError() : ArithmeticError(14) {}
+    NumericOverflowError(code: int) : ArithmeticError(code) {}
+}
+
+/** A negative numeric value cannot be converted to an unsigned type. */
+public final class InvalidSignedToUnsignedError : public NumericOverflowError {
+public:
+    InvalidSignedToUnsignedError() : NumericOverflowError(15) {}
+}
+
+/** Malformed integer text or an unsupported parsing base. */
+public final class NumberFormatError : public ArithmeticError {
+public:
+    NumberFormatError() : ArithmeticError(16) {}
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // NullPointerException — thrown on null dereference.
 // ═════════════════════════════════════════════════════════════════════════════
@@ -323,4 +355,3 @@ public:
 
     IndexOutOfBoundsError(code: int) : FatalError(code) {}
 }
-

@@ -77,7 +77,7 @@ cd cmake-build-debug && /usr/bin/ctest -j1 --output-on-failure
 - If in a working session, only `libk` changes (`.c` and/or `.k`), then only recompile `libk` and run `libk` tests each time. No need to run all project tests (the compiler and kdi tools are unaffected).
 ```bash
 # Build libk tests
-ninja -C cmake-build-debug -j3 libk_stdlib libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-io libk-tests-io-text libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests libk-tests-io-proactor libk-tests-module libk-tests-io-proactor-kernel libk-tests-io-foundations-api libk-tests-file-channel-fully libk-tests-stream-channels libk-tests-datagram-channels libk-tests-application-lifecycle libk-tests-executor libk-tests-uuid libk-tests-time
+ninja -C cmake-build-debug -j3 libk_stdlib libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-big-integer-native libk-tests-io libk-tests-io-text libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests libk-tests-io-proactor libk-tests-module libk-tests-io-proactor-kernel libk-tests-io-foundations-api libk-tests-file-channel-fully libk-tests-stream-channels libk-tests-datagram-channels libk-tests-application-lifecycle libk-tests-executor libk-tests-uuid libk-tests-time
 
 # Run libk tests
 cd cmake-build-debug && /usr/bin/ctest -j1 -R "^(libk-tests-.*|libk-thread-io-tests)$" --output-on-failure
