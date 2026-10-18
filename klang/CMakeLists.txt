@@ -173,7 +173,8 @@ macro(klang_add_test TARGET TIMEOUT)
     add_executable(${TARGET} ${ARGN})
     target_link_libraries(${TARGET} klang-test-helpers Catch2::Catch2WithMain)
     add_test(NAME ${TARGET} COMMAND ${TARGET})
-    set_tests_properties(${TARGET} PROPERTIES TIMEOUT ${TIMEOUT})
+    klang_scale_ctest_timeout(_klang_test_timeout "${TIMEOUT}")
+    set_tests_properties(${TARGET} PROPERTIES TIMEOUT "${_klang_test_timeout}")
 endmacro()
 
 # ---------------------------------------------------------------------------
@@ -193,17 +194,19 @@ macro(klang_gen_test TARGET TIMEOUT)
     if(KLANG_GEN_TEST_SHARD_COUNT)
         math(EXPR KLANG_GEN_TEST_LAST_SHARD "${KLANG_GEN_TEST_SHARD_COUNT} - 1")
         foreach(KLANG_GEN_TEST_SHARD_INDEX RANGE ${KLANG_GEN_TEST_LAST_SHARD})
+            klang_scale_ctest_timeout(_klang_test_timeout "${TIMEOUT}")
             add_test(NAME ${TARGET}-shard-${KLANG_GEN_TEST_SHARD_INDEX}
                 COMMAND ${TARGET}
                     --shard-count ${KLANG_GEN_TEST_SHARD_COUNT}
                     --shard-index ${KLANG_GEN_TEST_SHARD_INDEX}
                     --order lex --rng-seed 42)
             set_tests_properties(${TARGET}-shard-${KLANG_GEN_TEST_SHARD_INDEX}
-                PROPERTIES TIMEOUT ${TIMEOUT} RUN_SERIAL TRUE)
+                PROPERTIES TIMEOUT "${_klang_test_timeout}" RUN_SERIAL TRUE)
         endforeach()
     else()
         add_test(NAME ${TARGET} COMMAND ${TARGET})
-        set_tests_properties(${TARGET} PROPERTIES TIMEOUT ${TIMEOUT})
+        klang_scale_ctest_timeout(_klang_test_timeout "${TIMEOUT}")
+        set_tests_properties(${TARGET} PROPERTIES TIMEOUT "${_klang_test_timeout}")
     endif()
 endmacro()
 
@@ -570,4 +573,5 @@ target_compile_definitions(klangc-tests PRIVATE
 add_dependencies(klangc-tests klangc libk_stdlib)
 
 add_test(NAME klangc-tests COMMAND klangc-tests)
-set_tests_properties(klangc-tests PROPERTIES TIMEOUT 120)
+klang_scale_ctest_timeout(_klangc_test_timeout 120)
+set_tests_properties(klangc-tests PROPERTIES TIMEOUT "${_klangc_test_timeout}")

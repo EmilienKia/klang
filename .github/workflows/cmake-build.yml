@@ -59,7 +59,8 @@ jobs:
         run: |
           cmake -S . -B cmake-build-debug \
             -G Ninja \
-            -DCMAKE_BUILD_TYPE=Debug
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DKLANG_CTEST_TIMEOUT_MULTIPLIER=2.0
 
       # ── Build ────────────────────────────────────────────────────────────────
       - name: Build

@@ -840,7 +840,8 @@ macro(libk_add_test TARGET TIMEOUT)
         LIBK_TIME_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/time/fixtures"
     )
     add_test(NAME ${TARGET} COMMAND ${TARGET})
-    set_tests_properties(${TARGET} PROPERTIES TIMEOUT ${TIMEOUT})
+    klang_scale_ctest_timeout(_libk_test_timeout "${TIMEOUT}")
+    set_tests_properties(${TARGET} PROPERTIES TIMEOUT "${_libk_test_timeout}")
 endmacro()
 
 # ── Native-only FFI ABI tests ──────────────────────────────────────────────
@@ -853,7 +854,8 @@ target_include_directories(libk-tests-ffi-native PRIVATE src/runtime)
 target_link_libraries(libk-tests-ffi-native PRIVATE
     Catch2::Catch2WithMain PkgConfig::LIBFFI pthread dl)
 add_test(NAME libk-tests-ffi-native COMMAND libk-tests-ffi-native)
-set_tests_properties(libk-tests-ffi-native PROPERTIES TIMEOUT 120)
+klang_scale_ctest_timeout(_libk_test_timeout 120)
+set_tests_properties(libk-tests-ffi-native PROPERTIES TIMEOUT "${_libk_test_timeout}")
 
 set_source_files_properties(${BIG_INTEGER_FFI_OBJ}
     PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
@@ -863,7 +865,8 @@ target_include_directories(libk-tests-big-integer-native PRIVATE src/runtime)
 target_link_libraries(libk-tests-big-integer-native PRIVATE
     Catch2::Catch2WithMain PkgConfig::GMP)
 add_test(NAME libk-tests-big-integer-native COMMAND libk-tests-big-integer-native)
-set_tests_properties(libk-tests-big-integer-native PROPERTIES TIMEOUT 120)
+klang_scale_ctest_timeout(_libk_test_timeout 120)
+set_tests_properties(libk-tests-big-integer-native PROPERTIES TIMEOUT "${_libk_test_timeout}")
 
 # ── Public K runtime C FFI tests ───────────────────────────────────────────
 add_library(klang-ffi-native-fixture SHARED tests/ffi/native_fixture.c)
@@ -899,10 +902,11 @@ macro(libk_add_test_sharded TARGET TIMEOUT SHARDS)
     )
     math(EXPR _libk_last_shard "${SHARDS} - 1")
     foreach(_libk_shard RANGE ${_libk_last_shard})
+        klang_scale_ctest_timeout(_libk_test_timeout "${TIMEOUT}")
         add_test(NAME ${TARGET}-shard-${_libk_shard}
                  COMMAND ${TARGET} --shard-count ${SHARDS} --shard-index ${_libk_shard})
         set_tests_properties(${TARGET}-shard-${_libk_shard}
-                             PROPERTIES TIMEOUT ${TIMEOUT} RUN_SERIAL TRUE)
+                             PROPERTIES TIMEOUT "${_libk_test_timeout}" RUN_SERIAL TRUE)
     endforeach()
 endmacro()
 
@@ -1033,11 +1037,13 @@ add_dependencies(libk-tests-module libk_module_fixtures)
 target_compile_definitions(libk-tests-module PRIVATE LIBK_MODULE_FIXTURES_DIR="${MODFX_DIR}")
 add_test(NAME libk-rtti-static-link-fixture
          COMMAND ${MODFX_DIR}/static_manifest_app)
-set_tests_properties(libk-rtti-static-link-fixture PROPERTIES TIMEOUT 120)
+klang_scale_ctest_timeout(_libk_test_timeout 120)
+set_tests_properties(libk-rtti-static-link-fixture PROPERTIES TIMEOUT "${_libk_test_timeout}")
 add_test(NAME libk-native-application-anchor
          COMMAND ${MODFX_DIR}/application_anchor_app)
+klang_scale_ctest_timeout(_libk_test_timeout 120)
 set_tests_properties(libk-native-application-anchor PROPERTIES
-    TIMEOUT 120
+    TIMEOUT "${_libk_test_timeout}"
     WORKING_DIRECTORY ${MODFX_DIR}
     ENVIRONMENT "TMPDIR=${LIBK_OUTPUT_DIR}")
 
