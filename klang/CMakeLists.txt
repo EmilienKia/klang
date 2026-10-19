@@ -536,7 +536,7 @@ klang_gen_test(klang-tests-import-templates 120 SHARD_COUNT 15
         tests/test-import-member-constructor.cpp
         tests/test-import-template-reparse-diagnostic.cpp
 )
-klang_gen_test(klang-tests-import-interop 120
+klang_gen_test(klang-tests-import-interop 120 SHARD_COUNT 2
         tests/test-import-interop.cpp
         tests/test-import-wrapped-alias.cpp
         tests/test-prod-lib.cpp
