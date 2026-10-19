@@ -1811,19 +1811,14 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
         }
     }
 
-    // Union alternatives are only resolved in this pass. Their destruction
-    // requirements must propagate to the containing aggregate.
+    // Resolved member ownership and union alternatives must participate in
+    // implicit destruction, including instantiations created after Pass A.
     if (!st.get_destructor()) {
         bool needs_dtor = false;
         for (auto& [name, var] : st.variables()) {
             auto mv = std::dynamic_pointer_cast<member_variable_definition>(var);
             if (!mv || name.rfind("__", 0) == 0) continue;
-            auto member_type = std::dynamic_pointer_cast<struct_type>(
-                type::canonical(type::remove_const(mv->get_type())));
-            if (!member_type || member_type->get_struct()) continue;
-            if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), member_type)) {
-                needs_dtor = un->has_nontrivial_destructor_alternative();
-            }
+            needs_dtor = value_type_needs_cleanup(mv->get_type());
             if (needs_dtor) break;
         }
         if (needs_dtor) {

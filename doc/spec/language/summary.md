@@ -1140,8 +1140,12 @@ static StructName() { /* called at program startup */ }
 - **Owner variables (`T!`)**: on explicit `delete` or on scope exit.
 - **Dynamic arrays**: destructors in reverse order (last → first), then `free`.
 - **By-value parameters**: destructor at end of the callee.
-- **Value members**: after the enclosing destructor body, in reverse declaration order;
-  concrete template members also require implicit destructor generation when needed.
+- **Members**: owned resources and embedded values are cleaned up together after
+  the enclosing destructor body, in reverse declaration order. Owner fields,
+  owning callables and recursively destructible sized-array/value fields require
+  an implicit destructor even without a user-declared one, including in concrete
+  templates. Borrowed fields never destroy their referents. If a member cleanup
+  throws, remaining members and bases are cleaned up before propagation.
   Embedded union members destroy only their active non-trivial alternative, also
   when the enclosing value was copy-constructed.
 - **Expression temporaries**: destroyed at end of statement (`;`) in reverse creation order.

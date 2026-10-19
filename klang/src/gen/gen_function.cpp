@@ -2627,10 +2627,10 @@ void implementation_generator::emit_constructor_unwind_cleanup(function& functio
  * Emit destructor cleanup IR: member and base destructor calls.
  *
  * Steps:
- *   1. Call destructors for struct-typed member variables (reverse declaration order).
- *   2. Call destructors for owner-typed member variables (free heap memory).
- *   3. Call base class destructors (reverse base-declaration order).
- *   4. For the most-derived class: call virtual base sub-object destructors.
+ *   1. Clean up owned and value members in reverse declaration order.
+ *   2. Call base class destructors (reverse base-declaration order).
+ *   3. For the most-derived class: call virtual base sub-object destructors.
+ *   4. If a child throws, finish the remaining children before resuming.
  */
 void implementation_generator::emit_destructor_cleanup(function& function) {
     // ── For destructors: call member and base destructors ──────────────────
@@ -2651,9 +2651,12 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
         st->get_struct_type()->get_reference()->get_llvm_type(),
         this_param, "this_ptr");
 
-    // Step 1: Call destructors for struct-typed member variables (reverse declaration order)
-    // ── Member struct destructor calls (reverse declaration order) ──
-    // Collect member variables that have a destructor (own members, not base subobjs)
+    struct cleanup_step {
+        llvm::Value* storage;
+        std::shared_ptr<type> value_type;
+        llvm::Function* static_destructor = nullptr;
+    };
+    std::vector<cleanup_step> steps;
     std::vector<std::pair<std::shared_ptr<member_variable_definition>, unsigned>> dtor_members;
     for (auto& var_entry : st->variables()) {
         if (auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second)) {
@@ -2663,71 +2666,29 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
             if (var->get_short_name().rfind("__vbase_", 0) == 0) continue;
             if (var->get_short_name().rfind("__vptr", 0) == 0) continue;
             auto member_type = type::canonical(type::remove_const(var->get_type()));
-            if (type::is_sized_array(member_type)) {
+            if (value_type_needs_cleanup(member_type)) {
                 auto field = st->get_struct_type()->get_member(var->get_short_name());
                 if (field) dtor_members.push_back({var, (unsigned)field->index});
-            } else if (auto m_st_type = std::dynamic_pointer_cast<struct_type>(member_type)) {
-                auto member_aggregate = m_st_type->get_struct();
-                auto member_union = member_aggregate ? nullptr
-                    : find_union_by_struct_type(_unit.get_root_namespace(), m_st_type);
-                if ((member_aggregate && member_aggregate->get_destructor())
-                    || (member_union && member_union->has_nontrivial_destructor_alternative())) {
-                    auto field_opt = st->get_struct_type()->get_member(var->get_short_name());
-                    if (field_opt) {
-                        dtor_members.push_back({var, (unsigned)field_opt->index});
-                    }
-                }
             }
         }
     }
     std::sort(dtor_members.begin(), dtor_members.end(), [](const auto& a, const auto& b) {
         return a.second < b.second;
     });
-    // Call member destructors in reverse declaration order
     for (auto it = dtor_members.rbegin(); it != dtor_members.rend(); ++it) {
         auto& [var, field_idx] = *it;
-        auto m_st_type = std::dynamic_pointer_cast<struct_type>(
-            type::canonical(type::remove_const(var->get_type())));
+        auto member_type = type::canonical(type::remove_const(var->get_type()));
         auto member_ptr = _builder->CreateStructGEP(
             _context->get_llvm_type(st->get_struct_type()),
             this_ptr, field_idx,
             "member_" + var->get_short_name() + "_ptr");
-        if (auto array = std::dynamic_pointer_cast<sized_array_type>(
-                type::canonical(type::remove_const(var->get_type())))) {
-            emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
-                member_ptr, array, make_virtual_call_emitter());
-            continue;
-        }
-        if (!m_st_type->get_struct()) {
-            if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), m_st_type)) {
-                emit_union_cleanup(member_ptr, *un);
+        llvm::Function* member_destructor = nullptr;
+        if (auto member_struct = std::dynamic_pointer_cast<struct_type>(member_type)) {
+            if (auto member_aggregate = member_struct->get_struct()) {
+                member_destructor = _context->lookup_llvm_function(member_aggregate->get_destructor());
             }
-            continue;
         }
-        auto m_dtor = m_st_type->get_struct()->get_destructor();
-        auto m_dtor_it = _context->_functions.find(m_dtor->shared_as<k::model::function>());
-        if (m_dtor_it == _context->_functions.end()) continue;
-        create_call_or_invoke(m_dtor_it->second->getFunctionType(), m_dtor_it->second, {member_ptr});
-    }
-
-    // Step 2: Call destructors for owner-typed member variables (free heap memory)
-    std::vector<std::pair<std::shared_ptr<member_variable_definition>, unsigned>> owner_members;
-    for (auto& var_entry : st->variables()) {
-        auto var = std::dynamic_pointer_cast<member_variable_definition>(var_entry.second);
-        if (!var || !type::is_owner(type::remove_const(var->get_type()))) continue;
-        auto field = st->get_struct_type()->get_member(var->get_short_name());
-        if (field) owner_members.push_back({var, (unsigned)field->index});
-    }
-    std::sort(owner_members.begin(), owner_members.end(), [](const auto& a, const auto& b) {
-        return a.second < b.second;
-    });
-    for (auto it = owner_members.rbegin(); it != owner_members.rend(); ++it) {
-        auto& [var, field_idx] = *it;
-        auto member_ptr = _builder->CreateStructGEP(
-            _context->get_llvm_type(st->get_struct_type()), this_ptr, field_idx,
-            "owner_member_" + var->get_short_name() + "_ptr");
-        emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-            member_ptr, type::remove_const(var->get_type())->get_subtype(), "owner_member_cleanup");
+        steps.push_back({member_ptr, member_type, member_destructor});
     }
 
     // ── Base destructors in reverse base-declaration order ──
@@ -2755,7 +2716,7 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
                 (unsigned)base_field->index,
                 "base_" + bs.sanitised_name() + "_ptr"
             );
-            create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {base_ptr});
+            steps.push_back({base_ptr, bs.base->get_struct_type(), dtor_it->second});
         }
 
         // Step 3: Call base class destructors (reverse base-declaration order)
@@ -2781,12 +2742,75 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
                 (unsigned)vbase_field->index,
                 "vbase_" + vbase->get_short_name() + "_ptr"
             );
-            create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {vbase_ptr});
+            steps.push_back({vbase_ptr, vbase->get_struct_type(), dtor_it->second});
         }
         // NOTE: Classes with only __vbptr_X__ (not __vbase_X__) do NOT call virtual
         // base destructors — that is the responsibility of the most-derived class (the
         // one owning __vbase_X__). This matches C++ sub-object destructor semantics.
     }
+
+    if (steps.empty()) return;
+    auto& ctx = _context->llvm_context();
+    auto* func = _builder->GetInsertBlock()->getParent();
+    auto* ptr_type = llvm::PointerType::get(ctx, 0);
+    if (!func->hasPersonalityFn()) {
+        auto personality = get_module().getOrInsertFunction("__gxx_personality_v0",
+            llvm::FunctionType::get(_builder->getInt32Ty(), true));
+        func->setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
+    }
+    llvm::IRBuilder<> entry_builder(&func->getEntryBlock(), func->getEntryBlock().begin());
+    auto* progress = entry_builder.CreateAlloca(_builder->getInt32Ty(), nullptr, "member_cleanup_progress");
+    auto* unwind = llvm::BasicBlock::Create(ctx, "member_cleanup_unwind", func);
+    virtual_call_emitter invoke = [&](llvm::FunctionType* signature, llvm::Value* callee,
+                                     const std::vector<llvm::Value*>& args,
+                                     const std::string& name) -> llvm::Value* {
+        auto* next = llvm::BasicBlock::Create(ctx, "member_cleanup_continue", func);
+        auto* call = _builder->CreateInvoke(signature, callee, next, unwind, args, name);
+        _builder->SetInsertPoint(next);
+        return call;
+    };
+    auto emit_step = [&](size_t index, const virtual_call_emitter& emit_call) {
+        const auto& step = steps[index];
+        // Arrays/unions retain their own unfinished prefix. A nested aggregate
+        // destructor completes its children itself, so its call is never retried.
+        const bool pending = !step.static_destructor && value_cleanup_has_pending_children(step.value_type);
+        _builder->CreateStore(_builder->getInt32(pending ? index : index + 1), progress);
+        if (step.static_destructor) {
+            if (emit_call) {
+                emit_call(step.static_destructor->getFunctionType(), step.static_destructor, {step.storage}, "");
+            } else {
+                _builder->CreateCall(step.static_destructor, {step.storage});
+            }
+        } else {
+            emit_value_cleanup(_builder.get(), get_module(), _context->_functions,
+                step.storage, step.value_type, emit_call);
+        }
+        if (pending) _builder->CreateStore(_builder->getInt32(index + 1), progress);
+    };
+    for (size_t index = 0; index < steps.size(); ++index) emit_step(index, invoke);
+    auto* normal = _builder->GetInsertBlock();
+
+    _builder->SetInsertPoint(unwind);
+    auto* exception = _builder->CreateLandingPad(
+        llvm::StructType::get(ctx, {ptr_type, _builder->getInt32Ty()}), 0);
+    exception->setCleanup(true);
+    auto* resume = llvm::BasicBlock::Create(ctx, "member_cleanup_resume", func);
+    auto* dispatch = _builder->CreateSwitch(
+        _builder->CreateLoad(_builder->getInt32Ty(), progress), resume, steps.size());
+    std::vector<llvm::BasicBlock*> remaining;
+    for (size_t index = 0; index < steps.size(); ++index) {
+        auto* next = llvm::BasicBlock::Create(ctx, "member_cleanup_remaining", func);
+        remaining.push_back(next);
+        dispatch->addCase(_builder->getInt32(index), next);
+    }
+    for (size_t index = 0; index < steps.size(); ++index) {
+        _builder->SetInsertPoint(remaining[index]);
+        emit_step(index, {});
+        _builder->CreateBr(index + 1 < steps.size() ? remaining[index + 1] : resume);
+    }
+    _builder->SetInsertPoint(resume);
+    _builder->CreateResume(exception);
+    _builder->SetInsertPoint(normal);
 }
 
 /**

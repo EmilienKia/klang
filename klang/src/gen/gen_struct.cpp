@@ -852,6 +852,9 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
             for (auto& [vname, var] : st.variables()) {
                 if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(var)) {
                     if (vname.rfind("__", 0) == 0) continue;
+                    if (value_type_needs_cleanup(mv->get_type())) {
+                        needs_dtor = true; break;
+                    }
                     // If the type is already resolved to struct_type, check directly
                     if (auto mv_st_type = std::dynamic_pointer_cast<struct_type>(mv->get_type())) {
                         if (mv_st_type->get_struct() && mv_st_type->get_struct()->get_destructor()) {

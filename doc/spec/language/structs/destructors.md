@@ -32,12 +32,19 @@ struct counter {
 }
 ```
 A struct may have at most one instance destructor.
-If no destructor is defined, no destructor code runs when the struct is destroyed (fields of struct type will have their own destructors called, but no user code executes for the outer struct).
+If no destructor is defined, no user code executes for the outer struct. The
+compiler must nevertheless generate an implicit destructor when a base or member
+requires cleanup. This includes owner fields (`T!`), owning callables, embedded
+values with destructors, and sized arrays containing such values, recursively.
+Borrowed pointers, references, links and views do not acquire ownership and must
+not destroy their referents.
 
-Value members with destructors must be destroyed in reverse declaration order
-after the enclosing destructor body. This rule also applies to instantiated
-template structs: the compiler must generate an implicit destructor when a
-concrete value member requires one, even if the template declares no destructor.
+All members requiring cleanup must be destroyed in reverse declaration order
+after the enclosing destructor body, regardless of whether they are embedded
+values or owned resources. This rule also applies to instantiated template
+structs even if the template declares no destructor. A null owner or owning
+callable field requires no destruction; explicitly deleting or moving a field
+must not cause it to be destroyed again by the enclosing destructor.
 An embedded union member follows the same rule: its active non-trivial alternative
 must be destroyed after the enclosing destructor body. Empty or trivial alternatives
 require no destruction. This applies to default-constructed and copy-constructed
@@ -138,6 +145,10 @@ A destructor that throws during normal cleanup must reach the enclosing `try`
 handler. An owner or owning-callable slot is cleared before its destructor or
 drop function is invoked, so propagating that failure must not retry destruction
 through the same slot.
+If a member's cleanup throws, the enclosing destructor must finish its remaining
+members and bases before propagating that exception. An unfinished array or
+union member must finish its remaining active children without retrying a child
+whose lifetime has already ended.
 ---
 
 ## 3. By-value parameters

@@ -46,6 +46,8 @@
 
 #include <catch2/catch_all.hpp>
 
+#include <utility>
+
 #include "helpers.hpp"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -219,6 +221,369 @@ TEST_CASE("template owner members are destroyed once in reverse declaration orde
     REQUIRE(test);
     CHECK(test(false) == 21);
     CHECK(test(true) == 21);
+}
+
+TEST_CASE("ordinary aggregate owner fields preserve const owner transfer and destroy both allocations",
+          "[gen][owner][const][lifecycle][aggregate-owner-cleanup][regression][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module const_owner_baseline;
+        made : int = 0;
+        destroyed : int = 0;
+        droppedFirst : int = 0;
+        droppedSecond : int = 0;
+        droppedOther : int = 0;
+        phase : int = 0;
+        sourceBefore : int = -999;
+        sourceCleared : int = -1;
+        takenPresent : int = -1;
+        takenValue : int = -999;
+        madeAtTransfer : int = -1;
+        destroyedAtTransfer : int = -1;
+        boxPresent : int = -1;
+        markers : int[7];
+        markerCount : int = 0;
+        mark(label : int, number : int) {
+            if (markerCount < 7) markers[markerCount] = label * 10 + number;
+            ++markerCount;
+        }
+        struct Resource {
+            public value : int = 8;
+            public allocationId : int = 0;
+            Resource() {
+                made += 1;
+                allocationId = made;
+                mark(67, allocationId);
+            }
+            ~Resource() {
+                destroyed += 1;
+                if (allocationId == 1) droppedFirst += 1;
+                else if (allocationId == 2) droppedSecond += 1;
+                else droppedOther += 1;
+                mark(68, allocationId);
+            }
+        }
+        struct Box { public owner : Resource! = null; }
+        ordinaryProbe() : int {
+            {
+                source : const Resource! = new Resource();
+                phase = 1;
+                if (source == null) return -101;
+                sourceBefore = source.value;
+                if (source.value != 8) return -102;
+                phase = 2;
+                taken : const Resource! = source;
+                sourceCleared = 0;
+                if (source == null) sourceCleared = 1;
+                takenPresent = 0;
+                if (taken != null) {
+                    takenPresent = 1;
+                    takenValue = taken.value;
+                }
+                madeAtTransfer = made;
+                destroyedAtTransfer = destroyed;
+                phase = 3;
+                if (source != null) return -103;
+                if (taken == null) return -104;
+                if (taken.value != 8) return -105;
+                box : Box;
+                box.owner = new Resource();
+                boxPresent = 0;
+                if (box.owner != null) boxPresent = 1;
+                phase = 4;
+                if (box.owner == null) return -106;
+                phase = 5;
+            }
+            phase = 6;
+            return 0;
+        }
+        run() : int {
+            made = 0; destroyed = 0;
+            droppedFirst = 0; droppedSecond = 0; droppedOther = 0;
+            phase = 0; markerCount = 0;
+            status : int = ordinaryProbe();
+            mark(80, phase);
+            mark(70, droppedFirst);
+            mark(83, droppedSecond);
+            if (status != 0) return status;
+            if (phase != 6) return -201;
+            if (made != 2) return -202;
+            if (sourceBefore != 8) return -203;
+            if (sourceCleared != 1) return -204;
+            if (takenPresent != 1) return -205;
+            if (takenValue != 8) return -206;
+            if (madeAtTransfer != 1) return -207;
+            if (destroyedAtTransfer != 0) return -208;
+            if (boxPresent != 1) return -209;
+            if (droppedOther != 0) return -210;
+            if (droppedFirst > 1) return -211;
+            if (droppedSecond > 1) return -212;
+            if (destroyed != droppedFirst + droppedSecond) return -213;
+            return destroyed;
+        }
+        markerAt(index : int) : int { return markers[index]; }
+        recordedMarkers() : int { return markerCount; }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    auto marker = jit->lookup_symbol<int(*)(int)>("markerAt");
+    auto count = jit->lookup_symbol<int(*)()>("recordedMarkers");
+    REQUIRE(run);
+    REQUIRE(marker);
+    REQUIRE(count);
+    // C1, C2, D2, D1, P6, F1, S1: preserve the standalone native control's markers.
+    const int expected[] = {671, 672, 682, 681, 806, 701, 831};
+    for (int replay = 0; replay < 2; ++replay) {
+        CAPTURE(replay);
+        REQUIRE(run() == 2);
+        REQUIRE(count() == 7);
+        for (int index = 0; index < 7; ++index) {
+            CAPTURE(index);
+            CHECK(marker(index) == expected[index]);
+        }
+    }
+}
+
+TEST_CASE("implicit aggregate destruction cleans owned fields but never borrowed fields",
+          "[gen][owner][array][lambda][template][lifecycle][aggregate-owner-cleanup][regression][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module aggregate_owner_cleanup;
+        made : int = 0;
+        drops : int = 0;
+        order : int = 0;
+        outerDrops : int = 0;
+        struct Leaf {
+            id : int;
+            Leaf(value : int) : id(value) { ++made; }
+            ~Leaf() { ++drops; order = order * 10 + id; }
+        }
+        struct Box {
+            public owned : Leaf! = null;
+            public empty : Leaf! = null;
+            public borrowed : Leaf* = null;
+        }
+        struct Nested { public box : Box; }
+        struct Inherited : public Box { public second : Leaf! = null; }
+        template<typename T> struct Wrapper { public value : T; }
+        struct ArrayBox { public owners : Leaf![2]; }
+        struct ClosureBox { public task : !() = null; }
+        struct Explicit {
+            public first : Leaf! = null;
+            public second : Leaf! = null;
+            ~Explicit() {
+                ++outerDrops;
+                order = order * 10 + 9;
+                delete second;
+            }
+        }
+        struct Mixed {
+            first : Leaf! = null;
+            value : Leaf;
+            task : !() = null;
+            owners : Leaf![2];
+            Mixed() : value(2) {
+                first = new Leaf(1);
+                captured : Leaf! = new Leaf(3);
+                task = [captured]() {};
+                owners[0] = new Leaf(4);
+                owners[1] = new Leaf(5);
+            }
+        }
+        reset() { made = 0; drops = 0; order = 0; outerDrops = 0; }
+        plain(unwind : bool) : int {
+            reset();
+            {
+                anchor : Leaf(9);
+                code : int = 0;
+                try {
+                    box : Box;
+                    box.borrowed = &anchor;
+                    box.owned = new Leaf(1);
+                    if (unwind) throw Exception(911);
+                } catch (error : Throwable&) { code = error.getCode(); }
+                if (code != (unwind ? 911 : 0)) return -1;
+                if (made != 2 || drops != 1 || order != 1 || anchor.id != 9) return -2;
+            }
+            return made == 2 && drops == 2 ? order : -3;
+        }
+        nested(unwind : bool) : int {
+            reset();
+            code : int = 0;
+            try {
+                holder : Wrapper<Nested>;
+                holder.value.box.owned = new Leaf(1);
+                if (unwind) throw Exception(912);
+            } catch (error : Throwable&) { code = error.getCode(); }
+            return code == (unwind ? 912 : 0) && made == 1 && drops == 1 ? order : -1;
+        }
+        arrays() : int {
+            reset();
+            {
+                holder : ArrayBox;
+                holder.owners[0] = new Leaf(1);
+                holder.owners[1] = new Leaf(2);
+            }
+            return made == 2 && drops == 2 ? order : -1;
+        }
+        callable() : int {
+            reset();
+            {
+                holder : ClosureBox;
+                token : Leaf! = new Leaf(1);
+                holder.task = [token]() {};
+                if (token != null) return -1;
+            }
+            return made == 1 && drops == 1 ? order : -2;
+        }
+        nil() : int {
+            reset();
+            {
+                box : Box;
+                callable : ClosureBox;
+                array : ArrayBox;
+            }
+            return made == 0 && drops == 0 ? 1 : -1;
+        }
+        inherited() : int {
+            reset();
+            {
+                box : Inherited;
+                box.owned = new Leaf(1);
+                box.second = new Leaf(2);
+            }
+            return made == 2 && drops == 2 ? order : -1;
+        }
+        explicitOuter() : int {
+            reset();
+            {
+                holder : Explicit;
+                holder.first = new Leaf(1);
+                holder.second = new Leaf(2);
+            }
+            return made == 2 && drops == 2 && outerDrops == 1 ? order : -1;
+        }
+        mixed() : int {
+            reset();
+            { holder : Mixed; }
+            return made == 5 && drops == 5 ? order : -1;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto plain = jit->lookup_symbol<int(*)(bool)>("plain");
+    auto nested = jit->lookup_symbol<int(*)(bool)>("nested");
+    REQUIRE(plain);
+    REQUIRE(nested);
+    for (bool unwind : {false, true}) {
+        CAPTURE(unwind);
+        CHECK(plain(unwind) == 19);
+        CHECK(nested(unwind) == 1);
+    }
+    for (const auto& [name, expected] : {
+            std::pair{"arrays", 21}, std::pair{"callable", 1},
+            std::pair{"nil", 1}, std::pair{"inherited", 21},
+            std::pair{"explicitOuter", 921}, std::pair{"mixed", 54321}}) {
+        CAPTURE(name);
+        auto run = jit->lookup_symbol<int(*)()>(name);
+        REQUIRE(run);
+        CHECK(run() == expected);
+    }
+}
+
+TEST_CASE("throwing aggregate child cleanup drains remaining owned fields exactly once",
+          "[gen][owner][array][lambda][exceptions][lifecycle][aggregate-owner-cleanup][regression][jit]") {
+    auto jit = gen_jit(R"SRC(
+        module throwing_aggregate_owner_cleanup;
+        made : int = 0;
+        drops : int = 0;
+        order : int = 0;
+        fail : bool = false;
+        throwId : int = 2;
+        outerDrops : int = 0;
+        struct Leaf {
+            id : int;
+            Leaf(value : int) : id(value) { ++made; }
+            ~Leaf() {
+                ++drops;
+                order = order * 10 + id;
+                if (fail && id == throwId) { fail = false; throw Exception(913); }
+            }
+        }
+        struct Box {
+            public first : Leaf! = null;
+            public second : Leaf! = null;
+            public third : Leaf! = null;
+        }
+        struct ArrayBox {
+            public first : Leaf! = null;
+            public owners : Leaf![3];
+        }
+        struct Nested {
+            public first : Leaf! = null;
+            public box : Box;
+        }
+        struct Inherited : public Box { public fourth : Leaf! = null; }
+        struct ClosureBox {
+            public first : Leaf! = null;
+            public task : !() = null;
+        }
+        struct Explicit {
+            public first : Leaf! = null;
+            public second : Leaf! = null;
+            ~Explicit() { ++outerDrops; }
+        }
+        run(mode : int) : int {
+            made = 0; drops = 0; order = 0; outerDrops = 0;
+            fail = true; throwId = 2;
+            code : int = 0;
+            try {
+                if (mode == 0) {
+                    box : Box;
+                    box.first = new Leaf(1);
+                    box.second = new Leaf(2);
+                    box.third = new Leaf(3);
+                } else if (mode == 1) {
+                    box : ArrayBox;
+                    box.first = new Leaf(1);
+                    box.owners[0] = new Leaf(2);
+                    box.owners[1] = new Leaf(3);
+                    box.owners[2] = new Leaf(4);
+                    throwId = 3;
+                } else if (mode == 2) {
+                    box : Nested;
+                    box.first = new Leaf(1);
+                    box.box.first = new Leaf(2);
+                    box.box.second = new Leaf(3);
+                    throwId = 3;
+                } else if (mode == 3) {
+                    box : ClosureBox;
+                    box.first = new Leaf(1);
+                    token : Leaf! = new Leaf(2);
+                    box.task = [token]() {};
+                    if (token != null) return -1;
+                } else if (mode == 4) {
+                    box : Explicit;
+                    box.first = new Leaf(1);
+                    box.second = new Leaf(2);
+                } else {
+                    box : Inherited;
+                    box.first = new Leaf(1);
+                    box.fourth = new Leaf(2);
+                }
+            } catch (error : Throwable&) { code = error.getCode(); }
+            if (code != 913 || fail || made != drops) return -2;
+            if (outerDrops != (mode == 4 ? 1 : 0)) return -3;
+            return order;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)(int)>("run");
+    REQUIRE(run);
+    const int expected[] = {321, 4321, 321, 21, 21, 21};
+    for (int mode = 0; mode < 6; ++mode) {
+        CAPTURE(mode);
+        int result = 0;
+        REQUIRE_NOTHROW(result = run(mode));
+        CHECK(result == expected[mode]);
+    }
 }
 
 TEST_CASE("new/delete primitive: explicit delete returns value", "[gen][owner][jit]") {

@@ -2838,11 +2838,13 @@ void type_reference_resolver::finalize_aggregate_destructor(aggregate& agg) {
         for (const auto& [name, var] : current.variables()) {
             auto member = std::dynamic_pointer_cast<member_variable_definition>(var);
             if (!member || name.rfind("__", 0) == 0) continue;
-            // Only embedded values participate here, not borrowed or owner fields.
             auto value_type = type::canonical(type::remove_const(member->get_type()));
-            if (auto array = std::dynamic_pointer_cast<sized_array_type>(value_type)) {
+            while (auto array = std::dynamic_pointer_cast<sized_array_type>(value_type)) {
                 value_type = type::canonical(type::remove_const(array->get_subtype()));
             }
+            if (value_type_needs_cleanup(value_type)) needs_dtor = true;
+            // Recurse only into embedded values; owners need cleanup regardless
+            // of their referent's destructor and may point back to this aggregate.
             if (auto member_type = std::dynamic_pointer_cast<struct_type>(value_type)) {
                 if (auto member_aggregate = member_type->get_struct()) {
                     inspect_subobject(member_aggregate);
