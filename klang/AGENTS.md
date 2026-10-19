@@ -327,7 +327,7 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-model` | model/documentation/materializer/phase checks |
 | `klang-tests-gen-core` | general codegen + literals + variable init |
 | `klang-tests-gen-resolution` | symbol resolution, visibility, multi-source; CTest shards 0–1 |
-| `klang-tests-gen-extern-intrinsics` | extern C, compiler intrinsics, varargs |
+| `klang-tests-gen-extern-intrinsics` | extern C, compiler intrinsics, varargs; CTest shards 0–1 |
 | `klang-tests-gen-functions` | callables/lambda/func-ref; CTest shards 0-4 |
 | `klang-tests-gen-control` | statements/control-flow/init-order/static ctor-dtor |
 | `klang-tests-gen-exceptions` | throw/catch/contracts/rethrow/unwinding; CTest shards 0-2 |

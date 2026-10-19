@@ -267,7 +267,7 @@ klang_gen_test(klang-tests-gen-resolution 120 SHARD_COUNT 2
 # ---------------------------------------------------------------------------
 # Group 3c — Codegen ABI & FFI: extern C, intrinsics, varargs
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-extern-intrinsics 120
+klang_gen_test(klang-tests-gen-extern-intrinsics 120 SHARD_COUNT 2
         tests/test-gen-extern.cpp
         tests/test-gen-intrinsic.cpp
         tests/test-gen-varargs.cpp
