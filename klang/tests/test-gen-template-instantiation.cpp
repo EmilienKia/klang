@@ -864,6 +864,276 @@ TEST_CASE("Instantiated name qualifies a namespaced type argument",
     CHECK(box_name.find("a_NItem") != std::string::npos);
 }
 
+namespace {
+
+std::vector<std::shared_ptr<k::model::type>> qualifier_variants(
+    const std::shared_ptr<k::model::type>& shape) {
+    using namespace k::model;
+    std::vector<std::shared_ptr<type>> result;
+    if (auto inner = shape->get_subtype()) {
+        for (const auto& variant : qualifier_variants(inner)) {
+            auto wrapped = type::make_pinned_wrapper(shape, variant);
+            result.push_back(wrapped);
+            result.push_back(wrapped->get_const());
+        }
+    } else {
+        result = {shape, shape->get_const()};
+    }
+    return result;
+}
+
+std::shared_ptr<k::model::type> repin_qualifier_graph(
+    const std::shared_ptr<k::model::type>& original) {
+    using namespace k::model;
+    if (auto inner = original->get_subtype()) {
+        return type::make_pinned_wrapper(original, repin_qualifier_graph(inner));
+    }
+    return original;
+}
+
+std::string qualifier_slot_source(bool readonly_first) {
+    const std::string readonly = R"SRC(
+        readonly(box : const Box&) : bool {
+            return &slot(box.owner) == &box.owner;
+        }
+    )SRC";
+    const std::string referent = R"SRC(
+        referent(value : const Resource!&) : bool {
+            return &slot(value) == &value;
+        }
+    )SRC";
+    return std::string(R"SRC(
+        module qualifier_slot_identity;
+        struct Resource {
+            public value : int;
+            Resource(v : int) : value(v) {}
+        }
+        struct Box { public owner : Resource! = null; }
+        template<typename T>
+        slot(value : T&) : T& { return value; }
+    )SRC") + (readonly_first ? readonly + referent : referent + readonly) + R"SRC(
+        run() : int {
+            box : Box;
+            box.owner = new Resource(41);
+            source : const Resource! = new Resource(17);
+    )SRC" + (readonly_first ? R"SRC(
+            if (!readonly(box)) return -1;
+            if (!referent(source)) return -2;
+    )SRC" : R"SRC(
+            if (!referent(source)) return -2;
+            if (!readonly(box)) return -1;
+    )SRC") + R"SRC(
+            slot(source) = new Resource(73);
+            if (source->value != 73 || box.owner->value != 41) return -3;
+            if (!readonly(box) || !referent(source)) return -4;
+            return 42;
+        }
+    )SRC";
+}
+
+} // namespace
+
+TEST_CASE("Template keys and concrete names preserve every const wrapper boundary",
+          "[model][template][instantiation][template-qualifier-identity][regression]") {
+    using namespace k::model;
+    auto comp = compile_model(R"SRC(
+        module qualifier_identity_model;
+        struct Resource {}
+        typedef Handle : Resource!;
+        typedef OtherHandle : Resource!;
+        alias ResourceName : Resource;
+        alias HandleName : Handle;
+        resource(value : ResourceName&) {}
+        handle(value : HandleName&) {}
+    )SRC");
+    REQUIRE(comp != nullptr);
+    auto root = comp->get_unit()->get_root_namespace();
+    auto resource = root->get_aggregate("Resource")->get_struct_type();
+    auto handle = root->get_alias("Handle")->get_alias_type();
+    auto other_handle = root->get_alias("OtherHandle")->get_alias_type();
+    REQUIRE(resource != nullptr);
+    REQUIRE(handle != nullptr);
+    REQUIRE(other_handle != nullptr);
+
+    auto key = [](const std::shared_ptr<type>& t) {
+        return build_instantiation_key({template_argument::make_type(t)});
+    };
+    auto name = [](const std::shared_ptr<type>& t) {
+        return build_instantiated_name("probe", {template_argument::make_type(t)});
+    };
+    auto readonly_slot = resource->get_owner()->get_const();
+    auto const_referent = resource->get_const()->get_owner();
+    CHECK_FALSE(type::are_equal(readonly_slot, const_referent));
+    CHECK(key(readonly_slot) != key(const_referent));
+    CHECK(name(readonly_slot) != name(const_referent));
+    CHECK(key(readonly_slot) == "<const (qualifier_identity_model::Resource!)>");
+    CHECK(key(const_referent) == "<const qualifier_identity_model::Resource!>");
+    CHECK(name(readonly_slot) == "probe__const_s_bqualifier_uidentity_umodel_NResource_o_q");
+    CHECK(name(const_referent) == "probe__const_squalifier_uidentity_umodel_NResource_o");
+
+    std::vector<std::shared_ptr<type>> types = qualifier_variants(resource);
+    const std::vector<std::shared_ptr<type>> shapes{
+        resource->get_pointer(), resource->get_reference(), resource->get_link(),
+        resource->get_view(), resource->get_owner(), resource->get_drain(),
+        resource->get_array(), resource->get_array(3),
+        resource->get_pointer()->get_reference(),
+        resource->get_link()->get_reference(),
+        resource->get_view()->get_reference(),
+        resource->get_owner()->get_reference(),
+        resource->get_drain()->get_reference(),
+        resource->get_array()->get_owner(),
+        resource->get_array(3)->get_owner(),
+        resource->get_pointer()->get_pointer(),
+        resource->get_owner()->get_pointer()
+    };
+    for (const auto& shape : shapes) {
+        auto variants = qualifier_variants(shape);
+        types.insert(types.end(), variants.begin(), variants.end());
+    }
+    for (const auto& nominal : {handle, other_handle}) {
+        auto variants = qualifier_variants(nominal);
+        types.insert(types.end(), variants.begin(), variants.end());
+        variants = qualifier_variants(nominal->get_reference());
+        types.insert(types.end(), variants.begin(), variants.end());
+    }
+    REQUIRE(types.size() == 118);
+
+    std::set<std::string> keys, names, pack_keys, pack_names;
+    for (size_t i = 0; i < types.size(); ++i) {
+        const auto& t = types[i];
+        INFO(type_display_name(t));
+        keys.insert(key(t));
+        names.insert(name(t));
+        auto pack = template_argument::make_pack({t, resource});
+        pack_keys.insert(build_instantiation_key({pack}));
+        pack_names.insert(build_instantiated_name("probe", {pack}));
+        auto equal = repin_qualifier_graph(t);
+        REQUIRE(type::are_equal(t, equal));
+        CHECK(key(t) == key(equal));
+        CHECK(name(t) == name(equal));
+        if (t->get_subtype()) CHECK(t != equal);
+        for (size_t j = 0; j < i; ++j) {
+            CHECK_FALSE(type::are_equal(t, types[j]));
+        }
+    }
+    CHECK(keys.size() == types.size());
+    CHECK(names.size() == types.size());
+    CHECK(pack_keys.size() == types.size());
+    CHECK(pack_names.size() == types.size());
+
+    CHECK_FALSE(type::are_equal(handle, resource->get_owner()));
+    CHECK_FALSE(type::are_equal(handle, other_handle));
+    CHECK(key(handle) != key(resource->get_owner()));
+    CHECK(name(handle) != name(resource->get_owner()));
+    auto soft_resource = root->get_function("resource")->get_parameter("value")->get_type()->get_subtype();
+    auto soft_handle = root->get_function("handle")->get_parameter("value")->get_type()->get_subtype();
+    CHECK(type::are_equal(resource, soft_resource));
+    CHECK(type::are_equal(handle, soft_handle));
+    CHECK(key(resource) == key(soft_resource));
+    CHECK(name(resource) == name(soft_resource));
+    CHECK(key(handle) == key(soft_handle));
+    CHECK(name(handle) == name(soft_handle));
+    CHECK(build_instantiated_name("Box", {template_argument::make_type(
+        root->get_context()->from_type(primitive_type::INT))}) == "Box__int");
+}
+
+TEST_CASE("Ordinary T reference specializations preserve caller slots in both orders",
+          "[gen][model][template][instantiation][template-qualifier-identity][regression]") {
+    using namespace k::model;
+    const bool readonly_first = GENERATE(true, false);
+    INFO("readonly specialization first: " << readonly_first);
+    const auto source = qualifier_slot_source(readonly_first);
+    auto comp = compile_model(source);
+    REQUIRE(comp != nullptr);
+    auto root = comp->get_unit()->get_root_namespace();
+    auto resource = root->get_aggregate("Resource")->get_struct_type();
+    auto readonly_slot = resource->get_owner()->get_const();
+    auto const_referent = resource->get_const()->get_owner();
+    auto primary = root->get_function("slot");
+    REQUIRE(primary != nullptr);
+    REQUIRE(primary->get_tpl_info() != nullptr);
+    const auto& cache = primary->get_tpl_info()->instantiations;
+    REQUIRE(cache.size() == 2);
+    std::set<std::string> concrete_names, mangled_names;
+    for (const auto& [caller_name, expected] :
+         std::vector<std::pair<std::string, std::shared_ptr<type>>>{
+             {"readonly", readonly_slot}, {"referent", const_referent}}) {
+        const auto key = build_instantiation_key({template_argument::make_type(expected)});
+        auto found = cache.find(key);
+        REQUIRE(found != cache.end());
+        const auto* entry = std::get_if<std::shared_ptr<function>>(&found->second);
+        REQUIRE(entry != nullptr);
+        auto concrete = *entry;
+        REQUIRE(concrete != nullptr);
+        concrete_names.insert(concrete->get_short_name());
+        mangled_names.insert(concrete->get_mangled_name());
+        REQUIRE(concrete->get_tpl_args().size() == 1);
+        CHECK(type::are_equal(concrete->get_tpl_args()[0].type_arg, expected));
+        const auto expected_ref = expected->get_reference();
+        CHECK(type::are_equal(concrete->get_parameter("value")->get_type(), expected_ref));
+        CHECK(type::are_equal(concrete->get_return_type(), expected_ref));
+        auto body = concrete->get_existing_block();
+        REQUIRE(body != nullptr);
+        REQUIRE(body->get_statements().size() == 1);
+        auto returned = std::dynamic_pointer_cast<return_statement>(body->get_statements()[0]);
+        REQUIRE(returned != nullptr);
+        auto parameter = std::dynamic_pointer_cast<symbol_expression>(returned->get_expression());
+        REQUIRE(parameter != nullptr);
+        CHECK(parameter->get_variable_def() == concrete->get_parameter("value"));
+
+        auto caller = root->get_function(caller_name);
+        REQUIRE(caller != nullptr);
+        auto caller_body = caller->get_existing_block();
+        REQUIRE(caller_body != nullptr);
+        REQUIRE(caller_body->get_statements().size() == 1);
+        auto result = std::dynamic_pointer_cast<return_statement>(caller_body->get_statements()[0]);
+        REQUIRE(result != nullptr);
+        auto comparison = std::dynamic_pointer_cast<equal_expression>(result->get_expression());
+        REQUIRE(comparison != nullptr);
+        auto actual = std::dynamic_pointer_cast<address_of_expression>(comparison->left());
+        auto original = std::dynamic_pointer_cast<address_of_expression>(comparison->right());
+        REQUIRE(actual != nullptr);
+        REQUIRE(original != nullptr);
+        auto call = std::dynamic_pointer_cast<function_invocation_expression>(actual->sub_expr());
+        REQUIRE(call != nullptr);
+        REQUIRE(call->arguments().size() == 1);
+        CHECK(type::are_equal(call->arguments()[0]->get_type(), expected_ref));
+        CHECK(type::are_equal(call->get_type(), expected_ref));
+        CHECK(type::are_equal(original->sub_expr()->get_type(), expected_ref));
+        auto callee = std::dynamic_pointer_cast<symbol_expression>(call->callee_expr());
+        REQUIRE(callee != nullptr);
+        CHECK(callee->get_function() == concrete);
+    }
+    CHECK(concrete_names.size() == 2);
+    CHECK(mangled_names.size() == 2);
+
+    auto jit = gen_jit(source);
+    REQUIRE(jit != nullptr);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run != nullptr);
+    CHECK(run() == 42);
+}
+
+TEST_CASE("Ordinary T reference specialization cannot mutate a const owner slot",
+          "[gen][template][instantiation][template-qualifier-identity][negative][regression]") {
+    const bool readonly_first = GENERATE(true, false);
+    INFO("readonly specialization first: " << readonly_first);
+    auto source = qualifier_slot_source(readonly_first) + R"SRC(
+        reject(box : const Box&) {
+            slot(box.owner) = new Resource(9);
+        }
+    )SRC";
+    try {
+        gen_jit_throws(source);
+        FAIL("A reference to a const owner slot must not become writable");
+    } catch (const k::log::compiler_error& error) {
+        CHECK(error.get_diagnostic().code ==
+              static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_CALL_NO_MATCH));
+        CHECK(error.get_diagnostic().message.find("Cannot assign to a const variable")
+              != std::string::npos);
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  Statement cloning coverage — `throw` / `try` / `catch` inside a template
 //  method.  Regression: template_instantiator::clone_statement had no case for

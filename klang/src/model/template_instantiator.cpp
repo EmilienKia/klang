@@ -91,10 +91,14 @@ std::string type_display_name(const std::shared_ptr<type>& t) {
         return t->to_string();
     }
 
-    // Wrapper types: rebuild the display around the (qualified) inner name, mirroring the
-    // suffixes produced by the corresponding `to_string()` overloads.
+    // Keep wrapper boundaries: const(owner<T>) and owner<const(T)> are different
+    // template arguments even though their diagnostic to_string() is identical.
+    // Group a composite const operand, preserving existing leaf-qualified names.
     if (auto inner = t->get_subtype()) {
-        if (type::is_const(t))     return "const " + type_display_name(inner);
+        if (type::is_const(t)) {
+            const auto operand = type_display_name(inner);
+            return inner->get_subtype() ? "const (" + operand + ")" : "const " + operand;
+        }
         if (type::is_pointer(t))   return type_display_name(inner) + "*";
         if (type::is_reference(t)) return type_display_name(inner) + "&";
         if (type::is_link(t))      return type_display_name(inner) + "+";
@@ -142,7 +146,8 @@ std::string nested_type_name(const aggregate& owner, const std::string& nested_n
  * and that identical arguments reuse the same cached instantiation.
  *
  * Encoding scheme:
- *   - Type arguments:     type display name (e.g., "int", "MyStruct", "int*")
+ *   - Type arguments:     qualified type name with grouped composite const operands
+ *                         (e.g., "int", "ns::MyStruct", "const (int*)")
  *   - Pack arguments:     "{type1,type2,...}" (wrapped in braces to distinguish from individual args)
  *   - Value arguments:
  *     * void / null:      literals "void" / "null"

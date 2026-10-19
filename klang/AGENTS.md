@@ -163,6 +163,15 @@ rather than return an unresolved call that raises a secondary type/constructor e
 Private dependency signatures retain rooted type references. Concrete aggregate
 types are emitted with source template arguments, never only their internal
 instantiation-cache names.
+Template cache keys and concrete short names share `type_display_name()`.
+Its `const` operand is grouped when composite: `const (T!)` is a readonly
+owner slot, while `const T!` is an owner of a const referent. Preserve every
+wrapper boundary, including beneath references and arrays; ABI type mangling
+cannot replace this nominal encoding because it deliberately erases typedefs.
+Leaf-qualified and unqualified wrapper names remain unchanged. Composite-const
+specializations acquire corrected internal names; rebuild their KDI producers
+and consumers together, including generated nested declarations. The existing
+structural template-argument mangling and KDI schema are not changed by grouping.
 
 Nullable class upcasts must preserve null before adjusting a base-subobject
 address or loading a virtual-base pointer. Owner cleanup must never receive a

@@ -641,6 +641,38 @@
       The new FFI guide/how-to use that byte-oriented pattern; this older
       reference discrepancy does not block them.
 
+- [ ] **Owner assignment rejects a strong-alias owner on the right-hand side.**
+      Observed in the prior S2 fixture with diagnostic `00C1D` when assigning a
+      value explicitly cast to `Handle` into an ordinary owner. Independent
+      minimal reproducer derived from that fixture (not yet executed alone):
+      ```k
+      module owner_alias_assignment;
+      typedef Handle : int!;
+      test() {
+          ordinary : int! = new int(1);
+          ordinary = (Handle)new int(2);
+      }
+      ```
+      The observed diagnostic is the owner-assignment rejection, not a
+      template-identity or exact-reference mismatch. Static cause:
+      `type_reference_resolver::visit_assignation_expression()` in
+      `klang/src/gen/gen_operators_assign.cpp` canonicalizes `target_type`
+      after `check_strong_alias_conversion()`, but its owner branch checks
+      `source_type` (and a reference's inner type) without canonicalizing
+      aliases. A `Handle` RHS therefore fails both the direct owner and
+      referenced-owner tests and reaches `ERR_SUBSCRIPT_OVERLOAD_NOT_FOUND`
+      (`0x0C1D`): `Owner assignment: right-hand side must be an owner value,
+      another owner variable (move), or null; got type '{}'`.
+      Ordinary alias-to-underlying conversion should remain supported; keep
+      the strong destination conversion guard and source move/null semantics.
+      S2 avoids this unrelated limitation by resetting the original alias
+      slot through `resetOwner(slot : int!&) { slot = new int(2); }`.
+      That uses existing alias-to-underlying reference adaptation, with no
+      replacement owner holder or loss of the source slot's nominal identity.
+      Add direct-value and referenced-alias RHS regressions with counted
+      destruction/source clearing when fixing assignment; no production
+      assignment change is included in the template qualifier-identity fix.
+
 - [ ] **Imported container instantiations can retain an unresolved RTTI receiver base.**
       Reproduced on unchanged `859fb06`, independently of intrinsic-template
       recipe reconstruction, by the existing regression in
