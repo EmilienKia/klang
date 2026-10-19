@@ -2521,6 +2521,8 @@ kdi::kdi_template_def kdi_builder::build_template_def(
             }
         }
     }
+    // Missing parser source does not imply generic semantics: classic bodyless
+    // declarations can have their source recipe reconstructed from the model.
     def.is_generic = is_generic;
 
     auto definition_ns = entity ? gen::scope_lookup::enclosing_namespace(*entity) : nullptr;

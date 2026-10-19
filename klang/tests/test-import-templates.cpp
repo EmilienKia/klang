@@ -266,6 +266,7 @@ TEST_CASE("import member template recipes preserve canonical intrinsics and qual
         auto method = host->get_function(name);
         REQUIRE(method);
         REQUIRE(method->get_tpl_info());
+        CHECK_FALSE(method->is_generic());
         CHECK(method->get_tpl_info()->source_text.empty());
         CHECK_FALSE(method->get_existing_block());
         REQUIRE(method->is_const_member());
@@ -312,13 +313,46 @@ TEST_CASE("import member template recipes preserve canonical intrinsics and qual
         else if (definition.name == "ignored") {
             CHECK(definition.source.find("@") == std::string::npos);
             CHECK(definition.source.find("return ") != std::string::npos);
-        } else
+        } else {
             CHECK(definition.source.find("@::k::annotations::Intrinsic") != std::string::npos);
+            auto method = host->get_function(definition.name);
+            REQUIRE(method);
+            CHECK(definition.source == emitter.emit_template_function(*method));
+        }
     }
     CHECK(std::none_of(file.unit.root_ns.aggregates.begin(), file.unit.root_ns.aggregates.end(),
         [](const auto& aggregate) {
             return aggregate.name == "PrivateMarker" || aggregate.name == "Intrinsic";
         }));
+    const auto check_classic_recipes = [](const kdi::kdi_file& exported) {
+        const auto& recipes = exported.unit.root_ns.template_defs;
+        REQUIRE(recipes.size() == 5);
+        const auto validation = kdi::kdi_validate(exported);
+        for (size_t i = 0; i < recipes.size(); ++i) {
+            const auto& recipe = recipes[i];
+            CAPTURE(recipe.name);
+            CHECK_FALSE(recipe.is_generic);
+            CHECK_FALSE(recipe.source.empty());
+            CHECK(recipe.entity_kind == "function");
+            CHECK(recipe.visibility == "public");
+            CHECK(recipe.host_fq_name == "intrinsic_recipe_provider::Slots");
+            REQUIRE(recipe.function_signature);
+            CHECK(recipe.function_signature->name == recipe.name);
+            CHECK(recipe.function_signature->is_static == (recipe.name == "identity"));
+            CHECK_FALSE(recipe.aggregate_signature);
+
+            // Validate these recipes without accepting unrelated aggregate/ABI debt.
+            const auto prefix = "unit.root_ns.template_defs[" + std::to_string(i) + "].";
+            std::string errors;
+            for (const auto& error : validation.errors) {
+                if (error.path.starts_with(prefix))
+                    errors += error.path + ": " + error.message + "\n";
+            }
+            INFO(errors);
+            CHECK(errors.empty());
+        }
+    };
+    check_classic_recipes(file);
 
     struct Artifact {
         fs::path directory;
@@ -337,6 +371,15 @@ TEST_CASE("import member template recipes preserve canonical intrinsics and qual
     }
     const auto path = artifact.directory / "intrinsic-recipe-provider.kdi";
     REQUIRE(kdi::kdi_write_cbor_file(file, path.string()));
+    const auto decoded = kdi::kdi_read_cbor_file(path.string());
+    check_classic_recipes(decoded);
+    for (size_t i = 0; i < definitions.size(); ++i) {
+        const auto& recipe = decoded.unit.root_ns.template_defs[i];
+        CAPTURE(recipe.name);
+        CHECK(recipe.name == definitions[i].name);
+        CHECK(recipe.fq_name == definitions[i].fq_name);
+        CHECK(recipe.source == definitions[i].source);
+    }
     auto resolver = std::make_shared<k::path_lookup_file_resolver>();
     resolver->add_explicit_path("intrinsic_recipe_provider", path);
     resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
@@ -364,6 +407,17 @@ TEST_CASE("import member template recipes preserve canonical intrinsics and qual
     REQUIRE(imported_namespace);
     auto imported_host = imported_namespace->get_aggregate("Slots");
     REQUIRE(imported_host);
+    for (const auto* name : {"getAliased", "getQualified", "getNamespaced"}) {
+        INFO(name);
+        auto method = imported_host->get_function(name);
+        REQUIRE(method);
+        REQUIRE(method->is_template());
+        REQUIRE(method->get_tpl_info());
+        CHECK_FALSE(method->is_generic());
+        CHECK_FALSE(method->get_tpl_info()->is_imported_signature_only);
+        CHECK(method->is_const_member());
+        CHECK(k::model::gen::get_intrinsic_name(*method) == "MultiSlot::get");
+    }
     unsigned instantiated = 0;
     for (const auto& method : imported_host->functions()) {
         if (!method->is_instantiation()) continue;
@@ -450,6 +504,65 @@ TEST_CASE("import generic function recipes keep only native annotations",
     auto* native = module.getFunction("__k_test_generic_recipe_length");
     REQUIRE(native);
     CHECK(native->isDeclaration());
+}
+
+TEST_CASE("KDI producer keeps genuine generic templates signature-only",
+          "[import][template][generic][recipe-category][regression]") {
+    auto producer = compile_model(R"K(
+        module generic_recipe_provider;
+        generic<typename T>
+        public struct Box {
+            public value : T&;
+        }
+        public struct Host {
+            generic<typename T>
+            public relay(value : T&) : T& { return value; }
+        }
+    )K");
+    REQUIRE(producer);
+    auto root = producer->get_unit()->get_root_namespace();
+    auto box = root->get_aggregate("Box");
+    REQUIRE(box);
+    REQUIRE(box->get_tpl_info());
+    CHECK(box->is_generic());
+    CHECK(box->get_tpl_info()->source_text.empty());
+    auto host = root->get_aggregate("Host");
+    REQUIRE(host);
+    auto relay = host->get_function("relay");
+    REQUIRE(relay);
+    REQUIRE(relay->get_tpl_info());
+    CHECK(relay->is_generic());
+    CHECK(relay->get_tpl_info()->source_text.empty());
+
+    k::model::kdi_builder builder(*producer->get_context_for_test());
+    producer->get_unit()->accept(builder);
+    const auto file = builder.take();
+    const auto check_generic_recipes = [](const kdi::kdi_file& exported) {
+        const auto& recipes = exported.unit.root_ns.template_defs;
+        REQUIRE(recipes.size() == 2);
+        for (const auto& recipe : recipes) {
+            CAPTURE(recipe.name);
+            CHECK(recipe.is_generic);
+            CHECK(recipe.source.empty());
+            if (recipe.name == "Box") {
+                CHECK(recipe.entity_kind == "struct");
+                CHECK(recipe.host_fq_name.empty());
+                REQUIRE(recipe.aggregate_signature);
+                CHECK_FALSE(recipe.function_signature);
+            } else {
+                REQUIRE(recipe.name == "relay");
+                CHECK(recipe.entity_kind == "function");
+                CHECK(recipe.host_fq_name == "::generic_recipe_provider::Host");
+                REQUIRE(recipe.function_signature);
+                CHECK(recipe.function_signature->params.size() == 1);
+                CHECK_FALSE(recipe.aggregate_signature);
+            }
+        }
+    };
+    check_generic_recipes(file);
+    std::stringstream cbor;
+    kdi::kdi_write_cbor(file, cbor);
+    check_generic_recipes(kdi::kdi_read_cbor(cbor));
 }
 
 TEST_CASE("import template return prvalues adopt resources and clean intermediate getters",

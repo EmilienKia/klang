@@ -332,7 +332,11 @@ Rules:
   against its canonical declaration.
   The source-only intrinsic annotation remains source text, not a runtime applied
   annotation record.
-* Classic `template<...>` definitions export their full `source` (the
+* Classic `template<...>` definitions MUST NOT set `is_generic = true`, including
+  bodyless intrinsic declarations whose source is reconstructed from the model
+  rather than captured by the parser. Missing captured source does not change
+  the template category.
+  Classic definitions export their full `source` (the
   authoritative form used by the compiler to re-parse/re-instantiate the
   template cross-module) **and** a declaration-only `aggregate_signature` or
   `function_signature` matching `entity_kind`. The structured signature lets

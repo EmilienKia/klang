@@ -621,7 +621,10 @@ Rules:
   A `generic<...>` method instead has an empty `source` and a `function_signature`,
   and its single erased synthesis is exported as a regular method of the host
   named `<name><generic>`.
-* Classic (non-generic) templates serialize their full `source` (the
+* Classic (non-generic) templates MUST omit `is_generic` or set it to `false`,
+  including bodyless intrinsic declarations with reconstructed source.
+  Missing parser-captured source does not change the template category.
+  Classic templates serialize their full `source` (the
   authoritative form used by the compiler to re-parse/re-instantiate the
   template cross-module) **and** a declaration-only `aggregate_signature` or
   `function_signature` matching `entity_kind`. The structured signature lets
