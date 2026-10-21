@@ -808,9 +808,10 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
     // Pointer, link, pinned, owner, and the null literal type can all participate
     // in address equality/inequality comparisons.
     auto is_address_comparable = [](const std::shared_ptr<type>& t) -> bool {
-        return type::is_pointer(t) || type::is_link(t) || type::is_view(t)
-            || type::is_owner(t)   || type::is_null(t)
-            || type::is_fat_callable(t);
+        auto value_type = type::remove_const(t);
+        return type::is_pointer(value_type) || type::is_link(value_type) || type::is_view(value_type)
+            || type::is_owner(value_type)   || type::is_null(value_type)
+            || type::is_fat_callable(value_type);
     };
 
     // Step 2: If either operand is a struct type: look for operator overload
@@ -823,7 +824,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
             auto inner = std::dynamic_pointer_cast<reference_type>(operand_type)->get_subtype();
             if (is_address_comparable(inner)) {
                 operand = adapt_reference_load_value(operand);
-                operand_type = inner;
+                operand_type = operand->get_type();
             }
         }
     };

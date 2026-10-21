@@ -26,6 +26,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include "helpers.hpp"
 
+#include <llvm/IR/Verifier.h>
+
 // =============================================================================
 // STEP 2 — Null construction and assignment
 // =============================================================================
@@ -264,6 +266,273 @@ TEST_CASE("null != null is false", "[gen][null][comparison]") {
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);
     REQUIRE(fn() == 1);
+}
+
+TEST_CASE("Readonly array pointer fields compare stored addresses",
+          "[gen][null][comparison][const][regression][readonly-address]") {
+    REQUIRE(ensure_libk_loaded());
+    auto comp = compile_model(R"SRC(
+        module gen_readonly_array_pointer_comparison;
+        struct Slots {
+            public slot : byte* = null;
+        }
+        equal(slots : const Slots[]&) : bool {
+            return slots[0].slot == slots[1].slot;
+        }
+        different(slots : const Slots[]&) : bool {
+            return slots[0].slot != slots[1].slot;
+        }
+        fields_equal(left : const Slots&, right : const Slots&) : bool {
+            return left.slot == right.slot;
+        }
+        fields_different(left : const Slots&, right : const Slots&) : bool {
+            return left.slot != right.slot;
+        }
+        is_null(value : const Slots&) : bool {
+            return value.slot == null && null == value.slot
+                && !(value.slot != null) && !(null != value.slot);
+        }
+        is_nonnull(value : const Slots&) : bool {
+            return value.slot != null && null != value.slot
+                && !(value.slot == null) && !(null == value.slot);
+        }
+        test() : int {
+            x : byte = 7;
+            y : byte = 7;
+            slots : Slots[2];
+            slots[0].slot = &x;
+            slots[1].slot = &x;
+            if (!equal(slots) || different(slots)
+                || !fields_equal(slots[0], slots[1])
+                || fields_different(slots[0], slots[1])) return -1;
+
+            // Equal pointee values at distinct addresses must not compare equal.
+            slots[1].slot = &y;
+            if (equal(slots) || !different(slots)
+                || fields_equal(slots[0], slots[1])
+                || !fields_different(slots[0], slots[1])) return -2;
+
+            slots[1].slot = null;
+            if (equal(slots) || !different(slots)
+                || !is_nonnull(slots[0]) || !is_null(slots[1])) return -3;
+
+            slots[0].slot = null;
+            if (!equal(slots) || different(slots)
+                || !fields_equal(slots[0], slots[1])
+                || fields_different(slots[0], slots[1])) return -4;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(comp);
+    REQUIRE_FALSE(llvm::verifyModule(comp->get_context_for_test()->module(), &llvm::errs()));
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Readonly aliased indirection slots compare stored addresses",
+          "[gen][null][comparison][const][alias][regression][readonly-address]") {
+    REQUIRE(ensure_libk_loaded());
+    auto comp = compile_model(R"SRC(
+        module gen_readonly_aliased_address_comparison;
+        alias BytePointer : byte*;
+        alias PointerSlot : BytePointer;
+        equal(slots : const PointerSlot[]&) : bool {
+            return slots[0] == slots[1];
+        }
+        different(slots : const PointerSlot[]&) : bool {
+            return slots[0] != slots[1];
+        }
+        test() : int {
+            x : byte = 7;
+            y : byte = 7;
+            slots : PointerSlot[2]{&x, &x};
+            if (!equal(slots) || different(slots)) return -1;
+            slots[1] = &y;
+            if (equal(slots) || !different(slots)) return -2;
+            slots[0] = null;
+            slots[1] = null;
+            if (!equal(slots) || different(slots)) return -3;
+
+            const pointer : PointerSlot = &x;
+            const link : byte+ = &x;
+            const view : byte? = &x;
+            const owner : byte! = new byte(7);
+            raw_owner : const byte* = owner;
+            const empty_owner : byte! = null;
+            const pointee : const byte* = &x;
+            if (pointer != link || !(link == pointer)
+                || view != pointer || !(pointer == view)) return -4;
+            if (link == null || null == link || !(link != null) || !(null != link)
+                || view == null || null == view || !(view != null) || !(null != view)) return -10;
+            if (owner != raw_owner || !(raw_owner == owner)
+                || owner == pointer || !(pointer != owner)) return -5;
+            if (empty_owner != null || null != empty_owner
+                || !(empty_owner == null) || !(null == empty_owner)
+                || owner == null || null == owner
+                || !(owner != null) || !(null != owner)) return -6;
+            if (pointer != pointee || !(pointee == pointer)) return -7;
+
+            // References still compare referent values, not their storage addresses.
+            left : const byte& = x;
+            right : const byte& = y;
+            if (left != right || !(left == right)) return -8;
+            y = 8;
+            if (left == right || !(left != right)) return -9;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(comp);
+    REQUIRE_FALSE(llvm::verifyModule(comp->get_context_for_test()->module(), &llvm::errs()));
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Readonly owner address comparisons preserve ownership and destruction",
+          "[gen][null][comparison][const][owner][lifecycle][regression][readonly-address]") {
+    REQUIRE(ensure_libk_loaded());
+    auto comp = compile_model(R"SRC(
+        module gen_readonly_owner_comparison_lifetime;
+        destroyed_first : int = 0;
+        destroyed_second : int = 0;
+        destroyed_mutable : int = 0;
+        struct Resource {
+            public id : int;
+            public value : int = 7;
+            Resource(number : int) : id(number) {}
+            ~Resource() {
+                if (id == 1) ++destroyed_first;
+                if (id == 2) ++destroyed_second;
+                if (id == 3) ++destroyed_mutable;
+            }
+        }
+        test() : int {
+            {
+                const first : Resource! = new Resource(1);
+                second : const Resource! = new Resource(2);
+                mutable_owner : Resource! = new Resource(3);
+                mutable_owner.value = 8;
+                first_observer : const Resource* = first;
+                second_observer : const Resource* = second;
+                if (first != first_observer || first_observer != first
+                    || !(first == first_observer) || !(first_observer == first)) return -1;
+                if (second != second_observer || second_observer != second
+                    || !(second == second_observer) || !(second_observer == second)) return -2;
+                if (first == second || second == first
+                    || !(first != second) || !(second != first)) return -3;
+                if (first == null || null == first || second == null || null == second
+                    || !(first != null) || !(null != first)
+                    || !(second != null) || !(null != second)) return -4;
+                if (destroyed_first != 0 || destroyed_second != 0
+                    || destroyed_mutable != 0) return -5;
+                if (first.id != 1 || second.id != 2
+                    || first.value != 7 || second.value != 7
+                    || mutable_owner.id != 3 || mutable_owner.value != 8) return -6;
+            }
+            if (destroyed_first != 1 || destroyed_second != 1
+                || destroyed_mutable != 1) return -7;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(comp);
+    REQUIRE_FALSE(llvm::verifyModule(comp->get_context_for_test()->module(), &llvm::errs()));
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Readonly address comparisons retain relational and mutation restrictions",
+          "[gen][null][comparison][const][error][readonly-address]") {
+    SECTION("Relational comparison of readonly pointer fields is rejected") {
+        REQUIRE(compile_should_fail(R"SRC(
+            module gen_readonly_pointer_relational_rejected;
+            struct Slots { public slot : byte* = null; }
+            less(slots : const Slots[]&) : bool {
+                return slots[0].slot < slots[1].slot;
+            }
+        )SRC", nullptr));
+    }
+    SECTION("Readonly pointer fields cannot be assigned") {
+        REQUIRE(compile_should_fail(R"SRC(
+            module gen_readonly_pointer_mutation_rejected;
+            struct Slots { public slot : byte* = null; }
+            assign(value : const Slots&, pointer : byte*) {
+                value.slot = pointer;
+            }
+        )SRC", nullptr));
+    }
+    SECTION("Const owner referents cannot be modified") {
+        REQUIRE(compile_should_fail(R"SRC(
+            module gen_const_owner_referent_mutation_rejected;
+            struct Resource { public value : int = 7; }
+            modify() {
+                const owner : Resource! = new Resource();
+                owner.value = 8;
+            }
+        )SRC", nullptr));
+    }
+    SECTION("Type-qualified const owner referents cannot be modified") {
+        REQUIRE(compile_should_fail(R"SRC(
+            module gen_type_const_owner_referent_mutation_rejected;
+            struct Resource { public value : int = 7; }
+            modify() {
+                owner : const Resource! = new Resource();
+                owner.value = 8;
+            }
+        )SRC", nullptr));
+    }
+    SECTION("Const borrowed pointer referents cannot be modified") {
+        REQUIRE(compile_should_fail(R"SRC(
+            module gen_const_pointer_referent_mutation_rejected;
+            struct Resource { public value : int = 7; }
+            modify(value : const Resource*) {
+                value->value = 8;
+            }
+        )SRC", nullptr));
+    }
+    SECTION("Const borrowed reference referents cannot be modified") {
+        REQUIRE(compile_should_fail(R"SRC(
+            module gen_const_reference_referent_mutation_rejected;
+            struct Resource { public value : int = 7; }
+            modify(value : const Resource&) {
+                value.value = 8;
+            }
+        )SRC", nullptr));
+    }
+    SECTION("Const borrowed link referents cannot be modified") {
+        REQUIRE(compile_should_fail(R"SRC(
+            module gen_const_link_referent_mutation_rejected;
+            struct Resource { public value : int = 7; }
+            modify(value : const Resource+) {
+                value->value = 8;
+            }
+        )SRC", nullptr));
+    }
+    SECTION("Const borrowed view referents cannot be modified") {
+        REQUIRE(compile_should_fail(R"SRC(
+            module gen_const_view_referent_mutation_rejected;
+            struct Resource { public value : int = 7; }
+            modify(value : const Resource?) {
+                value->value = 8;
+            }
+        )SRC", nullptr));
+    }
+    SECTION("Const owner observers cannot discard referent const") {
+        REQUIRE(compile_should_fail(R"SRC(
+            module gen_const_owner_mutable_observer_rejected;
+            observe() {
+                const owner : byte! = new byte(7);
+                observer : byte* = owner;
+            }
+        )SRC", nullptr));
+    }
 }
 
 // =============================================================================
@@ -897,4 +1166,3 @@ TEST_CASE("|| truth table preserved", "[gen][null][shortcircuit]") {
     REQUIRE(fn);
     REQUIRE(fn() == 1110);  // all except false||false
 }
-

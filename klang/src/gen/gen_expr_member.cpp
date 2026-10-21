@@ -150,6 +150,7 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
     // ref<owner<T>>. For member access with '.', unwrap the intermediate owner
     // layer so lookup runs against T itself.
     if (auto owner_subtype = std::dynamic_pointer_cast<owner_type>(bare_subtype)) {
+        is_const_access = is_const_access || type::is_const(owner_subtype->get_subtype());
         bare_subtype = type::remove_const(owner_subtype->get_subtype());
     }
 

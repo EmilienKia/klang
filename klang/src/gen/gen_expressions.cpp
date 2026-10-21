@@ -397,8 +397,8 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
         }
         // If the variable is declared const (flag), propagate const-ness through the type system.
         // For primitive/struct types: wrap in const_type → "const int", "const MyStruct".
-        // For indirection types (link, pointer, view): apply const to the pointed-at subtype
-        // → "link(const int)", "pointer(const int)", "view(const int)".
+        // For indirection types (link, pointer, view, owner): apply const to the pointed-at subtype
+        // → "link(const int)", "pointer(const int)", "view(const int)", "owner(const int)".
         // References are immutable by design; const on a reference applies to its subtype too.
         // This ensures that "const x : int~" and "x : const int~" are truly identical.
         if (var_def->is_const() && !type::is_const(var_type)) {
@@ -413,6 +413,8 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
                     var_type = const_sub->get_pointer();
                 } else if (type::is_view(var_type)) {
                     var_type = const_sub->get_view();
+                } else if (type::is_owner(var_type)) {
+                    var_type = const_sub->get_owner();
                 } else { // reference
                     var_type = const_sub->get_reference();
                 }
