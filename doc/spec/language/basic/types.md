@@ -394,6 +394,15 @@ test() : int {
 
 ## 7. Owner (`!`)
 
+The auto-imported [`Argument`](../../stdlib/arguments.md) may borrow an original
+owner slot without transferring ownership. Copies alias that same slot.
+Only a checked, authorized `takeOwner<T>()` clears it, using the ordinary typed
+owner result and cleanup rules. A const referent does not prohibit transfer
+from a writable slot; a readonly slot cannot be cleared. A pointer capture
+cannot fabricate owner permission. Holders are synchronous borrowed views:
+they must not outlive, relocate, or invalidate their source slots. Explicit
+temporary capture is an error; there is no payload retention or escape checker.
+
 An *owner* is a **move-only**, **nullable** indirection that holds the address of a
 **dynamically allocated** object and is **solely responsible for its lifetime**.  Only an
 owner can delete (destroy and free) the object it points to.

@@ -8,6 +8,7 @@
 
 #include "gen_helpers.hpp"
 #include "gen_redirect.hpp"
+#include "gen_arguments.hpp"
 #include "resolvers_scope_lookup.hpp"
 #include "../model/context.hpp"
 #include "../model/mangler.hpp"
@@ -920,7 +921,13 @@ public:
                 llvm::GlobalValue::PrivateLinkage, nullptr, "__k_rtti_signature");
             ctx->_rtti_signatures.emplace(fn.get(), gv);
         }
-        auto* body = ctx->lookup_llvm_function(fn);
+        const auto argument_op = get_argument_intrinsic(*fn);
+        if (argument_op == argument_intrinsic::invalid
+            || (argument_op != argument_intrinsic::none && !fn->is_template()
+                && !has_argument_intrinsic_contract(*fn)))
+            throw std::runtime_error("Invalid or non-canonical Argument intrinsic declaration");
+        auto* body = argument_op == argument_intrinsic::none
+            ? ctx->lookup_llvm_function(fn) : nullptr;
         const auto& provider = body ? native_source(*fn) : *fn;
         auto provider_model = std::const_pointer_cast<function>(provider.shared_as<const function>());
         const auto provider_return = std::const_pointer_cast<type>(provider.get_return_type());

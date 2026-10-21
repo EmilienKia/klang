@@ -19,6 +19,7 @@
 #include "generators.hpp"
 #include "gen_helpers.hpp"
 #include "gen_redirect.hpp"
+#include "gen_arguments.hpp"
 #include "../model/expressions.hpp"
 #include "../model/statements.hpp"
 #include "../model/operators.hpp"
@@ -882,7 +883,9 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
                 }
             }
             place_result result = slot;
-            if (!is_constructed_symbol && (type::is_reference(var_type) || type::is_drain(var_type))) {
+            // A captured variable's own reference/drain slot is the Argument slot, not its referent.
+            if (!is_constructed_symbol && _argument_slot_symbol != &symbol
+                && (type::is_reference(var_type) || type::is_drain(var_type))) {
                 // A reference/drain slot stores an address of the referenced place.
                 result = dereference_address(load_place(slot, type, name + "_ref"));
             }
@@ -898,6 +901,9 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
         auto func = symbol.get_function();
 
         // Step 2: Function symbols: get the LLVM function pointer
+        if (func && get_argument_intrinsic(*func) != argument_intrinsic::none)
+            throw_error(static_cast<unsigned>(k::diag::type_diag::ERR_INVOKE_METHOD_ARG_MISMATCH),
+                symbol.first_lexeme(), "Argument intrinsics must be called directly; they have no callable body");
         // Find the function definition
         auto it = _context->_functions.find(func);
         if(it==_context->_functions.end()) {

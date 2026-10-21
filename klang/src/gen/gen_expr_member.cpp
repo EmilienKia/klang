@@ -970,6 +970,7 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
         // Check visibility of the accessed field
         if (auto st_model = struct_subtype->get_struct()) {
             if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(st_model->get_variable(name_str))) {
+                expr.symbol().set_target(mv);
                 auto vis = mv->get_visibility();
                 if (vis != PUBLIC) {
                     if (!scope_lookup::is_struct_member_accessible(vis, *st_model, st_model, _function_stack)) {
@@ -986,6 +987,8 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
             }
         }
         auto field_type = field->field_type.lock();
+        if (field_type && type::is_const(pointed_type))
+            field_type = type::remove_const(field_type)->get_const();
         expr.set_type(field_type ? field_type->get_reference() : nullptr);
     } else if (struct_subtype->get_struct()
                && !collect_member_overloads(struct_subtype->get_struct(), name_str).empty()) {

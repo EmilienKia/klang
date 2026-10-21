@@ -21,7 +21,11 @@
 #include "gen_redirect.hpp"
 #include "gen_callable_helpers.hpp"
 #include "ffi_validation.hpp"
+#include "gen_arguments.hpp"
+#include <algorithm>
 #include <exception>
+#include <functional>
+#include <stdexcept>
 #include "../model/expressions.hpp"
 #include "../model/statements.hpp"
 #include "../model/operators.hpp"
@@ -533,6 +537,20 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         }
     }
 
+    auto validate_capture_candidates = [&](const std::vector<std::shared_ptr<function>>& candidates) {
+        if (expr.arguments().size() != 1) return;
+        for (const auto& candidate : candidates) {
+            const auto op = get_argument_intrinsic(*candidate);
+            if (op != argument_intrinsic::capture && op != argument_intrinsic::borrow) continue;
+            try {
+                describe_argument_source(expr.arguments()[0]);
+            } catch (const std::invalid_argument& error) {
+                throw_error(static_cast<unsigned>(k::diag::type_diag::ERR_INVOKE_METHOD_ARG_MISMATCH),
+                    expr.first_lexeme(), error.what());
+            }
+        }
+    };
+
     auto materialize_value_default = [&](template_param_descriptor& param,
                                          const std::shared_ptr<function>& tpl_func) -> bool {
         if (!param.is_value_param() || param.default_value.has_value() || !param.default_value_expr) {
@@ -901,6 +919,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 {callee->get_name().to_string(), st->get_short_name(),
                  callee->get_name().to_string()});
         }
+
+        validate_capture_candidates(candidates);
 
         // Prepare argument types for template deduction
         std::vector<std::shared_ptr<type>> expr_arg_types;
@@ -1718,6 +1738,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
         std::vector<std::pair<unsigned int, std::string>> proven_constraint_rejections;
         std::vector<std::pair<std::shared_ptr<function>, std::string>> rejected_constraint_candidates;
+        validate_capture_candidates(all_candidates);
 
         // ── Template function instantiation ──────────────────────────────
         // If the callee carries explicit template arguments (e.g. identity<int>),
@@ -2277,7 +2298,14 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
 implementation_generator::call_argument_cleanup_scope::call_argument_cleanup_scope(
     implementation_generator& gen, bool enabled)
-    : _gen(gen), _enabled(enabled), _uncaught_exceptions(std::uncaught_exceptions()) {
+    : call_argument_cleanup_scope(gen, enabled, nullptr) {
+    _borrowed_result_contract = false;
+}
+
+implementation_generator::call_argument_cleanup_scope::call_argument_cleanup_scope(
+    implementation_generator& gen, bool enabled, std::shared_ptr<type> result_type)
+    : _gen(gen), _enabled(enabled), _uncaught_exceptions(std::uncaught_exceptions()),
+      _result_type(std::move(result_type)), _borrowed_result_contract(true) {
     if (!_enabled) return;
     auto& llvm_ctx = gen._context->llvm_context();
     auto* func = gen._builder->GetInsertBlock()->getParent();
@@ -2368,14 +2396,77 @@ void implementation_generator::call_argument_cleanup_scope::track_variable(
 void implementation_generator::call_argument_cleanup_scope::transfer() {
     // The callee owns by-value arguments from entry, including when its body throws.
     for (const auto& entry : _entries) {
-        if (entry.live) _gen._builder->CreateStore(_gen._builder->getFalse(), entry.live);
+        if (!entry.live || entry.borrowed || entry.result) continue;
+        _gen._builder->CreateStore(_gen._builder->getFalse(), entry.live);
     }
+}
+
+llvm::Value* implementation_generator::call_argument_cleanup_scope::retain(
+    const std::shared_ptr<type>& value_type, llvm::Value* value, bool borrowed, bool result) {
+    if (!_enabled || !value_type || !value)
+        throw std::logic_error("Scoped Argument materialization requires an active call cleanup scope");
+    auto bare = type::remove_const(type::canonical(value_type));
+    auto* function = _gen._builder->GetInsertBlock()->getParent();
+    llvm::IRBuilder<> entry_builder(&function->getEntryBlock(), function->getEntryBlock().begin());
+    auto* llvm_type = _gen._context->get_llvm_type(bare);
+    llvm::Value* storage = nullptr;
+    if (llvm_type->isAggregateType() && value->getType()->isPointerTy()) {
+        auto* allocation = llvm::dyn_cast<llvm::AllocaInst>(value);
+        if (borrowed && !allocation)
+            throw std::logic_error("Scoped Argument requires original aggregate temporary storage");
+        if (allocation && allocation->getParent() != &function->getEntryBlock())
+            throw std::logic_error("Scoped Argument aggregate storage must be allocated in the function entry");
+        storage = value;
+    } else {
+        storage = entry_builder.CreateAlloca(llvm_type, nullptr, "borrowed_value_storage");
+        _gen._builder->CreateStore(value, storage);
+    }
+    if (value_type_needs_cleanup(bare)) {
+        llvm::AllocaInst* address = nullptr;
+        if (llvm::isa<llvm::Instruction>(storage) && !llvm::isa<llvm::AllocaInst>(storage)) {
+            // A caller's result destination can be a late GEP. Spill its address,
+            // not its resource-bearing contents, for earlier shared unwind edges.
+            address = entry_builder.CreateAlloca(storage->getType(), nullptr, "borrowed_result_address");
+            _gen._builder->CreateStore(storage, address);
+        }
+        auto* live = entry_builder.CreateAlloca(entry_builder.getInt1Ty(), nullptr, "borrowed_argument_live");
+        entry_builder.CreateStore(entry_builder.getFalse(), live);
+        _gen._builder->CreateStore(_gen._builder->getTrue(), live);
+        _gen.cancel_temporary_cleanup(storage);
+        _entries.push_back({storage, live, bare, nullptr, borrowed, result, address});
+    }
+    return storage;
+}
+
+llvm::Value* implementation_generator::call_argument_cleanup_scope::materialize_borrowed(
+    const std::shared_ptr<type>& value_type, llvm::Value* value) {
+    if (!_borrowed_result_contract)
+        throw std::logic_error("Borrowed scope must declare the consumer return type, including void");
+    return retain(value_type, value, true);
+}
+
+void implementation_generator::call_argument_cleanup_scope::destroy(const entry& value) {
+    const bool pending_children = value_cleanup_has_pending_children(value.value_type);
+    if (!pending_children) _gen._builder->CreateStore(_gen._builder->getFalse(), value.live);
+    auto* storage = value.address
+        ? _gen._builder->CreateLoad(value.storage->getType(), value.address, "borrowed_result_storage")
+        : value.storage;
+    emit_value_cleanup(_gen._builder.get(), _gen.get_module(), _gen._context->_functions,
+        storage, value.value_type, _gen.make_virtual_call_emitter());
+    if (pending_children) _gen._builder->CreateStore(_gen._builder->getFalse(), value.live);
 }
 
 implementation_generator::call_argument_cleanup_scope::~call_argument_cleanup_scope() noexcept(false) {
     if (!_enabled) return;
+    if (std::uncaught_exceptions() > _uncaught_exceptions) {
+        _gen._cleanup_lpad_stack.pop();
+        return;
+    }
+    const bool has_borrowed = std::any_of(_entries.begin(), _entries.end(),
+        [](const entry& value) { return value.borrowed; });
+    if (has_borrowed && _result_type && _gen._value)
+        retain(_result_type, _gen._value, false, true);
     _gen._cleanup_lpad_stack.pop();
-    if (std::uncaught_exceptions() > _uncaught_exceptions) return;
     auto* normal_bb = _gen._builder->GetInsertBlock();
     auto* result = _gen._value;
     const auto debug_loc = _gen._builder->getCurrentDebugLocation();
@@ -2403,28 +2494,7 @@ implementation_generator::call_argument_cleanup_scope::~call_argument_cleanup_sc
         auto* live = _gen._builder->CreateLoad(_gen._builder->getInt1Ty(), it->live);
         _gen._builder->CreateCondBr(live, destroy_bb, next_bb);
         _gen._builder->SetInsertPoint(destroy_bb);
-        _gen._builder->CreateStore(_gen._builder->getFalse(), it->live);
-        if (auto own = std::dynamic_pointer_cast<owner_type>(it->value_type)) {
-            emit_owner_cleanup_if_nonnull(_gen._builder.get(), _gen.get_module(), _gen._context->_functions,
-                it->storage, own->get_owned_type(), "argument_owner", _gen.make_virtual_call_emitter());
-        } else if (auto ct = std::dynamic_pointer_cast<callable_type>(it->value_type)) {
-            emit_owned_callable_cleanup_if_nonnull(_gen._builder.get(), _gen.get_module(), it->storage,
-                _gen._context->get_or_create_callable_llvm_type(), "argument_callable",
-                _gen.make_virtual_call_emitter());
-        } else if (type::is_sized_array(it->value_type)) {
-            _gen.emit_union_payload_cleanup(it->storage, it->value_type, false);
-        } else if (auto st = std::dynamic_pointer_cast<struct_type>(it->value_type)) {
-            auto agg = st->get_struct();
-            if (agg && agg->get_destructor()) {
-                auto dtor = _gen._context->_functions.find(agg->get_destructor()->shared_as<function>());
-                if (dtor != _gen._context->_functions.end()) {
-                    _gen.create_call_or_invoke(dtor->second->getFunctionType(), dtor->second, {it->storage});
-                }
-            } else if (!agg) {
-                auto un = find_union_by_struct_type(_gen._unit.get_root_namespace(), st);
-                if (un) _gen.emit_union_cleanup(it->storage, *un);
-            }
-        }
+        destroy(*it);
         _gen._builder->CreateBr(next_bb);
         _gen._builder->SetInsertPoint(next_bb);
     }
@@ -2446,6 +2516,21 @@ implementation_generator::call_argument_cleanup_scope::~call_argument_cleanup_sc
     }
     _gen._builder->SetInsertPoint(normal_bb);
     _gen._builder->SetCurrentDebugLocation(debug_loc);
+    if (has_borrowed) _gen._cleanup_lpad_stack.push(_context);
+    for (auto it = _entries.rbegin(); it != _entries.rend(); ++it) {
+        if (!it->borrowed) continue;
+        auto* destroy_bb = llvm::BasicBlock::Create(llvm_ctx, "borrowed_argument_destroy", func);
+        auto* next_bb = llvm::BasicBlock::Create(llvm_ctx, "borrowed_argument_done", func);
+        auto* live = _gen._builder->CreateLoad(_gen._builder->getInt1Ty(), it->live);
+        _gen._builder->CreateCondBr(live, destroy_bb, next_bb);
+        _gen._builder->SetInsertPoint(destroy_bb);
+        destroy(*it);
+        _gen._builder->CreateBr(next_bb);
+        _gen._builder->SetInsertPoint(next_bb);
+    }
+    for (const auto& entry : _entries)
+        if (entry.result) _gen._builder->CreateStore(_gen._builder->getFalse(), entry.live);
+    if (has_borrowed) _gen._cleanup_lpad_stack.pop();
     _gen._value = result;
 }
 
@@ -2454,6 +2539,7 @@ implementation_generator::call_argument_cleanup_scope::~call_argument_cleanup_sc
  * virtual/indirect dispatch and the sret destination.
  */
 void implementation_generator::visit_function_invocation_expression(function_invocation_expression &expr) {
+    if (emit_argument_intrinsic(expr)) return;
     // ── Union index() intrinsic ─────────────────────────────────────────────
     // Load the discriminant (uint32 at struct index 0) and return it as the
     // Kind enum value (same underlying representation).

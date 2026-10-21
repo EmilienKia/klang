@@ -162,6 +162,22 @@ All observer indirection types share the same memory size (one pointer) and call
 - An explicit owner-to-owner cast transfers ownership: the source owner slot becomes null, including when the cast adjusts the pointer to a base subobject. Passing the result to an owning parameter must not leave a second owner in the caller.
 - Observer assignment (`T!` → `T*`, `T+`, `T?`, `T&`) copies the address without ownership transfer.
 
+The auto-imported [`Argument`](../stdlib/arguments.md) is an immutable borrowed
+binding, not an owned erased value. `Argument::capture(source)` preserves an
+addressable caller's original slot without moving an owner.
+`takeOwner<T>()` checks permission/type and clears that slot; all holder copies
+observe the clear and later reassignment. `take<Alias>()` preserves an exact
+strong owner alias. Slot writability is separate from referent constness.
+Capture follows ordinary declaration typing: `const p : int*` describes a
+pointer to const int, not a readonly pointer slot. Its holder must reject
+mutable referent access while still observing rebinding of the original slot.
+`Argument::borrow(source)` removes
+mutation and consumption permissions. `alias ArgumentPack : Argument[];` is an
+ordinary homogeneous array. Explicit capture of known temporaries diagnoses.
+**Synchronous use only:** do not retain/enqueue holders, return expired local
+bindings, or invalidate/relocate their source storage. No general escape checker,
+boxing, invocation engine, or heterogeneous vararg grammar is implied.
+
 #### Drain (`T#`)
 - Immutable binding, non-null, drain permission.
 - Is **not** implicitly created from a reference: the `#` operator is explicitly required.

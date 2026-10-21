@@ -151,6 +151,10 @@ Unless fully qualified, paths below are relative to `libk/libk/src/`.
 - `libk-tests-rtti-exceptions`: functional RTTI and exception handling tests.
 - `libk-tests-rtti-signatures`: exact semantic/native graphs, body relocations,
   sret/receiver mappings, templates and explicit ineligibility metadata.
+- `libk-tests-arguments`: immutable borrowed bindings, original local/field/array
+  slots, exact typed access, owner/drain capability checks and normal/unwind cleanup;
+  `[scoped-materialization]` exercises actual retained union/array/owner/callable
+  storage, cleanup progress after a throw and pending-result guards with LLVM verification.
 - `libk-tests-k-ffi-abi`: private direct-entry K/libffi ABI and typed-unwind
   proofs (Linux x86-64 sret recipe); distinct from the public foreign-C FFI
   contract, which still forbids exceptions crossing its boundary.

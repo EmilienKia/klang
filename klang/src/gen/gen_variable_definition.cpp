@@ -66,16 +66,17 @@ void type_reference_resolver::var_init_context::assign_single_init_arg(std::shar
 
 /**
  * Extract the inner (pointed/linked/viewed/owned) type from any indirection wrapper,
- * stripping an outer reference layer first if present.
+ * stripping an outer reference and binding const, but retaining referent const.
  *
  * Returns nullptr if the type is not an indirection (pointer, link, view, owner, or reference).
  */
 std::shared_ptr<type>
 type_reference_resolver::extract_indirection_subtype(const std::shared_ptr<type>& arg_type) {
-    auto effective = arg_type;
-    if (auto ref_t = std::dynamic_pointer_cast<reference_type>(arg_type)) {
+    auto effective = type::remove_const(arg_type);
+    if (auto ref_t = std::dynamic_pointer_cast<reference_type>(effective)) {
         effective = ref_t->get_subtype();
     }
+    effective = type::remove_const(effective);
     if (auto lnk_t = std::dynamic_pointer_cast<link_type>(effective)) {
         return lnk_t->get_linked_type();
     } else if (auto ptr_t = std::dynamic_pointer_cast<pointer_type>(effective)) {
@@ -121,6 +122,16 @@ bool type_reference_resolver::check_and_insert_inheritance_cast(
     // Step 1: If types are already equal, return true immediately (no cast needed)
     if (type::are_equal(src_sub_nc, tgt_sub_nc)) return true;
 
+    auto source = arg;
+    if (type::is_reference(arg->get_type())) {
+        auto binding = type::remove_const(arg->get_type()->get_subtype());
+        if (type::is_pointer(binding) || type::is_link(binding) || type::is_view(binding)) {
+            // Cast the stored address, not its readonly slot. Ordinary value
+            // loading retains pointee const and the checked inheritance path.
+            source = adapt_reference_load_value(arg);
+            if (!source) return false;
+        }
+    }
     auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
     auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
 
@@ -128,7 +139,7 @@ bool type_reference_resolver::check_and_insert_inheritance_cast(
     // Static upcast: Derived -> Base
     if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
         src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
-        auto upcast = cast_expression::make_shared(arg, target_type);
+        auto upcast = cast_expression::make_shared(source, target_type);
         upcast->set_type(target_type);
         assign_arg(upcast);
         return true;
@@ -139,7 +150,7 @@ bool type_reference_resolver::check_and_insert_inheritance_cast(
     if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
         tgt_st->get_struct()->is_derived_from(src_st->get_struct()) &&
         tgt_st->get_struct()->has_rtti()) {
-        auto dc = cast_expression::make_shared(arg, target_type, null_is_fatal);
+        auto dc = cast_expression::make_shared(source, target_type, null_is_fatal);
         dc->set_type(target_type);
         assign_arg(dc);
         return true;
@@ -154,7 +165,7 @@ bool type_reference_resolver::check_and_insert_inheritance_cast(
         if (src_st && is_generic_opaque_ptr(tgt_sub_nc)) erasure = true;
         if (tgt_st && is_generic_opaque_ptr(src_sub_nc)) erasure = true;
         if (erasure) {
-            auto cast = cast_expression::make_shared(arg, target_type);
+            auto cast = cast_expression::make_shared(source, target_type);
             cast->set_type(target_type);
             assign_arg(cast);
             return true;
@@ -169,7 +180,7 @@ bool type_reference_resolver::check_and_insert_inheritance_cast(
         auto tgt_arr = std::dynamic_pointer_cast<array_type>(tgt_sub_nc);
         if (src_arr && tgt_arr && !tgt_arr->is_sized()
                 && type::are_equal(type::remove_const(src_arr->get_subtype()), type::remove_const(tgt_arr->get_subtype()))) {
-            auto cast = cast_expression::make_shared(arg, target_type);
+            auto cast = cast_expression::make_shared(source, target_type);
             cast->set_type(target_type);
             assign_arg(cast);
             return true;

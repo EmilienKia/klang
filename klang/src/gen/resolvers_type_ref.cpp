@@ -23,6 +23,7 @@
 #include "resolvers_constexpr.hpp"
 #include "gen_helpers.hpp"
 #include "gen_intrinsics.hpp"
+#include "gen_arguments.hpp"
 #include "gen_callable_helpers.hpp"
 #include "ffi_validation.hpp"
 #include "../model/imported.hpp"
@@ -3833,8 +3834,9 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     // Step 4: Double reference: unwrap one level
     // --- Double reference: unwrap one level ---
     std::shared_ptr<k::model::type> effective_src = type_src;
-    if (type::is_double_reference(type_src)) {
-        effective_src = std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype();
+    if (type::is_reference(type_src)
+        && type::is_reference(type::remove_const(type_src->get_subtype()))) {
+        effective_src = type::remove_const(type_src->get_subtype());
     }
 
     auto enum_backing_src = type::remove_const(effective_src);
@@ -4949,6 +4951,7 @@ type_reference_resolver::get_best_matching_function(
     };
 
     std::vector<CandInfo> valid;
+    std::string argument_mismatch;
 
     const auto build_concrete_member_param_types = [&](const std::shared_ptr<function>& func)
             -> std::vector<std::shared_ptr<type>>
@@ -5125,6 +5128,41 @@ type_reference_resolver::get_best_matching_function(
         const auto concrete_member_param_types = build_concrete_member_param_types(func);
         const auto* member_param_types = concrete_member_param_types.empty() ? nullptr : &concrete_member_param_types;
 
+        const auto argument_op = get_argument_intrinsic(*func);
+        if (argument_op != argument_intrinsic::none) {
+            if (argument_op == argument_intrinsic::invalid) {
+                throw_error(static_cast<unsigned>(k::diag::type_diag::ERR_INVOKE_METHOD_ARG_MISMATCH),
+                    call_lexeme, "Invalid or non-canonical Argument intrinsic declaration");
+            }
+            const bool capture = argument_op == argument_intrinsic::capture
+                || argument_op == argument_intrinsic::borrow;
+            if (args.size() != (capture ? 1u : 0u) || (!capture && !this_expr)) continue;
+            try {
+                if (capture) {
+                    describe_argument_source(args[0]);
+                    auto actual = args[0]->get_type();
+                    auto formal = params[0]->get_type();
+                    const bool explicit_drain = type::is_drain(actual)
+                        && type::are_equal(actual->get_subtype(), formal->get_subtype());
+                    if (!type::are_equal(actual, formal) && !explicit_drain) {
+                        argument_mismatch = "Argument capture requires the exact source reference type; "
+                            "explicit template arguments must not adapt the binding (source: "
+                            + actual->to_string() + ", parameter: " + formal->to_string() + ")";
+                        continue;
+                    }
+                } else if (argument_op != argument_intrinsic::is_null) {
+                    argument_access_type(*func);
+                }
+            } catch (const std::invalid_argument& error) {
+                throw_error(static_cast<unsigned>(k::diag::type_diag::ERR_INVOKE_METHOD_ARG_MISMATCH),
+                    call_lexeme, error.what());
+            }
+            // Preserve the original caller expression BEFORE any by-value owner
+            // adaptation or numeric/nominal conversion. These are inline operations.
+            valid.push_back({func, args, CAST_NONE, false, nullptr, 0, 0, false});
+            continue;
+        }
+
         // ── Intrinsic magic: accept any arguments for intrinsic functions ────────
         // Intrinsic functions bypass normal parameter matching — they accept whatever
         // arguments the call site provides. The intrinsic codegen handler reads the
@@ -5250,6 +5288,9 @@ type_reference_resolver::get_best_matching_function(
     }
 
     if (valid.empty()) {
+        if (!argument_mismatch.empty())
+            throw_error(static_cast<unsigned>(k::diag::type_diag::ERR_INVOKE_METHOD_ARG_MISMATCH),
+                call_lexeme, argument_mismatch);
         if (candidates.size() == 1 && candidates.front()) {
             auto fn = candidates.front();
             const auto& params = fn->parameters();
@@ -5414,7 +5455,10 @@ type_reference_resolver::get_best_matching_function(
         && !concrete_param_types.empty() ? &concrete_param_types : nullptr;
     const auto& selected_args = !b->is_unified && (!b->func->is_member() || b->func->is_static()) && direct_args
         ? *direct_args : args;
-    if (b->func->is_member() && !b->func->is_static() && this_expr
+    if (get_argument_intrinsic(*b->func) != argument_intrinsic::none) {
+        // Argument intrinsics describe the caller expression itself; the
+        // selection loop already preserved it, so no final adaptation applies.
+    } else if (b->func->is_member() && !b->func->is_static() && this_expr
         && get_intrinsic_name(*b->func).has_value()) {
         b->adapted_args.clear();
         for (size_t i = 0; i < selected_args.size(); ++i) {
@@ -5469,8 +5513,8 @@ std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(
     if (!expr) return nullptr;
     auto type = expr->get_type();
 
-    if(!type::is_resolved(type)) {
-        // Arguments must not be null, expr must have a type and this must be resolved.
+    if (!expr || !type || (!type::is_resolved(type) && type::contains_unresolved(type))) {
+        // Match adapt_type: semantic resolution can precede LLVM layout.
         return nullptr;
     }
 
@@ -5858,13 +5902,13 @@ std::shared_ptr<expression> type_reference_resolver::adapt_type(std::shared_ptr<
         }
     }
 
-    // Double reference: collapse one level
-    if(type::is_double_reference(type_src)) {
-        auto ref_src = std::dynamic_pointer_cast<reference_type>(type_src);
-        auto deref = load_value_expression::make_shared(expr);
-        deref->set_type(ref_src->get_subtype());
-        expr = deref;
-        type_src = ref_src->get_subtype();
+    // A readonly reference field is ref<const(ref<T>)>. Loading its binding
+    // removes only binding const, never const on the referenced value.
+    if (type::is_reference(type_src)
+        && type::is_reference(type::remove_const(type_src->get_subtype()))) {
+        expr = adapt_reference_load_value(expr);
+        if (!expr) return {};
+        type_src = expr->get_type();
     }
 
     if(type::is_reference(type_src)) {

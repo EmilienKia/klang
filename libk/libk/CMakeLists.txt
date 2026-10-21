@@ -17,6 +17,7 @@ set(LIBK_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/annotations.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/object.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rtti.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/argument.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/exception.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/big_integer.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/memory.k
@@ -888,6 +889,9 @@ target_compile_options(libk-tests-k-ffi-abi PRIVATE
     -fexceptions -fasynchronous-unwind-tables)
 
 libk_add_test(libk-tests-rtti-signatures 120 tests/test-rtti-signatures.cpp)
+libk_add_test(libk-tests-arguments 120 tests/test-arguments.cpp tests/test-argument-scopes.cpp)
+target_include_directories(libk-tests-arguments PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../klang/src)
 target_include_directories(libk-tests-rtti-signatures PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../klang/src)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux"

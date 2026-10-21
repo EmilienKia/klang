@@ -98,6 +98,17 @@ invalid declaration as a viable overload.
 
 Do not collapse/reorder phases.
 
+Borrowed `Argument` packaging must construct `call_argument_cleanup_scope` before
+source evaluation and explicitly pass the consumer's return type (null for void).
+The two-argument constructor is for ordinary by-value argument cleanup and cannot
+materialize borrowed sources. Keep ordinary construction cleanup until successful
+handoff, preserve original aggregate/array storage, and do not evaluate source
+producers into the consumer's `_sret_destination`. Leave the consumer result in
+`_value` before closing the scope: it guards pending owned results while retained
+normal cleanup may throw. Explicit storable capture never materializes temporaries.
+Retained aggregate allocas must be in the function entry. Guard a late result
+destination by spilling its address, not by copying its resource-bearing payload.
+
 Aggregate instantiations created after Pass A receive a body-only symbol-resolution
 catch-up before their parameter expressions and bodies are type-resolved. This uses
 the canonical symbol resolver after completing missing nested union declarations,

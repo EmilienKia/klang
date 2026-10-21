@@ -59,6 +59,12 @@ The RTTI system supports:
   positions/default markers, native argument mappings, and actual body
   relocations. These are metadata APIs, not a public invocation API.
 
+  [`Argument` and `ArgumentPack`](arguments.md) capture synchronous borrowed
+  bindings and expose these exact semantic type descriptors. Capture is not
+  ownership transfer; only an authorized checked take clears the original owner
+  slot. Holders must not outlive or invalidate their source slots. They do not
+  provide reflective invocation or asynchronous retention.
+
 ---
 
 ## 2. Visibility

@@ -69,6 +69,7 @@ add_library(klang
         src/gen/gen_function.cpp
         src/gen/gen_constructor.cpp
         src/gen/gen_intrinsics.cpp
+        src/gen/gen_arguments.cpp
         src/gen/gen_variable_definition.cpp
         src/gen/gen_adapt_type.cpp
         src/gen/gen_callable.cpp

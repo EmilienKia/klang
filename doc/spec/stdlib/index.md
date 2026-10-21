@@ -32,6 +32,7 @@ Contents:
 | [`String`](string.md#string) | Immutable, final string class wrapping a null-terminated `char[]!` buffer. | `src/string.k` |
 | [`StringBuilder`](string.md#stringbuilder) | Mutable, growable string builder backed by a single contiguous buffer. | `src/string.k` |
 | [`UniSlot<T>`, `MultiSlot<T>`](memory.md) | Low-level memory primitives for explicit lifetime management of objects. | `src/memory.k` |
+| [`Argument`, `ArgumentPack`](arguments.md) | Immutable synchronous borrowed bindings, exact type inspection, checked access and authorized original-slot owner take. | `src/argument.k` |
 | [`Shared<T>`, `Weak<T>`](shared.md) | Atomic shared ownership and non-owning weak observation, with copy/drain semantics and atomic weak promotion. | `src/shared.k` |
 | [Array comparison operators](collections.md#array-comparison-operators) | Content equality and lexicographic ordering for arrays of the same element type. | `src/collections.k` |
 | [Sequence comparison operators](collections.md#ordering-operators) | Lexicographic ordering for sequences and mixed array/sequence operands of the same element type. | `src/collections.k` |

@@ -1018,6 +1018,7 @@ type_reference_resolver::adapt_from_reference(
             if (type::is_const(inner) && compute_cast_weight(expr, type_nc) == CAST_IMPOSSIBLE) return {};
             auto parent = expr->parent<element>();
             auto loaded = adapt_reference_load_value(expr);
+            if (!loaded) return {};
             // Now adapt the loaded indirection to the target indirection type
             auto adapted = adapt_type(loaded, type_nc);
             if (adapted) adapted->set_parent(parent);

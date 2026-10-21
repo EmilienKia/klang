@@ -54,6 +54,8 @@ class DIScope;
 
 namespace k::model::gen {
 
+struct argument_source;
+
 /**
  * Emitter used to materialise the actual call instruction of a virtual dispatch.
  * Declared identically in gen_helpers.hpp (redundant alias declarations of the
@@ -292,6 +294,9 @@ protected:
      *  visit_return_statement. */
     llvm::Value* _sret_destination = nullptr;
 
+    /** Only the root source symbol may expose its original ref/drain slot. */
+    const symbol_expression* _argument_slot_symbol = nullptr;
+
     /** When non-null, link-related null-checks (link rebind from nullable source, dynamic cast
      *  to link with null_is_fatal) branch to this block on null instead of calling a fatal trap.
      *  Set by visit_if_else_statement to the else-block (or continue-block when there is no else)
@@ -366,18 +371,35 @@ protected:
             llvm::AllocaInst* live;
             std::shared_ptr<type> value_type;
             std::shared_ptr<variable_statement> variable;
+            bool borrowed = false;
+            bool result = false;
+            llvm::AllocaInst* address = nullptr;
         };
         std::vector<entry> _entries;
         cleanup_lpad_context _context{};
         bool _enabled;
         bool _has_local_catch = false;
         int _uncaught_exceptions;
+        std::shared_ptr<type> _result_type;
+        bool _borrowed_result_contract = false;
+        llvm::Value* retain(const std::shared_ptr<type>& value_type, llvm::Value* value,
+                            bool borrowed, bool result = false);
+        void destroy(const entry& value);
     public:
+        /** Borrowed packaging passes the consumer's return type (null for void),
+         * so returned resources are guarded if retained cleanup throws.
+         */
         call_argument_cleanup_scope(implementation_generator& gen, bool enabled);
+        call_argument_cleanup_scope(implementation_generator& gen, bool enabled,
+                                    std::shared_ptr<type> result_type);
         ~call_argument_cleanup_scope() noexcept(false);
         llvm::Value* track(const std::shared_ptr<type>& value_type, llvm::Value* value);
         void track_storage(const std::shared_ptr<type>& value_type, llvm::Value* storage);
         void track_variable(const std::shared_ptr<variable_statement>& variable);
+        /** S5 packaging hook: storage stays live through the call, including unwind.
+         * This is not explicit/storable capture; the surrounding call owns the scope.
+         */
+        llvm::Value* materialize_borrowed(const std::shared_ptr<type>& value_type, llvm::Value* value);
         void transfer();
     };
 
@@ -815,6 +837,15 @@ public:
 
     void visit_subscript_expression(subscript_expression&) override;
     void visit_function_invocation_expression(function_invocation_expression&) override;
+    bool emit_argument_intrinsic(function_invocation_expression&);
+    llvm::Constant* describe_argument_type(const std::shared_ptr<type>&);
+    /** Shared binding-record hook. The caller must keep slot storage alive.
+     * S5 temporary packaging pairs this with materialize_borrowed(), never
+     * with a storable explicit capture of a non-addressable expression.
+     */
+    llvm::Value* emit_borrowed_argument(const argument_source&, llvm::Value* slot,
+        const std::shared_ptr<struct_type>& holder_type, llvm::Value* destination = nullptr,
+        bool readonly = false);
     void visit_constructor_invocation_expression(constructor_invocation_expression&) override;
     void visit_temporary_construction_expression(temporary_construction_expression&) override;
     void visit_new_expression(new_expression&) override;

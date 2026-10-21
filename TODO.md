@@ -1521,7 +1521,23 @@
 - [ ] **KDI validator/exporter contract mismatch — OPEN, nonblocking, not repaired.**
   Reproduce with
   `cmake-build-debug/libkdi/kditool validate cmake-build-debug/libk/libk/libk.kdi`.
-  Current final J original and round-tripped descriptors both validate with
+  The latest isolated baseline, built without S2 on `c656426`, reports
+  **exit 1, 1,556 errors: 475 empty `llvm_def` fields + 1,081 unresolved
+  aggregate references**. The `k.kdi` symlink names the same descriptor.
+  A normalized path/message comparison matched all 1,556 against the archived
+  S2 output; S2 also added **seven distinct classic-template category errors**,
+  so its entire 1,563-error result must not be classified as baseline.
+  Those seven `template_defs[*].source` errors came from bodyless classic
+  intrinsic recipes incorrectly marked generic before source reconstruction.
+  The independently reproduced producer defect was fixed separately in
+  `fefd4653605edf705c632cd2fbf90b4186b41b2f`: classic recipe/category tests,
+  CBOR-localized validation and genuine-generic controls passed, and the
+  rebuilt S2-free descriptor retained exactly the known 1,556 errors with no
+  new category delta. This does not repair or close the baseline backlog.
+  Rebuild S2 and compare its fresh descriptor before claiming current acceptance.
+  Evidence: `extern-intrinsics-budget/kdi-baseline-classification.txt`,
+  `kdi-validation-comparison.txt` and the `classic-intrinsic-category/` logs.
+  The earlier final J original and round-tripped descriptors both validated with
   **exit 1** and identical **1,034 errors: 247 empty `llvm_def` fields + 787
   unresolved aggregate references**. Canonical JSON is byte-identical and the
   original descriptor is unchanged. The increase of **62** stays within the
@@ -1548,8 +1564,9 @@
   not the validator's exact type-table comparison, and the LLVM importer skips
   empty definition fragments while reconstructing method signatures from DTOs.
   Thus successful consumers do not prove that validator/exporter contracts agree.
-  A baseline artifact comparison remains necessary before attributing every issue
-  to pre-existing behavior; this triage does not claim such a comparison was run.
+  The historical triage did not establish baseline attribution. The later actual
+  1,556-error comparison above does; future producer changes still require a
+  freshly rebuilt baseline rather than assuming every validator error is old.
 
 - [x] **Template lifecycle/overload/late-body repairs — accepted by later foundation gates.**
   Local/imported overloads, free-template closures and late carrier enum

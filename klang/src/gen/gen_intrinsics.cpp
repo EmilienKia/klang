@@ -22,6 +22,7 @@
 // and instead generate specialised IR determined by the intrinsic name.
 //
 #include "gen_intrinsics.hpp"
+#include "gen_arguments.hpp"
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
@@ -43,12 +44,18 @@ namespace k::model::gen {
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::optional<std::string> get_intrinsic_name(const function& fn) {
+    const auto intrinsic_owner = fn.get_owner();
+    const bool argument_owner = intrinsic_owner
+        && (intrinsic_owner->get_fq_name() == "k::Argument"
+            || intrinsic_owner->get_fq_name() == "::k::Argument");
     for (auto& ann_inst : fn.get_annotations()) {
         // Check by resolved type if available
         bool is_intrinsic = false;
+        bool is_resolved_intrinsic = false;
         if (ann_inst.resolved_type) {
             std::string fq = ann_inst.resolved_type->get_fq_name();
             is_intrinsic = (fq == "k::annotations::Intrinsic" || fq == "::k::annotations::Intrinsic");
+            is_resolved_intrinsic = is_intrinsic;
         }
         // Fallback: check by raw name (before resolution)
         if (!is_intrinsic) {
@@ -76,6 +83,11 @@ std::optional<std::string> get_intrinsic_name(const function& fn) {
             auto& args = ann_inst.ast_node->args;
             if (!args.empty()) {
                 if (auto name = extract_string(args[0])) {
+                    if ((name->starts_with("argument.") || argument_owner)
+                        && (!name->starts_with("argument.")
+                            || (ann_inst.resolved_type && !is_resolved_intrinsic)
+                            || !is_canonical_argument_intrinsic(fn, *name)))
+                        return std::string("argument.invalid");
                     return name;
                 }
             }
@@ -87,10 +99,19 @@ std::optional<std::string> get_intrinsic_name(const function& fn) {
                 std::string member{des->member_name.content};
                 if (member == "name") {
                     if (auto name = extract_string(des->value)) {
+                        if ((name->starts_with("argument.") || argument_owner)
+                            && (!name->starts_with("argument.")
+                                || (ann_inst.resolved_type && !is_resolved_intrinsic)
+                                || !is_canonical_argument_intrinsic(fn, *name)))
+                            return std::string("argument.invalid");
                         return name;
                     }
                 }
             }
+        }
+
+        if (argument_owner) {
+            return std::string("argument.invalid");
         }
 
         // Fallback: derive intrinsic name from function context.
@@ -1175,10 +1196,6 @@ void implementation_generator::emit_ctor_invoke_with_construction_exception_wrap
 }
 
 } // namespace k::model::gen
-
-
-
-
 
 
 

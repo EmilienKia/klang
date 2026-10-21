@@ -29,6 +29,7 @@
 #include "gen_helpers.hpp"
 #include "gen_redirect.hpp"
 #include "gen_callable_helpers.hpp"
+#include "gen_arguments.hpp"
 #include "../common/operator_names.hpp"
 
 #include "../model/expressions.hpp"
@@ -948,6 +949,10 @@ llvm::Value* implementation_generator::build_callable_from_function(
     if (!func) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F05B), where,
             "Internal error: null function while binding a callable");
+    }
+    if (get_argument_intrinsic(*func) != argument_intrinsic::none) {
+        throw_error(static_cast<unsigned>(k::diag::type_diag::ERR_INVOKE_METHOD_ARG_MISMATCH),
+            where, "Argument intrinsics must be called directly; they have no callable body");
     }
     llvm::Function* llvm_fn = ensure_function_declared(*func);
     if (!llvm_fn) {

@@ -27,6 +27,7 @@
 #include "gen_redirect.hpp"
 #include "gen_intrinsics.hpp"
 #include "ffi_validation.hpp"
+#include "gen_arguments.hpp"
 
 #include "../model/expressions.hpp"
 #include "../model/statements.hpp"
@@ -1457,8 +1458,9 @@ void declaration_generator::visit_function(function &function) {
 
     // Template instantiations use linkonce_odr + COMDAT so identical
     // instantiations are merged across translation units / modules (C++ ODR model).
-    if (function.is_instantiation() ||
-        (function.get_owner() && function.get_owner()->is_instantiation())) {
+    if (get_argument_intrinsic(function) == argument_intrinsic::none
+        && (function.is_instantiation() ||
+            (function.get_owner() && function.get_owner()->is_instantiation()))) {
         apply_instantiation_linkage(*_context->_module, func, function.get_mangled_name());
     }
 
@@ -1632,6 +1634,16 @@ llvm::Function* implementation_generator::ensure_function_declared(k::model::fun
 }
 
 void implementation_generator::visit_function(function &function) {
+    if (const auto intrinsic = get_argument_intrinsic(function);
+        intrinsic != argument_intrinsic::none) {
+        if (intrinsic == argument_intrinsic::invalid
+            || (!function.is_template() && !has_argument_intrinsic_contract(function)))
+            throw_error(static_cast<unsigned>(k::diag::type_diag::ERR_INVOKE_METHOD_ARG_MISMATCH),
+                lex::opt_any_lexeme{}, "Invalid or non-canonical Argument intrinsic declaration");
+        // Capture must see the caller's slot, never a by-value factory frame.
+        // Typed access is also inline; these declarations have no addressable body.
+        return;
+    }
     // Skip template definitions — they are not instantiated yet.
     if (function.is_template()) {
         trace("[implementation_generator::visit_function] skipping template '{}'", {function.get_short_name()});
