@@ -46,6 +46,54 @@
 
 namespace fs = std::filesystem;
 
+TEST_CASE("Imported free array operator templates resolve for both operands",
+          "[import][template][operator][array]") {
+    auto lib = compile_model(R"K(
+        module imported_array_operator;
+
+        template<typename T>
+        operator <=>(left : const T[]&, right : const T[]&) : int {
+            return left[0] - right[0];
+        }
+    )K");
+    REQUIRE(lib);
+    k::model::kdi_builder builder(*lib->get_context_for_test());
+    lib->get_unit()->accept(builder);
+    auto file = builder.take();
+    auto path = fs::current_path() / "imported_array_operator.kdi";
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    REQUIRE(kdi::kdi_write_cbor_file(file, path.string()));
+
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("imported_array_operator", path);
+    auto comp = k::compiler::create();
+    comp->set_file_resolver(resolver);
+    comp->parse_source("imported_array_operator_consumer.k", R"K(
+        module imported_array_operator_consumer;
+        import imported_array_operator;
+
+        test() : int {
+            left : int[2]{3, 4};
+            right : int[1]{5};
+            if (!(left < right) || !(right > left)) return 1;
+            return left <=> right;
+        }
+    )K", false, false);
+    REQUIRE_FALSE(comp->has_compilation_error());
+    std::string load_error;
+    REQUIRE_FALSE(llvm::sys::DynamicLibrary::LoadLibraryPermanently(
+        (std::string(KLANG_STDLIB_LIB_DIR) + "/libk.so").c_str(), &load_error));
+    INFO(load_error);
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == -2);
+}
+
 TEST_CASE("import template return prvalues adopt resources and clean intermediate getters",
           "[import][template][return-prvalue][lifecycle][regression]") {
     const bool is_class = GENERATE(false, true);

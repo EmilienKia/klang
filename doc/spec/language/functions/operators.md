@@ -2,8 +2,9 @@
 
 [← Index](../index.md) · [Functions](functions.md)
 
-*Operator overloading* allows user-defined types (structs, classes, interfaces) to provide custom behaviour for built-in operators.
-When an expression uses an operator whose left-hand operand (or sole operand, for unary operators) is of an aggregate type, the compiler looks for a matching **operator function** and dispatches the call to it.
+*Operator overloading* allows user-defined types and free operator functions to
+provide custom behaviour for built-in operators. Array comparisons can use free
+operator templates as well as aggregate operands using member or free operators.
 
 ---
 
@@ -179,6 +180,10 @@ struct T {
 ## 5. Non-member operator functions
 
 A non-member (free) operator function is declared at namespace/module level, outside any struct body.
+For array comparisons, visible free binary operator templates are considered for
+array operands. Template parameters are deduced from both arguments, and both
+arguments must be compatible with the selected parameters. Member lookup and
+its priority remain unchanged for aggregate operands.
 
 ### Binary non-member operator
 
@@ -427,7 +432,7 @@ When multiple candidate operator functions exist (from the aggregate, its base c
    - Member operators from the aggregate and its inheritance hierarchy (with [name-hiding](#11-operators-and-inheritance)).
    - Non-member operators visible in the enclosing scope whose first parameter matches the left-hand operand's type.
 
-2. **Score each candidate** by computing a *cast weight* for the right-hand operand (binary) or sole operand (non-member unary):
+2. **Score each candidate** by computing a *cast weight* for the right-hand operand (member binary), both operands (free binary), or sole operand (non-member unary):
    - **Exact match** (type matches perfectly): weight 0 (best).
    - **Widening conversion** (e.g., `short` → `int`, `Derived&` → `Base&`): weight proportional to the conversion distance.
    - **No possible conversion**: candidate is eliminated.
@@ -554,10 +559,10 @@ test() : bool {
 
 ### Resolution order
 
-For an expression `a OP b` where `a` (or `b`) is an aggregate type, the compiler searches for a way to compute `OP` in the following order, from least to most complex:
+For an expression `a OP b` with aggregate or array operands, the compiler searches for a way to compute `OP` in the following order, from least to most complex:
 
 1. **DIRECT** — the exact operator `OP` is declared. Used as-is (this is the pre-existing behaviour described in [§8](#8-overload-resolution)).
-2. **SPACESHIP** — `operator <=>` is declared on the left operand's (or `this`'s) aggregate type; synthesize `OP(a, b) = compare(a <=> b, OP)` (i.e. compare the three-way result against zero the way `OP` requires — e.g. `<` succeeds when the result is negative).
+2. **SPACESHIP** — a matching `operator <=>` is declared on the left operand's aggregate type or as a visible free operator; synthesize `OP(a, b) = compare(a <=> b, OP)` (i.e. compare the three-way result against zero the way `OP` requires — e.g. `<` succeeds when the result is negative).
 3. **SPACESHIP_SWAP** — no usable `<=>` is declared on the left operand's type, but one is declared on the right operand's aggregate type; synthesize `OP(a, b) = compare(b <=> a, swap_of(OP))` (operands are swapped for the `<=>` call, and the wanted comparison is swapped accordingly — e.g. `a < b` becomes "is `b <=> a` positive").
 4. **NEGATE** — the logical negation of `OP` is declared; synthesize `OP(a, b) = !negate_of(OP)(a, b)`.
 5. **SWAP** — `OP` is declared with operands reversed; synthesize `OP(a, b) = swap_of(OP)(b, a)`.
@@ -861,7 +866,10 @@ test() : int {
 
 ## 15. Restrictions
 
-- **Only aggregate types:** operator overloading is only available when at least one operand is of a user-defined aggregate type (struct, class, or interface). Operators between two primitive types always use the built-in semantics.
+- **Array comparison templates:** free binary operator templates can also
+  handle array operands. Module `k` provides content-comparison templates; see
+  [Array value comparisons](../expressions/binary.md#array-value-comparisons).
+  Ordinary primitive comparisons retain built-in semantics.
 - **No new operators:** only existing K operators can be overloaded. No new operator symbols can be introduced.
 - **No arity change:** a binary operator must remain binary; a unary operator must remain unary.
 - **Return type freedom:** operator functions may return any type — there is no constraint that `operator +` must return the same type as its operands.
@@ -917,4 +925,3 @@ The compiler maps each operator declaration to an internal canonical function na
 ---
 
 *See also:* [Functions](functions.md) · [Function Overloading](overloading.md) · [Expressions](../expressions/expressions.md) · [Binary Operators](../expressions/binary.md) · [Unary Operators](../expressions/unary.md) · [Structures](../structs/structs.md) · [Classes and Virtuality](../structs/classes.md) · [Interfaces](../structs/interfaces.md)
-

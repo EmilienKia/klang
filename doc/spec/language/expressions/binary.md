@@ -4,7 +4,8 @@
 
 Binary operators combine two operands to produce a value.
 
-> **Operator overloading:** When one operand is of a user-defined aggregate type (struct, class, or interface), the compiler looks for a matching operator function instead of applying built-in semantics. See [Operator Overloading](../functions/operators.md) for the full specification.
+> **Operator overloading:** Aggregate operands and array comparisons can use
+> matching operator functions. See [Operator Overloading](../functions/operators.md).
 
 ---
 
@@ -87,6 +88,48 @@ a < b        // true if a is strictly less than b
 a > b        // true if a is strictly greater than b
 a <= b       // true if a is less than or equal to b
 a >= b       // true if a is greater than or equal to b
+```
+
+### Array value comparisons
+
+Module `k` provides free comparison templates for arrays with the same element
+type. Fixed-size arrays and unsized array references can be compared without
+copying. `==` compares lengths first, then elements in increasing index order
+using `==`, stopping at the first mismatch. `!=` is `!(left == right)`.
+`<=>` compares the common prefix in index order using the element `<=>`;
+the first negative or positive result yields `-1` or `1`. If the prefix is
+equal, the shorter array is less; equal lengths yield `0`. The relational
+operators can be synthesized from this `<=>`.
+
+The element `==` expression must be usable as `bool` for array equality and
+inequality. Array ordering requires element `<=>` and a result that can be
+compared with zero using `<` and `>`. The standard templates cannot compare
+arrays of different element types; without another viable overload such
+comparisons, and comparisons whose required element operation is unavailable,
+must be rejected.
+Element comparisons are evaluated once per visited pair; a length mismatch
+performs no element equality comparisons. Indirection comparisons continue to
+compare addresses rather than array contents.
+
+```k
+test() : bool {
+    a : int[2]{1, 2};
+    b : int[3]{1, 2, 3};
+    return a < b && a != b && (a <=> b) == -1;
+}
+
+struct Uncomparable {}
+invalid() : bool {
+    a : Uncomparable[1]{};
+    b : Uncomparable[1]{};
+    return a == b;  // Error: element equality is unavailable.
+}
+
+invalidTypes() : bool {
+    a : int[1]{1};
+    b : long[1]{1L};
+    return a == b;  // Error: the standard template requires one element type.
+}
 ```
 
 ### Address comparison for indirection types

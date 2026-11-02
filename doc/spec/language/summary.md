@@ -194,6 +194,13 @@ Internal representation: `{ uint32 count; T[N] data; }`.
 - Subscript: `arr[i]` — runtime bounds check (unsigned comparison). Out-of-bounds throws `IndexOutOfBoundsError`.
 - Virtual member `size`: `arr.size` returns `unsigned int` (element count).
 - Indirection arrays: `int+[]`, `int*[]`, `int?[]`, `int![]` are supported. Each element is an address slot.
+- Module `k` supplies same-element-type array comparisons: `==` checks length
+  and then element equality, `!=` negates it, and `<=>` orders lexicographically
+  by element `<=>` and then length. Each visited pair is compared once; a length
+  mismatch skips element equality. Element equality must produce a usable `bool`;
+  element ordering must produce a result comparable to zero with `<` and `>`.
+  Without another viable overload, missing element operations and different
+  element types are rejected.
 
 ### 3.5 Struct Types
 
@@ -492,7 +499,7 @@ An **unprefixed** literal defaults to `char[]` (UTF-32). When it is passed as a 
 - **Shifts**: `<<`, `>>`. Right shift is arithmetic (signed) or logical (unsigned).
 - **Comparisons**: `==`, `!=`, `<`, `>`, `<=`, `>=` → `bool`.
   - Address comparison for `T*`, `T+`, `T?`, `T!` (`==`/`!=` only). `T&` compares values.
-- **Three-way comparison**: `<=>` → signed integer or floating-point primitive (negative/zero/positive for less/equal/greater). Also overloadable on aggregates; used as a comparison-operator fallback source (see [operators.md](functions/operators.md#9-comparison-operator-fallback-synthesis)).
+- **Three-way comparison**: `<=>` → signed integer or floating-point primitive (negative/zero/positive for less/equal/greater), or an aggregate result. Array `<=>` returns `int`. Also used as a comparison-operator fallback source (see [operators.md](functions/operators.md#9-comparison-operator-fallback-synthesis)).
 - **Logical**: built-in `&&`, `||` convert operands to `bool`, including through
   an aggregate's `operator() : bool`, and short-circuit (and-then / or-else).
   Conversion operates on the original operand; the skipped right operand is
@@ -808,6 +815,8 @@ Declaration with `operator` + operator symbol.
 Rules:
 - **Member**: `this` = left operand. Binary = 1 explicit parameter. Unary = 0 parameters.
 - **Non-member**: free function. Binary = 2 parameters. Unary = 1 parameter.
+- Free binary operator templates can be selected for array operands, deducing
+  their template parameters from both operands.
 - Resolution: lowest conversion weight wins. On equal weight, **member takes priority**.
 - `const operator`: callable on const objects. A non-const operator on a const object = error.
 - Inheritance: operators are inherited. Redeclaring an operator in a derived type hides **all** homonymous operators from the parent (name hiding).
@@ -816,7 +825,9 @@ Rules:
 - Exported in libraries (member and non-member).
 - `operator ++_` / `--_` = prefix. `operator _++` / `_--` = postfix.
 - `operator <=>` (three-way comparison): returns a signed integer or floating-point primitive (negative/zero/positive). Used as a fallback synthesis source for `==`/`!=`/`<`/`>`/`<=`/`>=` when the exact comparison operator isn't declared on the aggregate (see [operators.md §9](functions/operators.md#9-comparison-operator-fallback-synthesis)).
-- **Restrictions**: at least one aggregate operand, no new operators, no arity change, `[]` and `()` (call) are not overloadable.
+- **Restrictions**: no new operators or arity change; `[]` is member-only and
+  `()` (function call) is not overloadable. Array comparisons can use free
+  operator templates; ordinary primitive comparisons retain built-in semantics.
 
 ### 10.8 Static Functions
 

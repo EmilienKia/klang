@@ -18,6 +18,52 @@
 
 module k;
 
+namespace array_comparison_detail {
+    template<typename T>
+    sign(value : const T&) : int {
+        if (value < 0) return -1;
+        if (value > 0) return 1;
+        return 0;
+    }
+}
+
+/**
+ * Compare arrays lexicographically using their elements' three-way comparison.
+ * The first differing element determines the sign; otherwise length does.
+ */
+template<typename T>
+operator <=>(left : const T[]&, right : const T[]&) : int {
+    i : unsigned int = 0u;
+    while (i < left.size && i < right.size) {
+        order : int = array_comparison_detail::sign(left[i] <=> right[i]);
+        if (order != 0) return order;
+        ++i;
+    }
+    if (left.size < right.size) return -1;
+    if (left.size > right.size) return 1;
+    return 0;
+}
+
+/**
+ * Compare arrays by length and element equality, stopping at the first mismatch.
+ */
+template<typename T>
+operator ==(left : const T[]&, right : const T[]&) : bool {
+    if (left.size != right.size) return false;
+    i : unsigned int = 0u;
+    while (i < left.size) {
+        if (!(left[i] == right[i])) return false;
+        ++i;
+    }
+    return true;
+}
+
+/** Return the negation of array equality. */
+template<typename T>
+operator !=(left : const T[]&, right : const T[]&) : bool {
+    return !(left == right);
+}
+
 /**
  * ConstIterator<T> — abstract interface for read-only, consumable, forward-only traversal.
  *
@@ -764,4 +810,3 @@ class SequenceSkip : public Sequence<T> {
         return new SkippedConstIterator<T>(source.constIterator(), toSkip, afterCount);
     }
 }
-

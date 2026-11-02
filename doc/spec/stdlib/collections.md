@@ -26,6 +26,44 @@ destroyed).
 
 ---
 
+## Array comparison operators
+
+Module `k` provides these free function templates:
+
+```k
+template<typename T>
+operator <=>(left : const T[]&, right : const T[]&) : int;
+template<typename T>
+operator ==(left : const T[]&, right : const T[]&) : bool;
+template<typename T>
+operator !=(left : const T[]&, right : const T[]&) : bool;
+```
+
+Both operands must have the same element type; fixed-size arrays of different
+lengths and unsized array references are accepted. `==` first checks the lengths
+and then compares elements in increasing order, stopping at the first unequal
+pair. `!=` returns the negation of array `==`. `<=>` compares the common
+prefix lexicographically, returning `-1` or `1` for the first differing pair;
+if the prefix is equal, the shorter array sorts first and equal lengths yield
+`0`. Visited element comparisons are evaluated once, with no array copies or
+allocation. Pointer, link, view and owner comparisons still compare addresses.
+
+For equality, `left[i] == right[i]` must be usable as `bool`. For ordering,
+`left[i] <=> right[i]` must be valid and its result must support `< 0` and
+`> 0`, indicating its sign. An unavailable required operation makes use of
+the standard template invalid; different element types require another
+viable overload.
+
+```k
+test() : bool {
+    a : int[2]{1, 2};
+    b : int[3]{1, 2, 3};
+    return a != b && (a <=> b) == -1;
+}
+```
+
+---
+
 ## `Sequence<T>` and `MutableSequence<T>` — Interfaces
 
 ```k
@@ -349,4 +387,3 @@ reference tracking. Destroying a collection destroys all contained elements.
 | Frequent front insertions/removals | `LinkedList<T>` or `DoubleLinkedList<T>` |
 | Stable element addresses (no reallocation) | `LinkedList<T>` or `DoubleLinkedList<T>` |
 | General purpose, best average performance | `Vector<T>` |
-
