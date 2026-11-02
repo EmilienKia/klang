@@ -112,6 +112,13 @@ protected:
     std::unordered_set<function*> _resolving_functions;
     std::unordered_set<function*> _resolved_functions;
 
+    struct deferred_binary_template {
+        std::shared_ptr<function> recipe;
+        std::vector<template_argument> args;
+        std::shared_ptr<function> signature;
+    };
+    std::vector<deferred_binary_template> _deferred_binary_templates;
+
     /**
      * Stack of expected/target type contexts pushed by parent expressions or statements.
      * Used for bidirectional type inference (e.g. return-type template argument deduction,
@@ -902,11 +909,12 @@ protected:
      * @param left_expr     The left operand expression (used for scope lookup and non-member left param scoring).
      * @param right_expr    The right operand expression.
      * @param is_const_this True if the left operand is a const object (only const member operators are viable).
+     * The selected non-member's left operand is adapted on expr after selection.
      * @return {best_func, adapted_right} or {nullptr, nullptr} if no viable match.
      */
     std::pair<std::shared_ptr<function>, std::shared_ptr<expression>>
     resolve_binary_operator_overload(
-        const binary_expression& expr,
+        binary_expression& expr,
         const std::shared_ptr<aggregate>& left_agg,
         const std::shared_ptr<expression>& left_expr,
         const std::shared_ptr<expression>& right_expr,
@@ -924,17 +932,15 @@ protected:
      * @param left_expr     The expression bound to the receiver ("this") / first non-member param.
      * @param right_expr    The expression bound to the sole member param / second non-member param.
      * @param is_const_this True if left_expr is a const object (only const member operators are viable).
-     * @return {best_func, adapt_target_type, best_score} — adapt_target_type is the operator's
-     *         declared parameter type that `right_expr` (or `left_expr` for a swapped-role
-     *         probe) must be adapted to if this candidate is used, or nullptr if no
-     *         adaptation is needed. Callers must call adapt_type() themselves, exactly once,
+     * @return {best_func, left_target, right_target, best_score}. The left target is
+     *         null for member operators. Callers must call adapt_type() themselves,
      *         only for the candidate that is actually selected as the final winner — calling
      *         it eagerly for every scored candidate would reparent the (possibly shared,
      *         already-attached) input expression via the wrapping cast_expression it may
      *         create, even for candidates that are ultimately discarded. Returns
-     *         {nullptr, nullptr, CAST_IMPOSSIBLE} if no viable match exists.
+     *         {nullptr, nullptr, nullptr, CAST_IMPOSSIBLE} if no viable match exists.
      */
-    std::tuple<std::shared_ptr<function>, std::shared_ptr<type>, cast_weight>
+    std::tuple<std::shared_ptr<function>, std::shared_ptr<type>, std::shared_ptr<type>, cast_weight>
     resolve_named_binary_operator_overload(
         const binary_expression& expr,
         const std::string& op_name,
@@ -942,6 +948,8 @@ protected:
         const std::shared_ptr<expression>& left_expr,
         const std::shared_ptr<expression>& right_expr,
         bool is_const_this = false);
+
+    std::shared_ptr<function> materialize_binary_operator(const std::shared_ptr<function>& func);
 
     /**
      * Result of resolve_comparison_with_fallback(): describes the source operator function
@@ -962,6 +970,8 @@ protected:
          * (composite candidates require an exact type match on both sides, see cmp_synthesis).
          */
         std::shared_ptr<expression> adapted_arg;
+        /** Adapted receiver-role operand for a selected non-member operator. */
+        std::shared_ptr<expression> adapted_receiver;
         /**
          * Phase 2 (aggregate `operator <=>` return type): only meaningful for
          * SPACESHIP/SPACESHIP_SWAP when `func`'s return type is an aggregate rather than a

@@ -2644,7 +2644,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         auto canon_tgt = type::canonical(tgt);
         auto canon_src = type::canonical(expr->get_type());
         if (canon_tgt != tgt || canon_src != expr->get_type()) {
-            auto stripped = cast_expression::make_shared(expr, canon_src);
+            auto stripped = cast_expression::make_shared(expr->clone(), canon_src);
             stripped->set_type(canon_src);
             return compute_cast_weight(stripped, canon_tgt);
         }

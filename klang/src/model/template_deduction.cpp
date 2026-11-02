@@ -18,6 +18,7 @@
 #include "template_deduction.hpp"
 #include "model_function.hpp"
 #include "model_aggregate.hpp"
+#include "model_alias.hpp"
 #include "../parse/ast.hpp"
 
 #include <unordered_map>
@@ -145,7 +146,8 @@ match_status deduce_from_types(
     const std::unordered_set<std::string>& type_param_names,
     const std::unordered_set<std::string>& value_param_names,
     std::unordered_map<std::string, std::shared_ptr<type>>& type_deductions,
-    std::unordered_map<std::string, k::value_type>& value_deductions);
+    std::unordered_map<std::string, k::value_type>& value_deductions,
+    bool array_element = false);
 
 match_status match_ast_type_spec(
     const k::parse::ast::type_specifier* spec,
@@ -407,7 +409,8 @@ match_status deduce_from_types(
     const std::unordered_set<std::string>& type_param_names,
     const std::unordered_set<std::string>& value_param_names,
     std::unordered_map<std::string, std::shared_ptr<type>>& type_deductions,
-    std::unordered_map<std::string, k::value_type>& value_deductions)
+    std::unordered_map<std::string, k::value_type>& value_deductions,
+    bool array_element)
 {
     if (!param_type || !arg_type) return match_status::NO_MATCH;
 
@@ -421,9 +424,20 @@ match_status deduce_from_types(
         }
         auto it = type_deductions.find(param_name);
         if (it != type_deductions.end()) {
-            if (!type::are_equal(it->second, clean_arg) &&
-                !type::are_layout_equal(it->second, clean_arg) &&
-                it->second->to_string() != clean_arg->to_string()) {
+            auto strip_soft_alias = [](std::shared_ptr<type> t) {
+                while (auto alias = std::dynamic_pointer_cast<alias_type>(t)) {
+                    auto decl = alias->get_alias();
+                    if (!decl || decl->is_strong() || !alias->get_underlying()) break;
+                    t = alias->get_underlying();
+                }
+                return t;
+            };
+            const bool equal = array_element
+                ? type::are_equal(strip_soft_alias(it->second), strip_soft_alias(clean_arg))
+                : (type::are_equal(it->second, clean_arg)
+                    || type::are_layout_equal(it->second, clean_arg)
+                    || it->second->to_string() == clean_arg->to_string());
+            if (!equal) {
                 return match_status::CONFLICT; // Conflict
             }
         } else {
@@ -442,7 +456,7 @@ match_status deduce_from_types(
             return deduce_from_types(
                 param_type, inner,
                 type_param_names, value_param_names,
-                type_deductions, value_deductions);
+                type_deductions, value_deductions, array_element);
         }
     }
 
@@ -482,7 +496,7 @@ match_status deduce_from_types(
                 auto res = deduce_from_types(
                         uct_param->get_return_type(), ct_arg->get_return_type(),
                         type_param_names, value_param_names,
-                        type_deductions, value_deductions);
+                        type_deductions, value_deductions, array_element);
                 if (res != match_status::SUCCESS) return res;
             }
             const auto& p_params = uct_param->parameter_types();
@@ -492,7 +506,7 @@ match_status deduce_from_types(
                 auto res = deduce_from_types(
                         p_params[i], a_params[i],
                         type_param_names, value_param_names,
-                        type_deductions, value_deductions);
+                        type_deductions, value_deductions, array_element);
                 if (res != match_status::SUCCESS) return res;
             }
             return match_status::SUCCESS;
@@ -502,7 +516,7 @@ match_status deduce_from_types(
                 auto res = deduce_from_types(
                         uct_param->get_return_type(), uct_arg->get_return_type(),
                         type_param_names, value_param_names,
-                        type_deductions, value_deductions);
+                        type_deductions, value_deductions, array_element);
                 if (res != match_status::SUCCESS) return res;
             }
             const auto& p_params = uct_param->parameter_types();
@@ -512,7 +526,7 @@ match_status deduce_from_types(
                 auto res = deduce_from_types(
                         p_params[i], a_params[i],
                         type_param_names, value_param_names,
-                        type_deductions, value_deductions);
+                        type_deductions, value_deductions, array_element);
                 if (res != match_status::SUCCESS) return res;
             }
             return match_status::SUCCESS;
@@ -527,7 +541,7 @@ match_status deduce_from_types(
                 auto res = deduce_from_types(
                         ct_param->get_return_type(), ct_arg->get_return_type(),
                         type_param_names, value_param_names,
-                        type_deductions, value_deductions);
+                        type_deductions, value_deductions, array_element);
                 if (res != match_status::SUCCESS) return res;
             }
             const auto& p_params = ct_param->get_parameter_types();
@@ -537,25 +551,36 @@ match_status deduce_from_types(
                 auto res = deduce_from_types(
                         p_params[i], a_params[i],
                         type_param_names, value_param_names,
-                        type_deductions, value_deductions);
+                        type_deductions, value_deductions, array_element);
                 if (res != match_status::SUCCESS) return res;
             }
             return match_status::SUCCESS;
         }
     }
 
-    // Check sized array and array types
-    auto bare_array_param = type::canonical(type::remove_const(param_type));
-    if (type::is_reference(bare_array_param) || type::is_drain(bare_array_param)) {
-        bare_array_param = bare_array_param->get_subtype();
-    }
-    bare_array_param = type::remove_const(bare_array_param);
-
-    auto bare_array_arg = type::canonical(type::remove_const(arg_type));
-    if (type::is_reference(bare_array_arg) || type::is_drain(bare_array_arg)) {
-        bare_array_arg = bare_array_arg->get_subtype();
-    }
-    bare_array_arg = type::remove_const(bare_array_arg);
+    // Unwrap the array itself without canonicalizing its element type: strong
+    // aliases and nominal element types must remain distinct during deduction.
+    auto bare_array = [](std::shared_ptr<type> t) {
+        auto unwrap_outer = [](std::shared_ptr<type> current) {
+            for (unsigned depth = 0; current && depth < 64; ++depth) {
+                if (auto alias = std::dynamic_pointer_cast<alias_type>(current)) {
+                    if (!alias->get_underlying()) break;
+                    current = alias->get_underlying();
+                } else if (auto unresolved = std::dynamic_pointer_cast<unresolved_type>(current);
+                           unresolved && unresolved->is_resolved()) {
+                    current = unresolved->get_resolved();
+                } else {
+                    break;
+                }
+            }
+            return current;
+        };
+        t = type::remove_const(unwrap_outer(t));
+        if (type::is_reference(t) || type::is_drain(t)) t = t->get_subtype();
+        return type::remove_const(unwrap_outer(t));
+    };
+    auto bare_array_param = bare_array(param_type);
+    auto bare_array_arg = bare_array(arg_type);
 
     if (type::is_sized_array(bare_array_param) && type::is_sized_array(bare_array_arg)) {
         auto sa_param = std::dynamic_pointer_cast<sized_array_type>(bare_array_param);
@@ -565,7 +590,7 @@ match_status deduce_from_types(
             return deduce_from_types(
                 sa_param->get_subtype(), sa_arg->get_subtype(),
                 type_param_names, value_param_names,
-                type_deductions, value_deductions);
+                type_deductions, value_deductions, true);
         }
     }
 
@@ -576,7 +601,7 @@ match_status deduce_from_types(
             return deduce_from_types(
                 a_param->get_subtype(), a_arg->get_subtype(),
                 type_param_names, value_param_names,
-                type_deductions, value_deductions);
+                type_deductions, value_deductions, true);
         }
     }
 
@@ -594,7 +619,7 @@ match_status deduce_from_types(
             return deduce_from_types(
                 param_sub, arg_type,
                 type_param_names, value_param_names,
-                type_deductions, value_deductions);
+                type_deductions, value_deductions, array_element);
         }
         if (type::is_reference(param_type)) {
             // const T& can bind to rvalue
@@ -602,7 +627,7 @@ match_status deduce_from_types(
                 return deduce_from_types(
                     param_sub->get_subtype(), arg_type,
                     type_param_names, value_param_names,
-                    type_deductions, value_deductions);
+                    type_deductions, value_deductions, array_element);
             }
         }
         std::string sub_name = get_template_param_name(param_sub, type_param_names);
@@ -631,7 +656,7 @@ match_status deduce_from_types(
             return deduce_from_types(
                 param_sub, arg_sub,
                 type_param_names, value_param_names,
-                type_deductions, value_deductions);
+                type_deductions, value_deductions, array_element);
         }
     }
 
@@ -650,7 +675,7 @@ match_status deduce_from_types(
         return deduce_from_types(
             param_sub, arg_sub,
             type_param_names, value_param_names,
-            type_deductions, value_deductions);
+            type_deductions, value_deductions, array_element);
     }
 
     // Special case: const T& vs non-const T&
@@ -658,7 +683,7 @@ match_status deduce_from_types(
         return deduce_from_types(
             param_sub->get_subtype(), arg_sub,
             type_param_names, value_param_names,
-            type_deductions, value_deductions);
+            type_deductions, value_deductions, array_element);
     }
 
     // Wrapper mismatch

@@ -35,6 +35,162 @@
 #include "helpers.hpp"
 #include <catch2/catch_all.hpp>
 
+TEST_CASE("Free array template spaceship supports direct and synthesized comparisons",
+          "[gen][spaceship][array][template]") {
+    auto jit = gen_jit(R"SRC(
+        module array_template_spaceship;
+
+        struct Element {
+            value : int;
+            Element(v : int) : value(v) {}
+            const operator <=>(other : const Element&) : int { return value - other.value; }
+        }
+
+        template<struct T>
+        operator <=>(left : const T[]&, right : const T[]&) : int {
+            return left[0].value - right[0].value;
+        }
+
+        compare_refs(left : const Element[]&, right : const Element[]&) : int {
+            if (!(left < right) || !(right > left)) return 1;
+            if (!(left <= right) || !(right >= left)) return 2;
+            if (left == right || !(left != right)) return 3;
+            return left <=> right;
+        }
+
+        test() : int {
+            a : Element[2]{Element(3), Element(8)};
+            b : Element[3]{Element(5), Element(9), Element(10)};
+            if ((a <=> b) != -2 || !(a < b) || !(b > a)) return 10;
+            if (!(a != b) || a == b) return 11;
+            return compare_refs(a, b);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == -2);
+}
+
+TEST_CASE("Free array comparison templates deduce both element types",
+          "[gen][spaceship][array][template][error]") {
+    SECTION("Conflicting element types") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module array_template_mismatch;
+
+        template<typename T>
+        operator <=>(left : const T[]&, right : const T[]&) : int { return 0; }
+
+        test() : int {
+            a : int[1]{1};
+            b : long[1]{1};
+            return a <=> b;
+        }
+        )SRC"), k::log::compiler_error);
+    }
+    SECTION("Unsatisfied element constraint") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module array_template_constraint;
+
+        template<struct T>
+        operator <=>(left : int, right : const T[]&) : int { return 0; }
+
+        test() : int {
+            a : int[1]{1};
+            return 1 <=> a;
+        }
+        )SRC"), k::log::compiler_error);
+    }
+    SECTION("Distinct nominal element types with the same name and layout") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module array_template_nominal_mismatch;
+        namespace first { struct Item { value : int; } }
+        namespace second { struct Item { value : int; } }
+        test(left : const first::Item[]&, right : const second::Item[]&) : bool {
+            return left == right;
+        }
+        )SRC"), k::log::compiler_error);
+    }
+    SECTION("Distinct strong aliases of the same element type") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module array_template_alias_mismatch;
+        typedef First : int;
+        typedef Second : int;
+        test(left : const First[]&, right : const Second[]&) : bool {
+            return left == right;
+        }
+        )SRC"), k::log::compiler_error);
+    }
+    SECTION("Selected ordering still requires ordered elements") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"SRC(
+        module array_template_unordered;
+        struct Element { value : int; }
+        test(left : const Element[]&, right : const Element[]&) : int {
+            return left <=> right;
+        }
+        )SRC"), k::log::compiler_error);
+    }
+}
+
+TEST_CASE("Free array equality template adapts both fixed-size operands",
+          "[gen][operator][array][template]") {
+    auto jit = gen_jit(R"SRC(
+        module array_template_equality;
+
+        struct Element {
+            value : int;
+            Element(v : int) : value(v) {}
+        }
+
+        template<struct T>
+        operator ==(left : const T[]&, right : const T[]&) : bool {
+            return left[0].value == right[0].value && left.size == right.size;
+        }
+        template<struct T>
+        operator !=(left : const T[]&, right : const T[]&) : bool {
+            return left[0].value != right[0].value || left.size != right.size;
+        }
+
+        test() : int {
+            a : Element[2]{Element(7), Element(8)};
+            b : Element[2]{Element(7), Element(9)};
+            c : Element[1]{Element(7)};
+            if (!(a == b) || a != b) return 1;
+            if (a == c || !(a != c)) return 2;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
+TEST_CASE("Free array comparison templates adapt both operands when swapped",
+          "[gen][operator][array][template]") {
+    auto jit = gen_jit(R"SRC(
+        module array_template_swapped;
+
+        template<typename T>
+        operator <(value : int, values : const T[]&) : bool {
+            return value < values[0];
+        }
+
+        test() : int {
+            value : int = 3;
+            values : int[2]{5, 6};
+            if (!(value < values)) return 1;
+            if (!(values > value)) return 2;
+            if (values <= value) return 3;
+            return 42;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 42);
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. Builtin primitive `<=>`
 // ═════════════════════════════════════════════════════════════════════════════
