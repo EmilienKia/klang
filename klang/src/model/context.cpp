@@ -1508,8 +1508,8 @@ void context::resolve_types() {
 
 void context::rebuild_instantiation_layouts() {
     // Collect class/interface template-instantiation struct types and detect
-    // whether any is stale: its owning aggregate carries a base-subobject field
-    // (__base_X__/__vbptr_X__/__vbase_X__) that is absent from the struct_type's
+    // whether any is stale: its owning aggregate carries a synthetic field
+    // (__vptr__/__vbptr_X__/__vbase_X__) that is absent from the struct_type's
     // materialised field list (its LLVM body was frozen before that field was
     // injected). See the header doc for the ordering scenario that causes this.
     std::vector<std::shared_ptr<struct_type>> instances;
@@ -1535,6 +1535,13 @@ void context::rebuild_instantiation_layouts() {
         // Imported specializations retain their producer's KDI layout and
         // cannot be repaired by rebuilding consumer-side LLVM types.
         if (agg->is_imported()) continue;
+        // Recursive template bases can be laid out before their vtables are
+        // built. A later injected vptr must not alias the first inline base.
+        auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(st->get_llvm_type());
+        if (llvm_st && !llvm_st->isOpaque()
+            && agg->variables().count("__vptr__") && !st->get_member("__vptr__")) {
+            any_stale = true;
+        }
         // Stale if the aggregate declares a virtual base whose __vbptr_X__ field is
         // absent from the materialised struct_type, or is the collector for a
         // transitively-virtual base whose __vbase_X__ storage is absent — i.e. the

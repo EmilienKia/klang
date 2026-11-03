@@ -4250,6 +4250,55 @@ TEST_CASE("cross-module template — locally instantiated map recipes retain lex
     REQUIRE(result.exit_code == 42);
 }
 
+TEST_CASE("imported transitive template interface has a distinct initialized vptr",
+          "[import][template][stdlib][virtual][regression]") {
+    auto comp = compile_model_with_stdlib(R"K(
+        module inline_template_vptr_consumer;
+        test() : int {
+            map : TreeMap<int,int>;
+            map.put(5, 50);
+            map.put(1, 10);
+            return map.first().get().key();
+        }
+    )K");
+    REQUIRE(comp);
+    REQUIRE_FALSE(comp->has_compilation_error());
+    auto library = comp->get_unit()->get_root_namespace()->get_child_namespace("k");
+    REQUIRE(library);
+    auto map_entry = library->get_aggregate("MapEntry__int__int");
+    REQUIRE(map_entry);
+    REQUIRE(map_entry->get_bases().size() == 1);
+    const auto& mutable_edge = map_entry->get_bases().front();
+    REQUIRE_FALSE(mutable_edge.is_virtual);
+    auto mutable_entry = mutable_edge.base;
+    REQUIRE(mutable_entry);
+    REQUIRE(mutable_entry->get_bases().size() == 1);
+    const auto& entry_edge = mutable_entry->get_bases().front();
+    REQUIRE_FALSE(entry_edge.is_virtual);
+    auto entry = entry_edge.base;
+    REQUIRE(entry);
+    auto entry_type = entry->get_struct_type();
+    REQUIRE(entry_type);
+    auto vptr = entry_type->get_member("__vptr__");
+    REQUIRE(vptr);
+    REQUIRE(vptr->index == 0);
+    REQUIRE(entry_type->get_llvm_type());
+    auto* entry_llvm = llvm::cast<llvm::StructType>(entry_type->get_llvm_type());
+    REQUIRE_FALSE(entry_llvm->isOpaque());
+    REQUIRE(entry_llvm->getNumElements() > vptr->index);
+    CHECK(entry_llvm->getElementType(vptr->index)->isPointerTy());
+    REQUIRE(mutable_entry->get_struct_type()->get_member(
+        "__base_" + entry_edge.sanitised_name() + "__"));
+    REQUIRE(map_entry->get_struct_type()->get_member(
+        "__base_" + mutable_edge.sanitised_name() + "__"));
+
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 1);
+}
+
 TEST_CASE("cross-module template — empty ListMap nested returns preserve imported Entry identity",
           "[import][template][regression][listmap-lexical-return]") {
     auto comp = compile_model_with_stdlib(R"K(
