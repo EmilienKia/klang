@@ -499,7 +499,7 @@ An **unprefixed** literal defaults to `char[]` (UTF-32). When it is passed as a 
 - **Shifts**: `<<`, `>>`. Right shift is arithmetic (signed) or logical (unsigned).
 - **Comparisons**: `==`, `!=`, `<`, `>`, `<=`, `>=` → `bool`.
   - Address comparison for `T*`, `T+`, `T?`, `T!` (`==`/`!=` only). `T&` compares values.
-- **Three-way comparison**: `<=>` → signed integer or floating-point primitive (negative/zero/positive for less/equal/greater), or an aggregate result. Array `<=>` returns `int`. Also used as a comparison-operator fallback source (see [operators.md](functions/operators.md#9-comparison-operator-fallback-synthesis)).
+- **Three-way comparison**: `<=>` → signed integer or floating-point primitive (negative/zero/positive for less/equal/greater), or an aggregate result. Array `<=>` and the namespace-level `Sequence<T>` `<=>` return `int`. Sequence comparison consumes iterators in traversal order, requires element `<=>` results comparable to zero, and may not terminate for equivalent infinite or nonproductive sequences. Also used as a comparison-operator fallback source (see [operators.md](functions/operators.md#9-comparison-operator-fallback-synthesis)).
 - **Logical**: built-in `&&`, `||` convert operands to `bool`, including through
   an aggregate's `operator() : bool`, and short-circuit (and-then / or-else).
   Conversion operates on the original operand; the skipped right operand is

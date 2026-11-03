@@ -99,6 +99,27 @@ interface MutableSequence : public Sequence<T> {
 }
 ```
 
+```k
+template<typename T>
+operator <=>(left : const Sequence<T>&, right : const Sequence<T>&) : int;
+```
+
+The namespace-level `<=>` compares two sequences of the same element type
+lexicographically in their respective iterator traversal order. Each visited
+element pair is compared once with `<=>`: the first negative or positive
+result gives `-1` or `1`. After an equal prefix, simultaneous exhaustion gives
+`0`, and the sequence that exhausts first is less.
+
+The element `<=>` must be valid and its result must support both `< 0` and
+`> 0`. The comparison obtains and consumes a const iterator from each operand,
+including the differing pair or exhaustion. Detecting a prefix may consume one
+additional element from the longer sequence. Single-use sources therefore lose
+the traversed elements; callers must keep the sequences and their backing
+sources alive for the comparison. Iteration order is determined by each
+sequence and may be unspecified for unordered collections. Equivalent infinite
+or nonproductive sequences may never terminate. The operator uses no identity,
+size, or allocation-based shortcut.
+
 ### Methods
 
 | Method | Description |

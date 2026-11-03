@@ -46,6 +46,117 @@
 
 namespace fs = std::filesystem;
 
+TEST_CASE("Imported free template dispatches through a transitively virtual interface",
+          "[import][template][virtual][regression]") {
+    auto lib = compile_model(R"K(
+        module imported_virtual_template;
+
+        template<typename T>
+        interface Root {
+            const value() : T;
+        }
+        template<typename T>
+        interface First : public Root<T> {}
+        template<typename T>
+        interface Second : public Root<T> {}
+        template<typename T>
+        interface Inner : public First<T>, public Second<T> {}
+        template<typename T>
+        interface Left : public Inner<T> {}
+        template<typename T>
+        interface Right : public Inner<T> {}
+        template<typename T>
+        interface Outer : public Left<T>, public Right<T> {}
+
+        template<typename T>
+        interface Inspector {
+            const inspect() : int;
+        }
+        template<typename T>
+        readValue(source : const Root<T>&) : T {
+            return source.value();
+        }
+        template<typename T>
+        inspectValue(source : const Inspector<T>&) : int {
+            return source.inspect();
+        }
+    )K");
+    REQUIRE(lib);
+    k::model::kdi_builder builder(*lib->get_context_for_test());
+    lib->get_unit()->accept(builder);
+    auto file = builder.take();
+    auto path = fs::current_path() / "imported_virtual_template.kdi";
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    REQUIRE(kdi::kdi_write_cbor_file(file, path.string()));
+
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("imported_virtual_template", path);
+    auto comp = k::compiler::create();
+    comp->set_file_resolver(resolver);
+    comp->parse_source("imported_virtual_template_consumer.k", R"K(
+        module imported_virtual_template_consumer;
+        import imported_virtual_template;
+
+        struct Element { value : int = 0; }
+        class ElementInspector : public imported_virtual_template::Inspector<Element> {
+            item : Element;
+            ElementInspector(v : int) : item() { item.value = v; }
+            const inspect() : int { return item.value; }
+        }
+        class Leaf : public imported_virtual_template::Outer<int> {
+            stored : int;
+            Leaf(v : int) : stored(v) {}
+            const value() : int { return stored; }
+        }
+
+        read(source : const imported_virtual_template::Root<int>&) : int {
+            return imported_virtual_template::readValue<int>(source);
+        }
+
+        readFirst(source : const imported_virtual_template::First<int>&) : int {
+            return read(source);
+        }
+
+        readSecond(source : const imported_virtual_template::Second<int>&) : int {
+            return read(source);
+        }
+
+        test() : int {
+            first : Leaf(21);
+            second : Leaf(42);
+            if (read(first) != 21) return 1;
+            if (read(second) != 42) return 2;
+            if (readFirst(first) != 21 || readSecond(first) != 21) return 3;
+            if (readFirst(second) != 42 || readSecond(second) != 42) return 4;
+            element : ElementInspector(57);
+            if (imported_virtual_template::inspectValue<Element>(element) != 57) return 5;
+            return 0;
+        }
+    )K", false, false);
+    REQUIRE_FALSE(comp->has_compilation_error());
+    auto origin = comp->get_unit()->get_root_namespace()->get_child_namespace(
+        "imported_virtual_template");
+    REQUIRE(origin);
+    for (const auto* name : {"First", "Second", "Left", "Right"}) {
+        auto recipe = origin->get_aggregate(name);
+        REQUIRE(recipe);
+        REQUIRE(recipe->get_bases().size() == 1);
+        CHECK(recipe->get_bases().front().is_virtual);
+    }
+    std::string load_error;
+    REQUIRE_FALSE(llvm::sys::DynamicLibrary::LoadLibraryPermanently(
+        (std::string(KLANG_STDLIB_LIB_DIR) + "/libk.so").c_str(), &load_error));
+    INFO(load_error);
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
 TEST_CASE("Imported free array operator templates resolve for both operands",
           "[import][template][operator][array]") {
     auto lib = compile_model(R"K(

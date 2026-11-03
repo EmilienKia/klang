@@ -281,6 +281,28 @@ interface Sequence {
 }
 
 /**
+ * Compare sequences lexicographically in iterator order, consuming their traversal.
+ * The first differing pair determines the sign; otherwise exhaustion does.
+ * Equivalent infinite or nonproductive sequences may never finish.
+ */
+template<typename T>
+operator <=>(left : const Sequence<T>&, right : const Sequence<T>&) : int {
+    leftIterator : ConstIterator<T>! = left.constIterator();
+    rightIterator : ConstIterator<T>! = right.constIterator();
+    leftValue : OptionalConstRef<T> = leftIterator.next();
+    rightValue : OptionalConstRef<T> = rightIterator.next();
+    while (leftValue.hasValue() && rightValue.hasValue()) {
+        order : int = array_comparison_detail::sign(leftValue.get() <=> rightValue.get());
+        if (order != 0) return order;
+        leftValue = leftIterator.next();
+        rightValue = rightIterator.next();
+    }
+    if (leftValue.hasValue()) return 1;
+    if (rightValue.hasValue()) return -1;
+    return 0;
+}
+
+/**
  * MutableSequence<T> — abstract interface for sequences that also support mutable iteration.
  *
  * Extends Sequence<T>: every mutable sequence IS-A sequence and provides `constIterator()`

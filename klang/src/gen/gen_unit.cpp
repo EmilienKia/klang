@@ -412,6 +412,10 @@ void symbol_resolver::visit_unit(unit& unit)
                              std::unordered_set<aggregate*>& visited) {
                 if (visited.count(cur)) return;
                 visited.insert(cur);
+                // Imported recipes carry the originating module's promoted
+                // edges. A consumer must not change the layout of a shared
+                // specialization in response to its own hierarchy.
+                if (auto* ti = cur->get_tpl_info(); ti && !ti->origin_module_ns_fq.empty()) return;
                 for (auto& bs : cur->get_bases_mutable()) {
                     aggregate* base = lookup(bs.raw_name);
                     if (!base) continue;

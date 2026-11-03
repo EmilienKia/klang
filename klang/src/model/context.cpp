@@ -1513,23 +1513,35 @@ void context::rebuild_instantiation_layouts() {
     // materialised field list (its LLVM body was frozen before that field was
     // injected). See the header doc for the ordering scenario that causes this.
     std::vector<std::shared_ptr<struct_type>> instances;
-    bool any_stale = false;
     for (auto& [name, st] : _struct_types) {
         auto agg = st->get_struct();
         if (!agg || !agg->is_instantiation()) continue;
         if (!(agg->is_class() || agg->is_interface())) continue;
         instances.push_back(st);
-        // Stale if the aggregate declares a virtual base whose __vbptr_X__ field is
-        // absent from the materialised struct_type, or a non-virtual class/interface
-        // base whose __base_X__ field is absent — i.e. the body was frozen before
-        // the base sub-object field was injected.
+    }
+
+    // Virtual edges can be promoted after an instance was first laid out.
+    // Discover its collectors before checking whether the LLVM body is stale.
+    for (auto& st : instances) {
+        template_instantiator::ensure_virtual_base_layout_fields(st->get_struct());
+    }
+    for (auto& st : instances) {
+        template_instantiator::ensure_virtual_base_layout_fields(st->get_struct());
+    }
+
+    bool any_stale = false;
+    for (auto& st : instances) {
+        auto agg = st->get_struct();
+        // Imported specializations retain their producer's KDI layout and
+        // cannot be repaired by rebuilding consumer-side LLVM types.
+        if (agg->is_imported()) continue;
         // Stale if the aggregate declares a virtual base whose __vbptr_X__ field is
         // absent from the materialised struct_type, or is the collector for a
         // transitively-virtual base whose __vbase_X__ storage is absent — i.e. the
         // body was frozen before the base sub-object field was injected.
         for (auto& bs : agg->get_bases()) {
             if (bs.base && bs.is_virtual
-                && !st->get_member("__vbptr_" + bs.sanitised_name() + "__")) {
+                && !st->get_member("__vbptr_" + bs.base->get_short_name() + "__")) {
                 any_stale = true;
             }
         }
@@ -1544,20 +1556,7 @@ void context::rebuild_instantiation_layouts() {
     }
     if (!any_stale) return;
 
-    // Phase 1: repair the model — (re)inject any missing virtual-base layout
-    // fields (__vbptr_X__ / collector __vbase_X__) into each instantiation's
-    // aggregate. These may be missing because the base's virtualness was only
-    // discovered after the instance was first laid out. Injecting the vbptrs for
-    // every instance first ensures the collector __vbase detection (which inspects
-    // sibling bases' vbptr fields) sees a complete picture.
-    for (auto& st : instances) {
-        template_instantiator::ensure_virtual_base_layout_fields(st->get_struct());
-    }
-    for (auto& st : instances) {
-        template_instantiator::ensure_virtual_base_layout_fields(st->get_struct());
-    }
-
-    // Phase 2: give a fresh opaque LLVM struct type to EVERY local (non-imported)
+    // Give a fresh opaque LLVM struct type to EVERY local (non-imported)
     // materialised struct type — not just the instantiations. A non-instance user
     // class can embed an instantiation BY VALUE (e.g. a user transform-stream class
     // embedding OneToManyTransformInputStream<..>); if only the instantiation were

@@ -132,6 +132,35 @@ invalidTypes() : bool {
 }
 ```
 
+### Sequence comparisons
+
+Module `k` provides a namespace-level template `<=>` for two
+`const Sequence<T>&` operands, including operands backed by different concrete
+sequence types. It compares corresponding elements once in iterator
+traversal order. The first negative or positive element result yields `-1` or
+`1`; after an equal prefix, simultaneous exhaustion yields `0` and the sequence
+that exhausts first is less. The element `<=>` must be valid and its result
+must support comparison to zero with `<` and `>`.
+
+The comparison consumes an iterator from each sequence through the first
+mismatch or exhaustion. Detecting exhaustion may consume one extra element of
+the longer sequence. Single-use sources are consumed, traversal order is
+defined by the sequence (and may be unspecified for unordered collections),
+and equivalent infinite or nonproductive sequences may never terminate. The
+operator uses no identity, size, or allocation-based shortcut.
+
+```k
+compare(left : const Sequence<int>&, right : const Sequence<int>&) : int {
+    return left <=> right; // Lexicographic iterator-order comparison.
+}
+
+struct UnorderedElement {}
+invalidSequence(left : const Sequence<UnorderedElement>&,
+                right : const Sequence<UnorderedElement>&) : int {
+    return left <=> right; // Error: element <=> is unavailable.
+}
+```
+
 ### Address comparison for indirection types
 
 The `==` and `!=` operators can be used to compare the **addresses** held by

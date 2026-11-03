@@ -165,6 +165,7 @@ void populate_template_signature_aggregate(aggregate& agg,
     for (const auto& kb : sig.bases) {
         visibility vis = (kb.visibility == kdi::kdi_visibility::protected_) ? PROTECTED : PUBLIC;
         agg.add_base(kb.fq_name, vis);
+        agg.get_bases_mutable().back().is_virtual = kb.is_virtual;
     }
 
     for (const auto& field : sig.layout) {
@@ -1628,7 +1629,29 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             if (template_host) {
                 for (auto& fn : template_host->get_functions(tdef.name)) tag_definition(fn->get_tpl_info());
             } else {
-                if (auto agg = target_ns->get_aggregate(tdef.name)) tag_definition(agg->get_tpl_info());
+                if (auto agg = target_ns->get_aggregate(tdef.name)) {
+                    tag_definition(agg->get_tpl_info());
+                    // The recipe source has no syntax for compiler-promoted
+                    // virtual bases. Restore the producer's ABI decisions from
+                    // the structured signature before instantiating the recipe.
+                    if (tdef.aggregate_signature) {
+                        auto& bases = agg->get_bases_mutable();
+                        const auto& saved = tdef.aggregate_signature->bases;
+                        if (bases.size() == saved.size()) {
+                            for (size_t i = 0; i < bases.size(); ++i)
+                                bases[i].is_virtual = saved[i].is_virtual;
+                        } else {
+                            for (auto& base : bases) {
+                                for (const auto& saved_base : saved) {
+                                    if (base.raw_name == saved_base.fq_name) {
+                                        base.is_virtual = saved_base.is_virtual;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 for (auto& fn : target_ns->get_functions(tdef.name)) tag_definition(fn->get_tpl_info());
                 if (auto un = target_ns->get_union(tdef.name)) tag_definition(un->get_tpl_info());
                 if (auto al = target_ns->get_alias(tdef.name)) tag_definition(al->get_tpl_info());

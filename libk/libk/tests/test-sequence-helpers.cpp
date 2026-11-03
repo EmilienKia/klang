@@ -35,6 +35,249 @@ std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src, bool dump = fals
 
 } // anonymous namespace
 
+TEST_CASE("Sequence ordering compares iterator contents lexicographically",
+          "[libk][sequence][comparison]") {
+    auto j = jit_k(R"SRC(
+        module __sequence_comparison__;
+
+        compare(left : const Sequence<int>&, right : const Sequence<int>&) : int {
+            return left <=> right;
+        }
+
+        compareMutable(left : Sequence<int>&, right : Sequence<int>&) : int {
+            return left <=> right;
+        }
+
+        test() : int {
+            empty : Vector<int>;
+            otherEmpty : LinkedList<int>;
+            a : Vector<int>(int[]{1, 2, 3});
+            equal : LinkedList<int>;
+            equal.append(1);
+            equal.append(2);
+            equal.append(3);
+            first : Vector<int>(int[]{0, 9, 9});
+            later : Vector<int>(int[]{1, 4, 0});
+            prefix : Vector<int>(int[]{1, 2});
+            longer : Vector<int>(int[]{1, 2, 3, 0});
+
+            if (compare(empty, otherEmpty) != 0) return 1;
+            if (compare(empty, a) != -1 || compare(a, empty) != 1) return 2;
+            if (compare(a, equal) != 0 || compare(equal, a) != 0 ||
+                compareMutable(a, equal) != 0) return 3;
+            if (compare(first, a) != -1 || compare(a, first) != 1) return 4;
+            if ((a <=> first) != 1) return 8;
+            if (compare(a, later) != -1 || compare(later, a) != 1) return 5;
+            if (compare(prefix, a) != -1 || compare(a, prefix) != 1) return 6;
+            if (compare(a, longer) != -1 || compare(longer, a) != 1) return 7;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+TEST_CASE("Sequence ordering consumes iterators and compares each pair once",
+          "[libk][sequence][comparison]") {
+    auto j = jit_k(R"SRC(
+        module __sequence_comparison_consumption__;
+
+        calls : int = 0;
+        struct Element {
+            value : int = 0;
+            Element() -> default;
+            Element(v : int) : value(v) {}
+            const operator <=>(other : const Element&) : double {
+                ++calls;
+                if (value < other.value) return -0.25d;
+                if (value > other.value) return 0.25d;
+                return 0.0d;
+            }
+        }
+
+        compare(left : const Sequence<Element>&, right : const Sequence<Element>&) : int {
+            return left <=> right;
+        }
+
+        test() : int {
+            a : Vector<Element>(Element[]{Element(1), Element(2), Element(3)});
+            b : Vector<Element>(Element[]{Element(1), Element(4), Element(0)});
+            shorterSource : Vector<Element>(Element[]{Element(1)});
+            leftCount : int = 0;
+            rightCount : int = 0;
+            left : Sequence<Element>! = a.count<int>(leftCount);
+            right : Sequence<Element>! = b.count<int>(rightCount);
+            shorter : Sequence<Element>! = shorterSource.count<int>(rightCount);
+
+            calls = 0;
+            if (compare(*left, *right) != -1 || calls != 2) return 1;
+            if (leftCount != 2 || rightCount != 2) return 2;
+            calls = 0;
+            leftCount = 0;
+            rightCount = 0;
+            if (compare(*right, *left) != 1 || calls != 2) return 3;
+            if (leftCount != 2 || rightCount != 2) return 4;
+            calls = 0;
+            leftCount = 0;
+            if (compare(*left, *left) != 0 || calls != 3 || leftCount != 6) return 5;
+            calls = 0;
+            leftCount = 0;
+            rightCount = 0;
+            if (compare(*left, *shorter) != 1 || calls != 1) return 6;
+            if (leftCount != 2 || rightCount != 1) return 7;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+TEST_CASE("Sequence ordering advances single-use sources through the mismatch",
+          "[libk][sequence][comparison]") {
+    auto j = jit_k(R"SRC(
+        module __sequence_comparison_single_use__;
+
+        leftPosition : int = 0;
+        rightPosition : int = 0;
+        created : int = 0;
+        destroyed : int = 0;
+
+        class SingleUseIterator : public ConstIterator<int> {
+            side : int;
+            current : int = 0;
+
+            SingleUseIterator(s : int) : side(s), current(0) { ++created; }
+            ~SingleUseIterator() { ++destroyed; }
+
+            next() : OptionalConstRef<int> {
+                position : int = side == 0 ? leftPosition : rightPosition;
+                if (position >= 4) return OptionalConstRef<int>();
+                current = position == 3 ? 7 : position + 1;
+                if (side == 1 && position == 2) current = 4;
+                if (side == 0) ++leftPosition; else ++rightPosition;
+                return OptionalConstRef<int>(current);
+            }
+        }
+
+        class SingleUseSequence : public Sequence<int> {
+            side : int;
+            SingleUseSequence(s : int) : side(s) {}
+            const constIterator() : ConstIterator<int>! {
+                return new SingleUseIterator(side);
+            }
+        }
+
+        compare(left : const Sequence<int>&, right : const Sequence<int>&) : int {
+            return left <=> right;
+        }
+
+        test() : int {
+            left : SingleUseSequence(0);
+            right : SingleUseSequence(1);
+            if (compare(left, right) != -1) return 1;
+            if (leftPosition != 3 || rightPosition != 3 || created != 2 || destroyed != 2) return 2;
+            if (compare(left, right) != 0) return 3;
+            if (leftPosition != 4 || rightPosition != 4 || created != 4 || destroyed != 4) return 4;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+TEST_CASE("Sequence ordering keeps iterator-owned elements alive through each comparison",
+          "[libk][sequence][comparison]") {
+    auto j = jit_k(R"SRC(
+        module __sequence_comparison_iterator_storage__;
+
+        leftNext : int = 0;
+        rightNext : int = 0;
+        destroyed : int = 0;
+        comparisons : int = 0;
+
+        struct Element {
+            value : int = 0;
+            const operator <=>(other : const Element&) : int {
+                ++comparisons;
+                return value <=> other.value;
+            }
+        }
+
+        class ScratchIterator : public ConstIterator<Element> {
+            side : int;
+            length : int;
+            second : int;
+            index : int = 0;
+            current : Element;
+
+            ScratchIterator(s : int, n : int, v : int)
+                : side(s), length(n), second(v), index(0), current() {}
+            ~ScratchIterator() { ++destroyed; }
+
+            next() : OptionalConstRef<Element> {
+                if (side == 0) ++leftNext; else ++rightNext;
+                if (index >= length) return OptionalConstRef<Element>();
+                current.value = index == 1 ? second : index;
+                ++index;
+                return OptionalConstRef<Element>(current);
+            }
+        }
+
+        class ScratchSequence : public Sequence<Element> {
+            side : int;
+            length : int;
+            second : int;
+
+            ScratchSequence(s : int, n : int, v : int)
+                : side(s), length(n), second(v) {}
+            const constIterator() : ConstIterator<Element>! {
+                return new ScratchIterator(side, length, second);
+            }
+        }
+
+        compare(left : const Sequence<Element>&, right : const Sequence<Element>&) : int {
+            return left <=> right;
+        }
+
+        test() : int {
+            left : ScratchSequence(0, 3, 1);
+            equal : ScratchSequence(1, 3, 1);
+            different : ScratchSequence(1, 3, 5);
+            shorter : ScratchSequence(1, 1, 1);
+            empty : ScratchSequence(1, 0, 1);
+
+            if (compare(left, equal) != 0) return 1;
+            if (leftNext != 4 || rightNext != 4 || comparisons != 3 || destroyed != 2) return 2;
+            leftNext = 0;
+            rightNext = 0;
+            comparisons = 0;
+            if (compare(left, different) != -1) return 3;
+            if (leftNext != 2 || rightNext != 2 || comparisons != 2 || destroyed != 4) return 4;
+            leftNext = 0;
+            rightNext = 0;
+            comparisons = 0;
+            if (compare(left, shorter) != 1) return 5;
+            if (leftNext != 2 || rightNext != 2 || comparisons != 1 || destroyed != 6) return 6;
+            leftNext = 0;
+            rightNext = 0;
+            comparisons = 0;
+            if (compare(left, empty) != 1) return 7;
+            if (leftNext != 1 || rightNext != 1 || comparisons != 0 || destroyed != 8) return 8;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // 1 : Sequence::forEach
@@ -680,7 +923,5 @@ TEST_CASE("Vector<int> — getFirst on map", "[libk][vector][int][getFirst]") {
     REQUIRE(fn);
     CHECK(fn());
 }
-
-
 
 
