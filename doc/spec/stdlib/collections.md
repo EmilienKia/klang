@@ -99,9 +99,15 @@ interface MutableSequence : public Sequence<T> {
 }
 ```
 
+### Ordering operators
+
 ```k
 template<typename T>
 operator <=>(left : const Sequence<T>&, right : const Sequence<T>&) : int;
+template<typename T>
+operator <=>(left : const T[]&, right : const Sequence<T>&) : int;
+template<typename T>
+operator <=>(left : const Sequence<T>&, right : const T[]&) : int;
 ```
 
 The namespace-level `<=>` compares two sequences of the same element type
@@ -119,6 +125,20 @@ sources alive for the comparison. Iteration order is determined by each
 sequence and may be unspecified for unordered collections. Equivalent infinite
 or nonproductive sequences may never terminate. The operator uses no identity,
 size, or allocation-based shortcut.
+
+The mixed array/sequence overloads compare arrays in index order against a
+sequence in iterator order. Both operands must have the same element type,
+and the left element's `<=>` is evaluated once per visited pair against the
+right element. The first nonzero result is normalized to `-1` or `1`; after an
+equal prefix, simultaneous exhaustion yields `0` and the shorter operand is
+less. The same element comparison requirements apply.
+
+The sequence iterator is consumed through the first mismatch or exhaustion.
+When the array is a prefix, detecting that the sequence is longer consumes
+one additional sequence element. Single-use sources lose the traversed
+elements, and a sequence unable to produce its next element may prevent
+termination even after the array is exhausted. No identity, size,
+allocation-based, or bytewise shortcut is used.
 
 ### Methods
 

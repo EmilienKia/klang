@@ -35,6 +35,169 @@ std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src, bool dump = fals
 
 } // anonymous namespace
 
+TEST_CASE("Array and sequence ordering compares contents in both directions",
+          "[libk][array][sequence][comparison]") {
+    auto j = jit_k(R"SRC(
+        module __array_sequence_comparison__;
+
+        arrayFirst(left : const int[]&, right : const Sequence<int>&) : int {
+            return left <=> right;
+        }
+        sequenceFirst(left : const Sequence<int>&, right : const int[]&) : int {
+            return left <=> right;
+        }
+
+        test() : int {
+            empty : int[0]{};
+            const array : int[3]{1, 2, 3};
+            prefix : int[2]{1, 2};
+            longer : int[4]{1, 2, 3, 0};
+            lower : int[3]{1, 1, 9};
+            higher : int[3]{1, 4, 0};
+            emptyVector : Vector<int>;
+            vector : Vector<int>(int[]{1, 2, 3});
+            list : LinkedList<int>;
+            list.append(1);
+            list.append(2);
+            list.append(3);
+
+            if (arrayFirst(empty, emptyVector) != 0 || sequenceFirst(emptyVector, empty) != 0) return 1;
+            if (arrayFirst(empty, vector) != -1 || sequenceFirst(vector, empty) != 1) return 2;
+            if (arrayFirst(array, emptyVector) != 1 || sequenceFirst(emptyVector, array) != -1) return 3;
+            if (arrayFirst(array, vector) != 0 || sequenceFirst(vector, array) != 0) return 4;
+            if (arrayFirst(array, list) != 0 || sequenceFirst(list, array) != 0) return 5;
+            if ((array <=> vector) != 0 || (vector <=> array) != 0 ||
+                (array <=> list) != 0 || (list <=> array) != 0) return 6;
+            if (arrayFirst(lower, list) != -1 || sequenceFirst(list, lower) != 1) return 7;
+            if (arrayFirst(higher, vector) != 1 || sequenceFirst(vector, higher) != -1) return 8;
+            if (arrayFirst(prefix, list) != -1 || sequenceFirst(list, prefix) != 1) return 9;
+            if (arrayFirst(longer, vector) != 1 || sequenceFirst(vector, longer) != -1) return 10;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+TEST_CASE("Array and sequence ordering consumes only the necessary elements",
+          "[libk][array][sequence][comparison]") {
+    auto j = jit_k(R"SRC(
+        module __array_sequence_comparison_consumption__;
+
+        calls : int = 0;
+        nextCalls : int = 0;
+        destroyed : int = 0;
+        struct Element {
+            value : int = 0;
+            Element() -> default;
+            Element(v : int) : value(v) {}
+            const operator <=>(other : const Element&) : double {
+                ++calls;
+                if (value == other.value) return 0.0d;
+                // Both operand orders are negative, so swapping and negating is observable.
+                if (value == 2) return -0.25d;
+                return -0.5d;
+            }
+        }
+
+        class ScratchIterator : public ConstIterator<Element> {
+            length : int;
+            index : int = 0;
+            current : Element;
+            ScratchIterator(n : int) : length(n), index(0), current() {}
+            ~ScratchIterator() { ++destroyed; }
+            next() : OptionalConstRef<Element> {
+                ++nextCalls;
+                if (index >= length) return OptionalConstRef<Element>();
+                current.value = index == 1 ? 4 : index + 1;
+                ++index;
+                return OptionalConstRef<Element>(current);
+            }
+        }
+        class ScratchSequence : public Sequence<Element> {
+            length : int;
+            ScratchSequence(n : int) : length(n) {}
+            const constIterator() : ConstIterator<Element>! {
+                return new ScratchIterator(length);
+            }
+        }
+
+        arrayFirst(left : const Element[]&, right : const Sequence<Element>&) : int {
+            return left <=> right;
+        }
+        sequenceFirst(left : const Sequence<Element>&, right : const Element[]&) : int {
+            return left <=> right;
+        }
+
+        test() : int {
+            array : Element[3]{Element(1), Element(2), Element(3)};
+            equal : Element[3]{Element(1), Element(4), Element(3)};
+            prefix : Element[1]{Element(1)};
+            empty : Element[0]{};
+            sequence : ScratchSequence(3);
+            shorter : ScratchSequence(1);
+
+            if (arrayFirst(array, sequence) != -1 || calls != 2 || nextCalls != 2 || destroyed != 1) return 1;
+            calls = 0;
+            nextCalls = 0;
+            if (sequenceFirst(sequence, array) != -1 || calls != 2 || nextCalls != 2 || destroyed != 2) return 2;
+            calls = 0;
+            nextCalls = 0;
+            if (arrayFirst(prefix, sequence) != -1 || calls != 1 || nextCalls != 2 || destroyed != 3) return 3;
+            calls = 0;
+            nextCalls = 0;
+            if (sequenceFirst(sequence, prefix) != 1 || calls != 1 || nextCalls != 2 || destroyed != 4) return 4;
+            calls = 0;
+            nextCalls = 0;
+            if (arrayFirst(array, shorter) != 1 || calls != 1 || nextCalls != 2 || destroyed != 5) return 5;
+            calls = 0;
+            nextCalls = 0;
+            if (sequenceFirst(shorter, array) != -1 || calls != 1 || nextCalls != 2 || destroyed != 6) return 6;
+            calls = 0;
+            nextCalls = 0;
+            if (arrayFirst(equal, sequence) != 0 || calls != 3 || nextCalls != 4 || destroyed != 7) return 7;
+            calls = 0;
+            nextCalls = 0;
+            if (sequenceFirst(sequence, equal) != 0 || calls != 3 || nextCalls != 4 || destroyed != 8) return 8;
+            calls = 0;
+            nextCalls = 0;
+            if (arrayFirst(empty, sequence) != -1 || calls != 0 || nextCalls != 1 || destroyed != 9) return 9;
+            calls = 0;
+            nextCalls = 0;
+            if (sequenceFirst(sequence, empty) != 1 || calls != 0 || nextCalls != 1 || destroyed != 10) return 10;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+TEST_CASE("Array and sequence ordering requires the same element type",
+          "[libk][array][sequence][comparison][diagnostic]") {
+    std::string_view source;
+    SECTION("array first") {
+        source = R"SRC(
+            module __array_sequence_comparison_types_array_first__;
+            reject(left : const int[]&, right : const Sequence<unsigned int>&) : int {
+                return left <=> right;
+            }
+        )SRC";
+    }
+    SECTION("sequence first") {
+        source = R"SRC(
+            module __array_sequence_comparison_types_sequence_first__;
+            reject(left : const Sequence<unsigned int>&, right : const int[]&) : int {
+                return left <=> right;
+            }
+        )SRC";
+    }
+    REQUIRE_THROWS_AS(gen_jit_throws(source), k::log::compiler_error);
+}
+
 TEST_CASE("Sequence ordering compares iterator contents lexicographically",
           "[libk][sequence][comparison]") {
     auto j = jit_k(R"SRC(
@@ -923,5 +1086,3 @@ TEST_CASE("Vector<int> — getFirst on map", "[libk][vector][int][getFirst]") {
     REQUIRE(fn);
     CHECK(fn());
 }
-
-

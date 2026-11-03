@@ -303,6 +303,42 @@ operator <=>(left : const Sequence<T>&, right : const Sequence<T>&) : int {
 }
 
 /**
+ * Compare an array and a sequence lexicographically in their traversal order.
+ */
+template<typename T>
+operator <=>(left : const T[]&, right : const Sequence<T>&) : int {
+    iterator : ConstIterator<T>! = right.constIterator();
+    value : OptionalConstRef<T> = iterator.next();
+    i : unsigned int = 0u;
+    while (i < left.size && value.hasValue()) {
+        order : int = array_comparison_detail::sign(left[i] <=> value.get());
+        if (order != 0) return order;
+        ++i;
+        value = iterator.next();
+    }
+    if (value.hasValue()) return -1;
+    if (i < left.size) return 1;
+    return 0;
+}
+
+/** Compare a sequence and an array lexicographically in their traversal order. */
+template<typename T>
+operator <=>(left : const Sequence<T>&, right : const T[]&) : int {
+    iterator : ConstIterator<T>! = left.constIterator();
+    value : OptionalConstRef<T> = iterator.next();
+    i : unsigned int = 0u;
+    while (value.hasValue() && i < right.size) {
+        order : int = array_comparison_detail::sign(value.get() <=> right[i]);
+        if (order != 0) return order;
+        value = iterator.next();
+        ++i;
+    }
+    if (value.hasValue()) return 1;
+    if (i < right.size) return -1;
+    return 0;
+}
+
+/**
  * MutableSequence<T> — abstract interface for sequences that also support mutable iteration.
  *
  * Extends Sequence<T>: every mutable sequence IS-A sequence and provides `constIterator()`

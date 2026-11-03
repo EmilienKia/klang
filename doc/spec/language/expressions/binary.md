@@ -149,15 +149,37 @@ defined by the sequence (and may be unspecified for unordered collections),
 and equivalent infinite or nonproductive sequences may never terminate. The
 operator uses no identity, size, or allocation-based shortcut.
 
+Module `k` also provides `<=>` templates for `const T[]&` and
+`const Sequence<T>&` in either operand order. The element type must be the same
+for both operands. They compare array elements in index order against sequence
+elements in iterator order, evaluating the left element's `<=>` with the
+right element once per pair. The first nonzero result is normalized to `-1`
+or `1`; after an equal prefix, simultaneous exhaustion yields `0` and the
+shorter operand is less. The element result must support `< 0` and `> 0`.
+No identity, size, allocation-based, or bytewise shortcut is used.
+
+The sequence iterator is consumed through the first mismatch or exhaustion;
+detecting an array prefix consumes one additional sequence element. A
+single-use source loses the traversed elements, and a nonproductive sequence
+may prevent the comparison from terminating even when the array is exhausted.
+
 ```k
 compare(left : const Sequence<int>&, right : const Sequence<int>&) : int {
     return left <=> right; // Lexicographic iterator-order comparison.
+}
+
+compareArray(left : const int[]&, right : const Sequence<int>&) : int {
+    return left <=> right;
 }
 
 struct UnorderedElement {}
 invalidSequence(left : const Sequence<UnorderedElement>&,
                 right : const Sequence<UnorderedElement>&) : int {
     return left <=> right; // Error: element <=> is unavailable.
+}
+
+invalidMixed(left : const int[]&, right : const Sequence<long>&) : int {
+    return left <=> right; // Error: the standard template requires one element type.
 }
 ```
 
