@@ -523,7 +523,7 @@ klang_gen_test(klang-tests-gen-generics 120
 # Group 11 — KDI import, production libraries, multi-source
 # Split into core import, templates cross-module, and interop test executables.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-import-core 120
+klang_gen_test(klang-tests-import-core 120 SHARD_COUNT 2
         tests/test-import-core.cpp
         tests/test-import-private-concrete.cpp
 )
