@@ -18,6 +18,46 @@
 
 public interface MessageDigest {
 
+    /**
+     * Creates a digest using an algorithm name recognized by OpenSSL.
+     *
+     * @param name the algorithm name, borrowed for this call
+     * @return a digest when the algorithm is available, or null otherwise
+     */
+    public static fromName(name: const String&) : MessageDigest! {
+        encodedName : unsigned byte[]! = name.toUtf8();
+        try {
+            length : unsigned int = encodedName.size - 1u;
+            i : unsigned int = 0u;
+            while (i < length) {
+                if (encodedName[i] == 0) {
+                    return null;
+                }
+                ++i;
+            }
+
+            md : EVP_MD* = __k_EVP_MD_fetch(&encodedName[0]);
+            if (md == null) {
+                return null;
+            }
+
+            transferred : bool = false;
+            try {
+                result : MessageDigest! = new OpenSSLMessageDigest(md, true);
+                transferred = true;
+                return result;
+            } catch (e: OpenSSLBackendException&) {
+                return null;
+            } finally {
+                if (!transferred) {
+                    EVP_MD_free(md);
+                }
+            }
+        } finally {
+            delete encodedName;
+        }
+    }
+
     public static MD5() : MessageDigest! {
         try {
             return new OpenSSLMessageDigest(EVP_md5());
@@ -135,6 +175,7 @@ private class OpenSSLBackendException : Exception {
 
 private class OpenSSLMessageDigest : MessageDigest {
     ctx : EVP_MD_CTX* = null;
+    ownedMd : EVP_MD* = null;
 
     OpenSSLMessageDigest(md: EVP_MD*) throws(OpenSSLBackendException) {
         if (md == null) {
@@ -151,10 +192,32 @@ private class OpenSSLMessageDigest : MessageDigest {
         }
     }
 
+    OpenSSLMessageDigest(md: EVP_MD*, ownsMd: bool) throws(OpenSSLBackendException) {
+        if (md == null) {
+            throw OpenSSLBackendException();
+        }
+        ctx = EVP_MD_CTX_new();
+        if (ctx == null) {
+            throw OpenSSLBackendException();
+        }
+        if (EVP_DigestInit_ex(ctx, md, null) != 1) {
+            EVP_MD_CTX_free(ctx);
+            ctx = null;
+            throw OpenSSLBackendException();
+        }
+        if (ownsMd) {
+            ownedMd = md;
+        }
+    }
+
     ~OpenSSLMessageDigest() {
         if (ctx != null) {
             EVP_MD_CTX_free(ctx);
             ctx = null;
+        }
+        if (ownedMd != null) {
+            EVP_MD_free(ownedMd);
+            ownedMd = null;
         }
     }
 

@@ -64,6 +64,12 @@ libk`, and use a C++ linker driver for K exception support. See
 [CMake integration](../../howtos/cmake-integration-k-projects.md#12-build-tree-package-metadata-and-static-consumers)
 for package paths and explicit archive selection.
 
+### Optional library: `k::crypto`
+
+The separately built `libk-crypto` library provides cryptographic APIs,
+including [`MessageDigest`](crypto.md). It is not part of the automatically
+linked base module `k`.
+
 ---
 
 ## Conventions

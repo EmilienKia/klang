@@ -186,3 +186,67 @@ TEST_CASE("Message digest factory vectors", "[crypto][digest]") {
     REQUIRE(test);
     CHECK(test() == 0);
 }
+
+TEST_CASE("Message digest name lookup", "[crypto][digest]") {
+    auto jit = gen_jit_with_crypto(R"K(
+        module __crypto_message_digest_name_test__;
+        import k::crypto;
+
+        hexDigit(n: unsigned int) : byte {
+            value : unsigned int = n & 0x0Fu;
+            if (value < 10u) return (byte) (((unsigned int) '0') + value);
+            return (byte) (((unsigned int) 'a') + (value - 10u));
+        }
+
+        bytesToHex(bytes: const unsigned byte[]) : String {
+            hex : unsigned byte[]! = new unsigned byte[bytes.size * 2u + 1u];
+            i : unsigned int = 0u;
+            while (i < bytes.size) {
+                value : unsigned int = ((unsigned int) bytes[i]) & 0xFFu;
+                hex[i * 2u] = (unsigned byte) hexDigit(value >> 4u);
+                hex[i * 2u + 1u] = (unsigned byte) hexDigit(value);
+                ++i;
+            }
+            hex[bytes.size * 2u] = (unsigned byte) 0;
+            result : String(hex);
+            delete hex;
+            return result;
+        }
+
+        test() : int {
+            try {
+                sha256Name : const String! = new String("SHA256");
+                md : k::crypto::MessageDigest! =
+                    k::crypto::MessageDigest::fromName(sha256Name);
+                if (!md) return 1;
+                if (sha256Name.size() != 6u) return 4;
+
+                bytes : unsigned byte[]! = new unsigned byte[3u];
+                bytes[0u] = (unsigned byte) 'a';
+                bytes[1u] = (unsigned byte) 'b';
+                bytes[2u] = (unsigned byte) 'c';
+                md.update(bytes);
+                digest : unsigned byte[]! = md.finalize();
+                correct : bool = bytesToHex(digest) ==
+                    String("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+                delete digest;
+                delete bytes;
+                if (!correct) return 2;
+
+                unsupportedName : const String! =
+                    new String("KLANG-UNSUPPORTED-DIGEST");
+                unsupported : k::crypto::MessageDigest! =
+                    k::crypto::MessageDigest::fromName(unsupportedName);
+                if (unsupported != null) return 3;
+                if (unsupportedName.size() != 24u) return 5;
+            } catch (e: k::crypto::MessageDigestException&) {
+                return -1;
+            }
+            return 0;
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
