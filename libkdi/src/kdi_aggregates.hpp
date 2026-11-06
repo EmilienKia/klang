@@ -541,8 +541,11 @@ struct kdi_enum {
     kdi_type                      underlying_type; ///< backing primitive int type
     /// Backing object type for typed object-backed enums (must be aggregate ref when set).
     std::optional<kdi_type>       object_type;
-    /// Symbol name of the backing global table (array of object_type entries).
+    /// Symbol name of the backing global table, or the runtime accessor.
     std::optional<std::string>    object_table_symbol;
+    /// Absent means a constant table (including descriptors predating this field).
+    /// "runtime" denotes a lazy no-argument accessor returning the table address.
+    std::optional<std::string>    object_table_kind;
     std::optional<std::string>    base_fq_name;    ///< base enum fq_name (derivation)
     std::vector<kdi_enum_entry>   entries;
     std::optional<kdi_doc_block>  doc;

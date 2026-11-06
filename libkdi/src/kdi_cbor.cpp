@@ -1314,6 +1314,8 @@ cbor_item_t* encode_enum(const kdi_enum& e) {
         map_push(m, "object_type", encode_type(*e.object_type));
     if (e.object_table_symbol.has_value())
         map_push(m, "object_table_symbol", cbor_str(*e.object_table_symbol));
+    if (e.object_table_kind.has_value())
+        map_push(m, "object_table_kind", cbor_str(*e.object_table_kind));
     if (e.base_fq_name.has_value())
         map_push(m, "base_fq_name", cbor_str(*e.base_fq_name));
     cbor_item_t* entries = cbor_new_indefinite_array();
@@ -1350,6 +1352,8 @@ kdi_enum decode_enum(cbor_item_t* item, const std::string& path) {
         e.object_type = decode_type(ot, path + ".object_type");
     if (auto* ots = map_get(item, "object_table_symbol"); ots && cbor_isa_string(ots))
         e.object_table_symbol = read_string(ots, path + ".object_table_symbol");
+    if (auto* kind = map_get(item, "object_table_kind"))
+        e.object_table_kind = read_string(kind, path + ".object_table_kind");
     auto* bn = map_get(item, "base_fq_name");
     if (bn && cbor_isa_string(bn))
         e.base_fq_name = read_string(bn, path + ".base_fq_name");

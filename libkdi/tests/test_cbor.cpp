@@ -823,8 +823,18 @@ TEST_CASE("CBOR: object-backed enum metadata round-trips", "[cbor][enum][typed]"
     REQUIRE(std::get<kdi_aggregate_ref>(ren.object_type->value).fq_name == "typed::enum::Vec2");
     REQUIRE(ren.object_table_symbol.has_value());
     REQUIRE(*ren.object_table_symbol == "__klang_enum_table_Dir__");
+    REQUIRE_FALSE(ren.object_table_kind.has_value());
     REQUIRE(ren.entries.size() == 1);
     REQUIRE(ren.entries[0].object_init_members.size() == 2);
+
+    f.unit.root_ns.enums[0].object_table_symbol = "arbitrary_accessor";
+    f.unit.root_ns.enums[0].object_table_kind = "runtime";
+    std::ostringstream runtime_out(std::ios::binary);
+    REQUIRE_NOTHROW(kdi_write_cbor(f, runtime_out));
+    std::istringstream runtime_in(runtime_out.str(), std::ios::binary);
+    REQUIRE_NOTHROW(restored = kdi_read_cbor(runtime_in));
+    REQUIRE(restored.unit.root_ns.enums[0].object_table_kind == "runtime");
+    REQUIRE(restored.unit.root_ns.enums[0].object_table_symbol == "arbitrary_accessor");
 }
 
 TEST_CASE("CBOR: polymorphic union round-trips", "[cbor][union][polymorphic]") {

@@ -767,10 +767,17 @@ TEST_CASE("JSON: object-backed enum metadata round-trips", "[json][enum][typed]"
     REQUIRE(std::get<kdi_aggregate_ref>(ren.object_type->value).fq_name == "test::json::Vec2");
     REQUIRE(ren.object_table_symbol.has_value());
     REQUIRE(*ren.object_table_symbol == "__klang_enum_table_Dir__");
+    REQUIRE_FALSE(ren.object_table_kind.has_value());
     REQUIRE(ren.entries.size() == 1);
     REQUIRE(ren.entries[0].object_init_members.size() == 2);
     REQUIRE(ren.entries[0].object_init_members[0].first == "x");
     REQUIRE(ren.entries[0].object_init_members[0].second == 0);
+
+    f.unit.root_ns.enums[0].object_table_symbol = "arbitrary_accessor";
+    f.unit.root_ns.enums[0].object_table_kind = "runtime";
+    restored = json_round_trip(f);
+    REQUIRE(restored.unit.root_ns.enums[0].object_table_kind == "runtime");
+    REQUIRE(restored.unit.root_ns.enums[0].object_table_symbol == "arbitrary_accessor");
 }
 
 TEST_CASE("JSON: polymorphic union round-trips", "[json][union][polymorphic]") {

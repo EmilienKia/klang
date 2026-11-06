@@ -1020,6 +1020,8 @@ static json to_json(const kdi_enum& e) {
         obj["object_type"] = to_json(*e.object_type);
     if (e.object_table_symbol.has_value())
         obj["object_table_symbol"] = *e.object_table_symbol;
+    if (e.object_table_kind.has_value())
+        obj["object_table_kind"] = *e.object_table_kind;
     if (e.base_fq_name.has_value())
         obj["base_fq_name"] = *e.base_fq_name;
     if (e.doc) obj["doc"] = to_json(*e.doc);
@@ -1036,6 +1038,8 @@ static kdi_enum from_json_enum(const json& j) {
         e.object_type = from_json_type(j.at("object_type"));
     if (j.contains("object_table_symbol"))
         e.object_table_symbol = j.at("object_table_symbol").get<std::string>();
+    if (j.contains("object_table_kind"))
+        e.object_table_kind = j.at("object_table_kind").get<std::string>();
     if (j.contains("base_fq_name"))
         e.base_fq_name = j.at("base_fq_name").get<std::string>();
     if (j.contains("doc"))

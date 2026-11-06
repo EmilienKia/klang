@@ -1538,6 +1538,7 @@ void kdi_builder::visit_enumeration(enumeration& en) {
         ke.underlying_type = to_kdi_type(en.get_underlying_type());
     }
     if (en.is_object_backed()) {
+        if (en.has_runtime_table()) ke.object_table_kind = "runtime";
         if (auto obj_type = en.get_object_type()) {
             ke.object_type = to_kdi_type(obj_type);
         }
