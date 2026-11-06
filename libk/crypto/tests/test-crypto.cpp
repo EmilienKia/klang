@@ -213,9 +213,46 @@ TEST_CASE("Message digest name lookup", "[crypto][digest]") {
             return result;
         }
 
+        hasStandardDigest(algorithm: k::crypto::MessageDigestAlgorithms) : bool {
+            digest : k::crypto::MessageDigest! =
+                k::crypto::MessageDigest::fromName(algorithm);
+            return digest != null;
+        }
+
         test() : int {
             try {
-                sha256Name : const String! = new String("SHA256");
+                mdByEnum : k::crypto::MessageDigest! =
+                    k::crypto::MessageDigest::fromName(
+                        k::crypto::MessageDigestAlgorithms::SHA256);
+                if (!mdByEnum) return 6;
+
+                enumBytes : unsigned byte[]! = new unsigned byte[3u];
+                enumBytes[0u] = (unsigned byte) 'a';
+                enumBytes[1u] = (unsigned byte) 'b';
+                enumBytes[2u] = (unsigned byte) 'c';
+                mdByEnum.update(enumBytes);
+                enumDigest : unsigned byte[]! = mdByEnum.finalize();
+                enumCorrect : bool = bytesToHex(enumDigest) ==
+                    String("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+                delete enumDigest;
+                delete enumBytes;
+                if (!enumCorrect) return 7;
+
+                if (!hasStandardDigest(k::crypto::MessageDigestAlgorithms::MD5)) return 8;
+                if (!hasStandardDigest(k::crypto::MessageDigestAlgorithms::SHA1)) return 9;
+                if (!hasStandardDigest(k::crypto::MessageDigestAlgorithms::SHA224)) return 10;
+                if (!hasStandardDigest(k::crypto::MessageDigestAlgorithms::SHA256)) return 11;
+                if (!hasStandardDigest(k::crypto::MessageDigestAlgorithms::SHA384)) return 12;
+                if (!hasStandardDigest(k::crypto::MessageDigestAlgorithms::SHA512)) return 13;
+                if (!hasStandardDigest(k::crypto::MessageDigestAlgorithms::SHA512_224)) return 14;
+                if (!hasStandardDigest(k::crypto::MessageDigestAlgorithms::SHA512_256)) return 15;
+                if (!hasStandardDigest(k::crypto::MessageDigestAlgorithms::SHA3_224)) return 16;
+                if (!hasStandardDigest(k::crypto::MessageDigestAlgorithms::SHA3_256)) return 17;
+                if (!hasStandardDigest(k::crypto::MessageDigestAlgorithms::SHA3_384)) return 18;
+                if (!hasStandardDigest(k::crypto::MessageDigestAlgorithms::SHA3_512)) return 19;
+
+                sha256Name : const k::crypto::MessageDigestAlgorithm! =
+                    new String("SHA256");
                 md : k::crypto::MessageDigest! =
                     k::crypto::MessageDigest::fromName(sha256Name);
                 if (!md) return 1;
@@ -233,7 +270,13 @@ TEST_CASE("Message digest name lookup", "[crypto][digest]") {
                 delete bytes;
                 if (!correct) return 2;
 
-                unsupportedName : const String! =
+                customName : const k::crypto::MessageDigestAlgorithm! =
+                    new String("BLAKE2B-512");
+                custom : k::crypto::MessageDigest! =
+                    k::crypto::MessageDigest::fromName(customName);
+                if (!custom) return 19;
+
+                unsupportedName : const k::crypto::MessageDigestAlgorithm! =
                     new String("KLANG-UNSUPPORTED-DIGEST");
                 unsupported : k::crypto::MessageDigest! =
                     k::crypto::MessageDigest::fromName(unsupportedName);
