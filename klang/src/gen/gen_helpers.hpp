@@ -30,6 +30,7 @@
 #include "../parse/ast.hpp"
 #include "../../../libkdi/src/kdi_aggregates.hpp"
 
+#include <algorithm>
 #include <functional>
 #include <map>
 #include <memory>
@@ -721,15 +722,13 @@ virtual_dispatch_info compute_operator_dispatch_info(
 
 // ── Shared static helpers ──────────────────────────────────────────────────
 
-/**
- * Ensure an LLVM global reference for an enum's object-backing table.
- */
-inline llvm::GlobalVariable* ensure_enum_object_table_reference(
+inline llvm::ArrayType* enum_object_table_type(
     const std::shared_ptr<enumeration>& en,
     const std::shared_ptr<context>& ctx)
 {
     if (!en || !ctx || !en->is_object_backed()) return nullptr;
-    if (auto* existing = en->get_table_global()) return existing;
+    if (auto* table = en->get_table_global())
+        return llvm::dyn_cast<llvm::ArrayType>(table->getValueType());
 
     auto obj_type = en->get_object_type();
     if (!obj_type || !obj_type->is_resolved()) return nullptr;
@@ -744,8 +743,45 @@ inline llvm::GlobalVariable* ensure_enum_object_table_reference(
         en->set_table_global(gv);
         return gv;
     }
+    size_t table_size = 0;
+    for (const auto& entry : en->entries()) {
+        if (entry.value >= 0)
+            table_size = std::max(table_size, static_cast<size_t>(entry.value) + 1);
+    }
+    return llvm::ArrayType::get(llvm_st, table_size);
+}
 
-    auto* arr_ty = llvm::ArrayType::get(llvm_st, en->entries().size());
+// Runtime tables export the accessor name in the KDI symbol field.
+inline llvm::Function* ensure_enum_object_table_accessor_reference(
+    const std::shared_ptr<enumeration>& en,
+    const std::shared_ptr<context>& ctx)
+{
+    if (!en || !ctx) return nullptr;
+    if (auto* accessor = en->get_table_accessor()) return accessor;
+    const auto& symbol = en->get_table_symbol();
+    if (!en->has_runtime_table() || symbol.empty()) return nullptr;
+
+    auto* accessor = ctx->module().getFunction(symbol);
+    if (!accessor) {
+        auto* fn_type = llvm::FunctionType::get(llvm::PointerType::get(**ctx, 0), false);
+        accessor = llvm::Function::Create(fn_type, llvm::GlobalValue::ExternalLinkage,
+            symbol, ctx->module());
+    }
+    en->set_table_accessor(accessor);
+    return accessor;
+}
+
+/** Ensure an LLVM global reference for a constant enum backing table. */
+inline llvm::GlobalVariable* ensure_enum_object_table_reference(
+    const std::shared_ptr<enumeration>& en,
+    const std::shared_ptr<context>& ctx)
+{
+    if (!en || !ctx || !en->is_object_backed()) return nullptr;
+    if (auto* existing = en->get_table_global()) return existing;
+
+    auto* arr_ty = enum_object_table_type(en, ctx);
+    if (!arr_ty) return nullptr;
+
     auto* gv = new llvm::GlobalVariable(
         ctx->module(),
         arr_ty,

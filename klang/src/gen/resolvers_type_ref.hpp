@@ -484,6 +484,7 @@ protected:
 
     void visit_namespace(ns& ) override;
     void visit_aggregate(aggregate&) override;
+    void visit_enumeration(enumeration&) override;
     void visit_klass(klass&) override;
     void visit_interface(interface&) override;
     void visit_annotation_type(annotation_type&) override;
@@ -702,7 +703,10 @@ protected:
      * @return {best_constructor, adapted_args} or {nullptr, {}} on failure.
      */
     std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::shared_ptr<expression>>/*adapted_args*/>
-    get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args);
+    get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors,
+                                  const std::vector<std::shared_ptr<expression>>& args,
+                                  bool throw_on_failure = false,
+                                  const lex::opt_any_lexeme& failure_location = {});
 
 
     /**
