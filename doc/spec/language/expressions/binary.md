@@ -4,7 +4,8 @@
 
 Binary operators combine two operands to produce a value.
 
-> **Operator overloading:** When one operand is of a user-defined aggregate type (struct, class, or interface), the compiler looks for a matching operator function instead of applying built-in semantics. See [Operator Overloading](../functions/operators.md) for the full specification.
+> **Operator overloading:** Aggregate operands and array comparisons can use
+> matching operator functions. See [Operator Overloading](../functions/operators.md).
 
 ---
 
@@ -87,6 +88,99 @@ a < b        // true if a is strictly less than b
 a > b        // true if a is strictly greater than b
 a <= b       // true if a is less than or equal to b
 a >= b       // true if a is greater than or equal to b
+```
+
+### Array value comparisons
+
+Module `k` provides free comparison templates for arrays with the same element
+type. Fixed-size arrays and unsized array references can be compared without
+copying. `==` compares lengths first, then elements in increasing index order
+using `==`, stopping at the first mismatch. `!=` is `!(left == right)`.
+`<=>` compares the common prefix in index order using the element `<=>`;
+the first negative or positive result yields `-1` or `1`. If the prefix is
+equal, the shorter array is less; equal lengths yield `0`. The relational
+operators can be synthesized from this `<=>`.
+
+The element `==` expression must be usable as `bool` for array equality and
+inequality. Array ordering requires element `<=>` and a result that can be
+compared with zero using `<` and `>`. The standard templates cannot compare
+arrays of different element types; without another viable overload such
+comparisons, and comparisons whose required element operation is unavailable,
+must be rejected.
+Element comparisons are evaluated once per visited pair; a length mismatch
+performs no element equality comparisons. Indirection comparisons continue to
+compare addresses rather than array contents.
+
+```k
+test() : bool {
+    a : int[2]{1, 2};
+    b : int[3]{1, 2, 3};
+    return a < b && a != b && (a <=> b) == -1;
+}
+
+struct Uncomparable {}
+invalid() : bool {
+    a : Uncomparable[1]{};
+    b : Uncomparable[1]{};
+    return a == b;  // Error: element equality is unavailable.
+}
+
+invalidTypes() : bool {
+    a : int[1]{1};
+    b : long[1]{1L};
+    return a == b;  // Error: the standard template requires one element type.
+}
+```
+
+### Sequence comparisons
+
+Module `k` provides a namespace-level template `<=>` for two
+`const Sequence<T>&` operands, including operands backed by different concrete
+sequence types. It compares corresponding elements once in iterator
+traversal order. The first negative or positive element result yields `-1` or
+`1`; after an equal prefix, simultaneous exhaustion yields `0` and the sequence
+that exhausts first is less. The element `<=>` must be valid and its result
+must support comparison to zero with `<` and `>`.
+
+The comparison consumes an iterator from each sequence through the first
+mismatch or exhaustion. Detecting exhaustion may consume one extra element of
+the longer sequence. Single-use sources are consumed, traversal order is
+defined by the sequence (and may be unspecified for unordered collections),
+and equivalent infinite or nonproductive sequences may never terminate. The
+operator uses no identity, size, or allocation-based shortcut.
+
+Module `k` also provides `<=>` templates for `const T[]&` and
+`const Sequence<T>&` in either operand order. The element type must be the same
+for both operands. They compare array elements in index order against sequence
+elements in iterator order, evaluating the left element's `<=>` with the
+right element once per pair. The first nonzero result is normalized to `-1`
+or `1`; after an equal prefix, simultaneous exhaustion yields `0` and the
+shorter operand is less. The element result must support `< 0` and `> 0`.
+No identity, size, allocation-based, or bytewise shortcut is used.
+
+The sequence iterator is consumed through the first mismatch or exhaustion;
+detecting an array prefix consumes one additional sequence element. A
+single-use source loses the traversed elements, and a nonproductive sequence
+may prevent the comparison from terminating even when the array is exhausted.
+
+```k
+compare(left : const Sequence<int>&, right : const Sequence<int>&) : int {
+    return left <=> right; // Lexicographic iterator-order comparison.
+}
+
+compareArray(left : const int[]&, right : const Sequence<int>&) : int {
+    return left <=> right;
+}
+
+struct UnorderedElement {}
+invalidSequence(left : const Sequence<UnorderedElement>&,
+                right : const Sequence<UnorderedElement>&) : int {
+    return left <=> right; // Error: element <=> is unavailable.
+}
+
+invalidMixed(left : const int[]&, right : const Sequence<long>&) : int {
+    return left <=> right; // Error: the standard template requires one element type.
+}
 ```
 
 ### Address comparison for indirection types

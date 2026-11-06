@@ -2370,7 +2370,7 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
                 if(auto keyword_ts = std::dynamic_pointer_cast<ast::keyword_type_specifier>(ts)) {
                     // Encode keyword types (these are built-in types)
                     switch(keyword_ts->keyword.type) {
-                        case lex::keyword::INT: return "int";
+                        case lex::keyword::INT: return keyword_ts->is_unsigned ? "uint" : "int";
                         case lex::keyword::DOUBLE: return "double";
                         case lex::keyword::FLOAT: return "float";
                         case lex::keyword::BOOL: return "bool";

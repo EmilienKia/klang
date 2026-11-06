@@ -53,8 +53,11 @@ std::string encode_type_for_cast_operator(const std::shared_ptr<type>& t) {
             case primitive_type::BYTE: return "byte";
             case primitive_type::UNSIGNED_BYTE: return "ubyte";
             case primitive_type::SHORT: return pt->is_unsigned() ? "ushort" : "short";
+            case primitive_type::UNSIGNED_SHORT: return "ushort";
             case primitive_type::INT: return pt->is_unsigned() ? "uint" : "int";
+            case primitive_type::UNSIGNED_INT: return "uint";
             case primitive_type::LONG: return pt->is_unsigned() ? "ulong" : "long";
+            case primitive_type::UNSIGNED_LONG: return "ulong";
             case primitive_type::LONG_LONG: return pt->is_unsigned() ? "ulonglong" : "longlong";
             case primitive_type::FLOAT: return "float";
             case primitive_type::DOUBLE: return "double";

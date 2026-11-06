@@ -438,6 +438,37 @@ TEST_CASE("import cast-operator — explicit cast works on imported class value"
     REQUIRE(result.exit_code == 42);
 }
 
+TEST_CASE("import cast-operator — unsigned conversions keep distinct types and symbols",
+          "[import][e2e][cast][operator][regression]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module import_unsigned_cast_library;
+            public class Number {
+                public Number() {}
+                public const operator() : int { return -1; }
+                public const operator() : unsigned short { return (unsigned short) 16; }
+                public const operator() : unsigned int { return (unsigned int) 32; }
+                public const operator() : unsigned long { return (unsigned long) 64; }
+            }
+        )K",
+        R"K(
+            module import_unsigned_cast_consumer;
+            import import_unsigned_cast_library;
+            main() : int {
+                value : import_unsigned_cast_library::Number;
+                if ((int) value != -1) return 1;
+                if ((unsigned short) value != 16) return 2;
+                if ((unsigned int) value != 32) return 3;
+                if ((unsigned long) value != 64) return 4;
+                return 0;
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 0);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // [import-alias-no-reexport] Regression: Imported aliases from auto-imported `k`
 // (e.g. k::functional::Function/Consumer/Predicate) and from explicit dependency

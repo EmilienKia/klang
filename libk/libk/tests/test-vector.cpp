@@ -35,6 +35,123 @@ std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
 
 } // anonymous namespace
 
+TEST_CASE("Array comparisons use lexicographic contents", "[libk][array][comparison]") {
+    auto j = jit_k(R"SRC(
+        module __array_comparison_contents__;
+
+        compareRefs(left : const int[]&, right : const int[]&) : int {
+            if (!(left == right) || left != right) return 1;
+            return left <=> right;
+        }
+
+        compareDifferentRefs(left : const int[]&, right : const int[]&) : bool {
+            return left != right && !(left == right) && (left <=> right) == -1;
+        }
+
+        test() : int {
+            empty : int[0]{};
+            const a : int[3]{1, 2, 3};
+            b : int[3]{1, 2, 3};
+            lower : int[3]{1, 1, 9};
+            prefix : int[2]{1, 2};
+            longer : int[4]{1, 2, 3, 0};
+            if (!(empty == empty) || empty != empty || (empty <=> empty) != 0) return 1;
+            if ((empty <=> a) != -1 || (a <=> empty) != 1) return 2;
+            if (compareRefs(a, b) != 0 || !(a == b) || a != b) return 3;
+            if ((a <=> lower) != 1 || (lower <=> a) != -1) return 4;
+            if (a == lower || !(a != lower)) return 5;
+            if ((prefix <=> a) != -1 || (a <=> prefix) != 1) return 6;
+            if ((a <=> longer) != -1 || (longer <=> a) != 1) return 7;
+            if (a == longer || !(a != longer)) return 8;
+            if (!(prefix < a) || !(longer > a)) return 9;
+            if (!compareDifferentRefs(prefix, a)) return 10;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+TEST_CASE("Array equality short circuits and inequality complements it",
+          "[libk][array][comparison]") {
+    auto j = jit_k(R"SRC(
+        module __array_comparison_equality__;
+
+        calls : int = 0;
+        struct Element {
+            value : int;
+            Element(v : int) : value(v) {}
+            const operator ==(other : const Element&) : bool {
+                ++calls;
+                return value >= 0 && value == other.value;
+            }
+            const operator !=(other : const Element&) : bool { return false; }
+        }
+
+        test() : int {
+            a : Element[3]{Element(1), Element(2), Element(3)};
+            equal : Element[3]{Element(1), Element(2), Element(3)};
+            mismatch : Element[3]{Element(1), Element(8), Element(3)};
+            shorter : Element[1]{Element(1)};
+            nonreflexive : Element[1]{Element(-1)};
+            calls = 0;
+            if (a == shorter || calls != 0) return 1;
+            if (!(a != shorter) || calls != 0) return 2;
+            if (!(a == equal) || calls != 3) return 3;
+            calls = 0;
+            if (a == mismatch || calls != 2) return 4;
+            calls = 0;
+            if (!(a != mismatch) || calls != 2) return 5;
+            calls = 0;
+            if (nonreflexive == nonreflexive || calls != 1) return 6;
+            calls = 0;
+            if (!(nonreflexive != nonreflexive) || calls != 1) return 7;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+TEST_CASE("Array ordering evaluates each visited element comparison once",
+          "[libk][array][comparison]") {
+    auto j = jit_k(R"SRC(
+        module __array_comparison_ordering__;
+
+        calls : int = 0;
+        struct Element {
+            value : int;
+            Element(v : int) : value(v) {}
+            const operator <=>(other : const Element&) : double {
+                ++calls;
+                if (value < other.value) return -0.25d;
+                if (value > other.value) return 0.25d;
+                return 0.0d;
+            }
+        }
+
+        test() : int {
+            a : Element[3]{Element(1), Element(2), Element(3)};
+            b : Element[3]{Element(1), Element(4), Element(0)};
+            calls = 0;
+            if ((a <=> b) != -1 || calls != 2) return 1;
+            calls = 0;
+            if ((b <=> a) != 1 || calls != 2) return 2;
+            calls = 0;
+            if ((a <=> a) != 0 || calls != 3) return 3;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  1. Primitive type — Vector<int>
 // ═══════════════════════════════════════════════════════════════════════════════

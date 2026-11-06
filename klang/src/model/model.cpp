@@ -1427,6 +1427,10 @@ namespace {
             // and member accesses at runtime. Such diamonds keep their (ABI-safe)
             // duplicated sub-object representation instead.
             if (cur->is_imported()) return;
+            if (auto definition = cur->get_tpl_definition()) {
+                if (auto* info = definition->get_tpl_info();
+                    info && !info->origin_module_ns_fq.empty()) return;
+            }
             for (auto& bs : cur->get_bases_mutable()) {
                 if (!bs.base || !participates_in_diamond_detection(bs.base.get())) continue;
                 if (diamond_bases.count(bs.base.get())) {

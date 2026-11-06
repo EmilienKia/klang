@@ -492,7 +492,8 @@ std::shared_ptr<type> template_instantiator::resolve_base_type_name(
     std::vector<template_argument> base_args;
     for (const auto& arg_name : split_top_level_args(args_str)) {
         auto arg_type = resolve_base_type_name(arg_name, subst, parent_ns, unit_ref, ctx, logger);
-        if (!arg_type || !type::is_resolved(arg_type)) return nullptr;
+        if (!arg_type || (!type::is_resolved(arg_type)
+            && !std::dynamic_pointer_cast<struct_type>(arg_type))) return nullptr;
         base_args.push_back(template_argument::make_type(arg_type));
     }
     if (base_args.empty()) return nullptr;
@@ -3025,6 +3026,10 @@ void template_instantiator::inject_base_subobject_fields(std::shared_ptr<aggrega
         // aggregate's base list) also get their own __base_X__ fields.
         inject_base_subobject_fields(bs.base);
     }
+    // Constructor initializers are injected immediately after this walk.
+    // Collect virtual storage on every intermediate before that happens, not
+    // later during LLVM layout repair after the constructor bodies are frozen.
+    ensure_virtual_base_layout_fields(concrete);
 }
 
 bool template_instantiator::ensure_virtual_base_layout_fields(std::shared_ptr<aggregate> concrete) {
@@ -3074,11 +3079,13 @@ bool template_instantiator::ensure_virtual_base_layout_fields(std::shared_ptr<ag
             return false;
         };
 
-        bool is_collector = false;
+        // A virtual interface can be reached through another virtual base. Its
+        // nested collectors must not become separate live receiver subobjects.
+        bool is_collector = vbase->is_interface();
         for (auto& bs : concrete->get_bases()) {
+            if (is_collector) break;
             if (!bs.base) continue;
             if (bs.is_virtual) {
-                if (bs.base.get() == vbase.get() && vbase->is_interface()) { is_collector = true; break; }
                 if (bs.base->_vars.count(vbptr_name)) { is_collector = true; break; }
             } else if (has_vbptr_in_vars(*bs.base)) {
                 is_collector = true; break;

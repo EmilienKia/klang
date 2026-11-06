@@ -26,6 +26,44 @@ destroyed).
 
 ---
 
+## Array comparison operators
+
+Module `k` provides these free function templates:
+
+```k
+template<typename T>
+operator <=>(left : const T[]&, right : const T[]&) : int;
+template<typename T>
+operator ==(left : const T[]&, right : const T[]&) : bool;
+template<typename T>
+operator !=(left : const T[]&, right : const T[]&) : bool;
+```
+
+Both operands must have the same element type; fixed-size arrays of different
+lengths and unsized array references are accepted. `==` first checks the lengths
+and then compares elements in increasing order, stopping at the first unequal
+pair. `!=` returns the negation of array `==`. `<=>` compares the common
+prefix lexicographically, returning `-1` or `1` for the first differing pair;
+if the prefix is equal, the shorter array sorts first and equal lengths yield
+`0`. Visited element comparisons are evaluated once, with no array copies or
+allocation. Pointer, link, view and owner comparisons still compare addresses.
+
+For equality, `left[i] == right[i]` must be usable as `bool`. For ordering,
+`left[i] <=> right[i]` must be valid and its result must support `< 0` and
+`> 0`, indicating its sign. An unavailable required operation makes use of
+the standard template invalid; different element types require another
+viable overload.
+
+```k
+test() : bool {
+    a : int[2]{1, 2};
+    b : int[3]{1, 2, 3};
+    return a != b && (a <=> b) == -1;
+}
+```
+
+---
+
 ## `Sequence<T>` and `MutableSequence<T>` — Interfaces
 
 ```k
@@ -60,6 +98,47 @@ interface MutableSequence : public Sequence<T> {
     default forEach(consumer : functional::Consumer<T&>);
 }
 ```
+
+### Ordering operators
+
+```k
+template<typename T>
+operator <=>(left : const Sequence<T>&, right : const Sequence<T>&) : int;
+template<typename T>
+operator <=>(left : const T[]&, right : const Sequence<T>&) : int;
+template<typename T>
+operator <=>(left : const Sequence<T>&, right : const T[]&) : int;
+```
+
+The namespace-level `<=>` compares two sequences of the same element type
+lexicographically in their respective iterator traversal order. Each visited
+element pair is compared once with `<=>`: the first negative or positive
+result gives `-1` or `1`. After an equal prefix, simultaneous exhaustion gives
+`0`, and the sequence that exhausts first is less.
+
+The element `<=>` must be valid and its result must support both `< 0` and
+`> 0`. The comparison obtains and consumes a const iterator from each operand,
+including the differing pair or exhaustion. Detecting a prefix may consume one
+additional element from the longer sequence. Single-use sources therefore lose
+the traversed elements; callers must keep the sequences and their backing
+sources alive for the comparison. Iteration order is determined by each
+sequence and may be unspecified for unordered collections. Equivalent infinite
+or nonproductive sequences may never terminate. The operator uses no identity,
+size, or allocation-based shortcut.
+
+The mixed array/sequence overloads compare arrays in index order against a
+sequence in iterator order. Both operands must have the same element type,
+and the left element's `<=>` is evaluated once per visited pair against the
+right element. The first nonzero result is normalized to `-1` or `1`; after an
+equal prefix, simultaneous exhaustion yields `0` and the shorter operand is
+less. The same element comparison requirements apply.
+
+The sequence iterator is consumed through the first mismatch or exhaustion.
+When the array is a prefix, detecting that the sequence is longer consumes
+one additional sequence element. Single-use sources lose the traversed
+elements, and a sequence unable to produce its next element may prevent
+termination even after the array is exhausted. No identity, size,
+allocation-based, or bytewise shortcut is used.
 
 ### Methods
 
@@ -349,4 +428,3 @@ reference tracking. Destroying a collection destroys all contained elements.
 | Frequent front insertions/removals | `LinkedList<T>` or `DoubleLinkedList<T>` |
 | Stable element addresses (no reallocation) | `LinkedList<T>` or `DoubleLinkedList<T>` |
 | General purpose, best average performance | `Vector<T>` |
-

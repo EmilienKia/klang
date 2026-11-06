@@ -18,6 +18,52 @@
 
 module k;
 
+namespace array_comparison_detail {
+    template<typename T>
+    sign(value : const T&) : int {
+        if (value < 0) return -1;
+        if (value > 0) return 1;
+        return 0;
+    }
+}
+
+/**
+ * Compare arrays lexicographically using their elements' three-way comparison.
+ * The first differing element determines the sign; otherwise length does.
+ */
+template<typename T>
+operator <=>(left : const T[]&, right : const T[]&) : int {
+    i : unsigned int = 0u;
+    while (i < left.size && i < right.size) {
+        order : int = array_comparison_detail::sign(left[i] <=> right[i]);
+        if (order != 0) return order;
+        ++i;
+    }
+    if (left.size < right.size) return -1;
+    if (left.size > right.size) return 1;
+    return 0;
+}
+
+/**
+ * Compare arrays by length and element equality, stopping at the first mismatch.
+ */
+template<typename T>
+operator ==(left : const T[]&, right : const T[]&) : bool {
+    if (left.size != right.size) return false;
+    i : unsigned int = 0u;
+    while (i < left.size) {
+        if (!(left[i] == right[i])) return false;
+        ++i;
+    }
+    return true;
+}
+
+/** Return the negation of array equality. */
+template<typename T>
+operator !=(left : const T[]&, right : const T[]&) : bool {
+    return !(left == right);
+}
+
 /**
  * ConstIterator<T> — abstract interface for read-only, consumable, forward-only traversal.
  *
@@ -232,6 +278,64 @@ interface Sequence {
         return result;
     }
 
+}
+
+/**
+ * Compare sequences lexicographically in iterator order, consuming their traversal.
+ * The first differing pair determines the sign; otherwise exhaustion does.
+ * Equivalent infinite or nonproductive sequences may never finish.
+ */
+template<typename T>
+operator <=>(left : const Sequence<T>&, right : const Sequence<T>&) : int {
+    leftIterator : ConstIterator<T>! = left.constIterator();
+    rightIterator : ConstIterator<T>! = right.constIterator();
+    leftValue : OptionalConstRef<T> = leftIterator.next();
+    rightValue : OptionalConstRef<T> = rightIterator.next();
+    while (leftValue.hasValue() && rightValue.hasValue()) {
+        order : int = array_comparison_detail::sign(leftValue.get() <=> rightValue.get());
+        if (order != 0) return order;
+        leftValue = leftIterator.next();
+        rightValue = rightIterator.next();
+    }
+    if (leftValue.hasValue()) return 1;
+    if (rightValue.hasValue()) return -1;
+    return 0;
+}
+
+/**
+ * Compare an array and a sequence lexicographically in their traversal order.
+ */
+template<typename T>
+operator <=>(left : const T[]&, right : const Sequence<T>&) : int {
+    iterator : ConstIterator<T>! = right.constIterator();
+    value : OptionalConstRef<T> = iterator.next();
+    i : unsigned int = 0u;
+    while (i < left.size && value.hasValue()) {
+        order : int = array_comparison_detail::sign(left[i] <=> value.get());
+        if (order != 0) return order;
+        ++i;
+        value = iterator.next();
+    }
+    if (value.hasValue()) return -1;
+    if (i < left.size) return 1;
+    return 0;
+}
+
+/** Compare a sequence and an array lexicographically in their traversal order. */
+template<typename T>
+operator <=>(left : const Sequence<T>&, right : const T[]&) : int {
+    iterator : ConstIterator<T>! = left.constIterator();
+    value : OptionalConstRef<T> = iterator.next();
+    i : unsigned int = 0u;
+    while (value.hasValue() && i < right.size) {
+        order : int = array_comparison_detail::sign(value.get() <=> right[i]);
+        if (order != 0) return order;
+        value = iterator.next();
+        ++i;
+    }
+    if (value.hasValue()) return 1;
+    if (i < right.size) return -1;
+    return 0;
 }
 
 /**
@@ -764,4 +868,3 @@ class SequenceSkip : public Sequence<T> {
         return new SkippedConstIterator<T>(source.constIterator(), toSkip, afterCount);
     }
 }
-

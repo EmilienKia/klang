@@ -49,44 +49,56 @@ void type_reference_resolver::visit_spaceship_expression(spaceship_expression& e
     }
     bool is_const_left = type::is_const(check_left);
     check_left = type::remove_const(check_left);
+    auto check_right = right_type;
+    if (type::is_reference(check_right) || type::is_drain(check_right)) {
+        check_right = check_right->get_subtype();
+    }
+    check_right = type::remove_const(check_right);
+    auto is_address = [](const std::shared_ptr<type>& t) {
+        return type::is_pointer(t) || type::is_link(t) || type::is_view(t)
+            || type::is_owner(t) || type::is_null(t) || type::is_fat_callable(t);
+    };
+    bool array_operands = (type::is_array(type::canonical(check_left))
+                           || type::is_array(type::canonical(check_right)))
+        && !is_address(check_left) && !is_address(check_right);
 
-    // ── Operator overload for aggregate (struct/class/interface) left operand ──
-    if (type::is_struct(check_left)) {
+    // ── Operator overload for aggregate left operands or array operands ──
+    if (type::is_struct(check_left) || array_operands) {
         auto st_type = std::dynamic_pointer_cast<struct_type>(check_left);
-        if (st_type) {
-            auto agg = st_type->get_struct();
-            if (agg) {
-                auto [op_func, adapted_right] = resolve_binary_operator_overload(expr, agg, left, right, is_const_left);
-                if (op_func) {
-                    expr.set_operator_func(op_func);
-                    if (adapted_right && adapted_right != right) {
-                        expr.assign_right(adapted_right);
-                    }
-                    if (!op_func->has_return_type() || !is_spaceship_return_shape_ok(op_func->get_return_type())) {
-                        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SPACESHIP_BAD_RETURN_TYPE), expr.first_lexeme(),
-                            "'operator <=>' must return a signed integer or floating-point primitive type, "
-                            "or an aggregate (struct/class) type comparable to the integer literal 0; "
-                            "'{}' declares a return type of '{}'",
-                            {agg->get_short_name(),
-                             op_func->has_return_type() ? op_func->get_return_type()->to_string() : "void"});
-                    }
-                    expr.set_type(op_func->get_return_type());
-                    if (op_func->is_member()) {
-                        auto di = compute_operator_dispatch_info(op_func, left_type);
-                        expr.set_operator_dispatch_info(std::move(di));
-                    } else {
-                        virtual_dispatch_info di;
-                        di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
-                        expr.set_operator_dispatch_info(std::move(di));
-                    }
-                    return;
+        auto agg = st_type ? st_type->get_struct() : nullptr;
+        if (agg || array_operands) {
+            auto [op_func, adapted_right] = resolve_binary_operator_overload(expr, agg, left, right, is_const_left);
+            if (op_func) {
+                expr.set_operator_func(op_func);
+                if (adapted_right && adapted_right != right) {
+                    expr.assign_right(adapted_right);
                 }
+                if (!op_func->has_return_type() || !is_spaceship_return_shape_ok(op_func->get_return_type())) {
+                    throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SPACESHIP_BAD_RETURN_TYPE), expr.first_lexeme(),
+                        "'operator <=>' must return a signed integer or floating-point primitive type, "
+                        "or an aggregate (struct/class) type comparable to the integer literal 0; "
+                        "'{}' declares a return type of '{}'",
+                        {agg ? agg->get_short_name() : check_left->to_string(),
+                         op_func->has_return_type() ? op_func->get_return_type()->to_string() : "void"});
+                }
+                expr.set_type(op_func->get_return_type());
+                if (op_func->is_member()) {
+                    auto di = compute_operator_dispatch_info(op_func, left_type);
+                    expr.set_operator_dispatch_info(std::move(di));
+                } else {
+                    virtual_dispatch_info di;
+                    di.kind = virtual_dispatch_info::dispatch_kind::DIRECT;
+                    expr.set_operator_dispatch_info(std::move(di));
+                }
+                return;
             }
         }
-        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SPACESHIP_OVERLOAD_NOT_FOUND), expr.first_lexeme(),
-            "No matching 'operator <=>' overload found for type '{}': "
-            "declare a member or non-member 'operator <=>' to use the spaceship operator on this type",
-            {check_left ? check_left->to_string() : "?"});
+        if (type::is_struct(check_left)) {
+            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SPACESHIP_OVERLOAD_NOT_FOUND), expr.first_lexeme(),
+                "No matching 'operator <=>' overload found for type '{}': "
+                "declare a member or non-member 'operator <=>' to use the spaceship operator on this type",
+                {check_left ? check_left->to_string() : "?"});
+        }
     }
 
     // ── Builtin primitive spaceship: result is always the signed `int` type ──

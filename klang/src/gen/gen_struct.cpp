@@ -427,7 +427,10 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
                                         arg_type = agg->get_struct_type();
                                     }
                                 }
-                                if (arg_type && type::is_resolved(arg_type)) {
+                                // A nominal aggregate is usable as a template
+                                // argument before its LLVM layout is materialized.
+                                if (arg_type && (type::is_resolved(arg_type)
+                                    || std::dynamic_pointer_cast<struct_type>(arg_type))) {
                                     model_args.push_back(template_argument::make_type(arg_type));
                                 } else {
                                     all_resolved = false;
@@ -549,7 +552,7 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
             auto& bs = *it;
             if (!bs.base || !bs.base->get_struct_type()) continue;
             if (bs.is_virtual) {
-                std::string vbptr_name = "__vbptr_" + bs.sanitised_name() + "__";
+                std::string vbptr_name = "__vbptr_" + bs.base->get_short_name() + "__";
                 if (!st._vars.count(vbptr_name)) {
                     auto vbptr_field = member_variable_definition::make_shared(st.shared_as<aggregate>(), vbptr_name);
                     st._vars.insert({vbptr_name, vbptr_field});
@@ -583,21 +586,13 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
                     return false;
                 };
 
-                bool has_collector_base = false;
+                // Collect transitive virtual interfaces even when their vbptrs
+                // are reachable only through another virtual base.
+                bool has_collector_base = vbase->is_interface();
                 for (auto& bs : st.get_bases()) {
+                    if (has_collector_base) break;
                     if (!bs.base) continue;
                     if (bs.is_virtual) {
-                        // 'st' directly declares this virtual base. For a stateless
-                        // interface virtual base (vptr-only, no data members) 'st' is its
-                        // own collector: embedding the (vptr-only) sub-object here gives a
-                        // standalone instance real storage instead of a transient stack
-                        // alloca, with no member-access ambiguity (interfaces have no data
-                        // members). Class virtual bases keep the single-collector model to
-                        // preserve shared-field semantics, so they are excluded here.
-                        if (bs.base.get() == vbase.get() && vbase->is_interface()) {
-                            has_collector_base = true;
-                            break;
-                        }
                         if (bs.base->_vars.count(vbptr_name)) {
                             has_collector_base = true;
                             break;

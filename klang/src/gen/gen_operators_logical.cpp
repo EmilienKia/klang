@@ -855,7 +855,7 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    // ── Operator overload for aggregate types (before reference stripping) ──
+    // ── Operator overload for aggregate or array operands (before reference stripping) ──
     // Tries the exact comparison operator first, then — if not declared — progressively
     // more complex fallback syntheses from other declared comparison operators.
     // See k::model::cmp_synthesis and resolve_comparison_with_fallback() for the full rule.
@@ -874,11 +874,10 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
         bool is_const_right = type::is_const(check_right);
         check_right = type::remove_const(check_right);
 
-        if (type::is_struct(check_left)) {
-            auto st_type = std::dynamic_pointer_cast<struct_type>(check_left);
-            if (st_type) {
-                auto agg = st_type->get_struct();
-                if (agg) {
+        auto st_type = std::dynamic_pointer_cast<struct_type>(check_left);
+        auto agg = st_type ? st_type->get_struct() : nullptr;
+        if (agg || type::is_array(type::canonical(check_left))
+            || type::is_array(type::canonical(check_right))) {
                     std::shared_ptr<aggregate> right_agg;
                     if (type::is_struct(check_right)) {
                         if (auto right_st_type = std::dynamic_pointer_cast<struct_type>(check_right)) {
@@ -907,6 +906,13 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
                                 if (result->adapted_arg != left) expr.assign_left(result->adapted_arg);
                             } else {
                                 if (result->adapted_arg != right) expr.assign_right(result->adapted_arg);
+                            }
+                        }
+                        if (result->adapted_receiver) {
+                            if (receiver_is_right) {
+                                if (result->adapted_receiver != right) expr.assign_right(result->adapted_receiver);
+                            } else {
+                                if (result->adapted_receiver != left) expr.assign_left(result->adapted_receiver);
                             }
                         }
 
@@ -962,8 +968,6 @@ void type_reference_resolver::visit_comparison_expression(comparison_expression&
                         }
                         return;
                     }
-                }
-            }
         }
     }
 
