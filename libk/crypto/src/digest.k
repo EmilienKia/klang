@@ -183,6 +183,32 @@ public interface MessageDigest {
     update(data : unsigned byte[]&) throws(MessageDigestException);
 
     /**
+     * Updates the digest with a range of unsigned bytes.
+     *
+     * @param data source byte array
+     * @param off start offset in the source array
+     * @param len number of bytes to update
+     * @throws IndexOutOfBoundsError when the requested range is outside `data`
+     * @throws MessageDigestException when the digest operation fails
+     */
+    update(data : const unsigned byte[], off: unsigned int, len: unsigned int)
+        throws(MessageDigestException);
+
+    /**
+     * Updates the digest with a range of bytes without copying the source.
+     * This overload allows byte output streams to pass their input slice
+     * directly to the digest.
+     *
+     * @param data source byte array
+     * @param off start offset in the source array
+     * @param len number of bytes to update
+     * @throws IndexOutOfBoundsError when the requested range is outside `data`
+     * @throws MessageDigestException when the digest operation fails
+     */
+    update(data : const byte[], off: unsigned int, len: unsigned int)
+        throws(MessageDigestException);
+
+    /**
      * Finalizes the digest computation and returns the resulting hash.
      *
      * @return the computed hash as a byte array
@@ -243,10 +269,39 @@ private class OpenSSLMessageDigest : MessageDigest {
     }
 
     override update(data : unsigned byte[]&) throws(MessageDigestException) {
+        update(data, 0u, (unsigned int) data.size);
+    }
+
+    override update(data : const unsigned byte[], off: unsigned int, len: unsigned int)
+            throws(MessageDigestException) {
+        if (off > data.size || len > data.size - off) {
+            throw IndexOutOfBoundsError();
+        }
+        dataPtr : const unsigned byte* = null;
+        if (len > 0u) {
+            dataPtr = &data[off];
+        }
+        _updateAddress(dataPtr, len);
+    }
+
+    override update(data : const byte[], off: unsigned int, len: unsigned int)
+            throws(MessageDigestException) {
+        if (off > data.size || len > data.size - off) {
+            throw IndexOutOfBoundsError();
+        }
+        dataPtr : const unsigned byte* = null;
+        if (len > 0u) {
+            dataPtr = (const unsigned byte*) &data[off];
+        }
+        _updateAddress(dataPtr, len);
+    }
+
+    _updateAddress(data : const unsigned byte*, len: unsigned int)
+            throws(MessageDigestException) {
         if (ctx == null) {
             throw MessageDigestException();
         }
-        if (data.size != 0u && EVP_DigestUpdate(ctx, &data[0], data.size) != 1) {
+        if (len != 0u && EVP_DigestUpdate(ctx, data, len) != 1) {
             throw MessageDigestException();
         }
     }
@@ -264,5 +319,169 @@ private class OpenSSLMessageDigest : MessageDigest {
             throw MessageDigestException();
         }
         return result;
+    }
+}
+
+// KLANG_CRYPTO_IO_DIGEST_SOURCE
+/**
+ * Forwards bytes to an output stream while computing their message digest.
+ *
+ * The wrapped output is borrowed; the digest is owned by this stream. Closing
+ * the stream closes the filter chain and finalizes the digest. The read-only
+ * digest result is available from `getDigest()` after close.
+ */
+public class MessageDigestOutputStream : public k::io::FilterOutputStream<byte> {
+private:
+    _digest : k::crypto::MessageDigest!;
+    _result : unsigned byte[]!;
+    _finalized : bool;
+
+    MessageDigestOutputStream(output: k::io::OutputStream<byte>*,
+                              digest: k::crypto::MessageDigest!)
+        : FilterOutputStream(output), _digest(digest), _result(null), _finalized(false) {}
+
+    private static _create(output: k::io::OutputStream<byte>&,
+                           digest: k::crypto::MessageDigest!) : MessageDigestOutputStream! {
+        if (digest == null) {
+            return null;
+        }
+        return new MessageDigestOutputStream(&output, digest);
+    }
+
+    _ensureWritable() {
+        if (_finalized) {
+            throw IllegalStateException();
+        }
+    }
+
+public:
+
+    /** Create a stream using the MD5 digest implementation. */
+    public static MD5(output: k::io::OutputStream<byte>&) : MessageDigestOutputStream! {
+        return _create(output, k::crypto::MessageDigest::MD5());
+    }
+
+    /** Create a stream using the SHA-1 digest implementation. */
+    public static SHA1(output: k::io::OutputStream<byte>&) : MessageDigestOutputStream! {
+        return _create(output, k::crypto::MessageDigest::SHA1());
+    }
+
+    /** Create a stream using the SHA-224 digest implementation. */
+    public static SHA224(output: k::io::OutputStream<byte>&) : MessageDigestOutputStream! {
+        return _create(output, k::crypto::MessageDigest::SHA224());
+    }
+
+    /** Create a stream using the SHA-256 digest implementation. */
+    public static SHA256(output: k::io::OutputStream<byte>&) : MessageDigestOutputStream! {
+        return _create(output, k::crypto::MessageDigest::SHA256());
+    }
+
+    /** Create a stream using the SHA-384 digest implementation. */
+    public static SHA384(output: k::io::OutputStream<byte>&) : MessageDigestOutputStream! {
+        return _create(output, k::crypto::MessageDigest::SHA384());
+    }
+
+    /** Create a stream using the SHA-512 digest implementation. */
+    public static SHA512(output: k::io::OutputStream<byte>&) : MessageDigestOutputStream! {
+        return _create(output, k::crypto::MessageDigest::SHA512());
+    }
+
+    /** Create a stream using the SHA-512/224 digest implementation. */
+    public static SHA512_224(output: k::io::OutputStream<byte>&) : MessageDigestOutputStream! {
+        return _create(output, k::crypto::MessageDigest::SHA512_224());
+    }
+
+    /** Create a stream using the SHA-512/256 digest implementation. */
+    public static SHA512_256(output: k::io::OutputStream<byte>&) : MessageDigestOutputStream! {
+        return _create(output, k::crypto::MessageDigest::SHA512_256());
+    }
+
+    /** Create a stream using the SHA3-224 digest implementation. */
+    public static SHA3_224(output: k::io::OutputStream<byte>&) : MessageDigestOutputStream! {
+        return _create(output, k::crypto::MessageDigest::SHA3_224());
+    }
+
+    /** Create a stream using the SHA3-256 digest implementation. */
+    public static SHA3_256(output: k::io::OutputStream<byte>&) : MessageDigestOutputStream! {
+        return _create(output, k::crypto::MessageDigest::SHA3_256());
+    }
+
+    /** Create a stream using the SHA3-384 digest implementation. */
+    public static SHA3_384(output: k::io::OutputStream<byte>&) : MessageDigestOutputStream! {
+        return _create(output, k::crypto::MessageDigest::SHA3_384());
+    }
+
+    /** Create a stream using the SHA3-512 digest implementation. */
+    public static SHA3_512(output: k::io::OutputStream<byte>&) : MessageDigestOutputStream! {
+        return _create(output, k::crypto::MessageDigest::SHA3_512());
+    }
+
+    /**
+     * Create a stream using an algorithm name recognized by OpenSSL.
+     *
+     * @param name algorithm name, borrowed for this call
+     * @param output wrapped output stream, borrowed by the returned stream
+     * @return the stream, or null when the digest is unavailable
+     */
+    public static fromName(name: const k::crypto::MessageDigestAlgorithm&,
+                           output: k::io::OutputStream<byte>&) : MessageDigestOutputStream! {
+        return _create(output, k::crypto::MessageDigest::fromName(name));
+    }
+
+    /**
+     * Return a read-only view of the finalized digest, or null before a
+     * successful close-time finalization.
+     */
+    public const getDigest() : const unsigned byte[]? {
+        return _result;
+    }
+
+    override write(b: byte) : k::io::OutputStream<byte>&
+            throws(k::crypto::MessageDigestException) {
+        _ensureWritable();
+        _out->write(b);
+        bytes : byte[1];
+        bytes[0] = b;
+        _digest->update(bytes, 0u, 1u);
+        return this;
+    }
+
+    override write(buf: const byte[], off: unsigned int, len: unsigned int)
+            : k::io::OutputStream<byte>& throws(k::crypto::MessageDigestException) {
+        _ensureWritable();
+        if (off > buf.size || len > buf.size - off) {
+            throw IndexOutOfBoundsError();
+        }
+        _out->write(buf, off, len);
+        _digest->update(buf, off, len);
+        return this;
+    }
+
+    override write(buf: const byte[]) : k::io::OutputStream<byte>&
+            throws(k::crypto::MessageDigestException) {
+        return write(buf, 0u, (unsigned int) buf.size);
+    }
+
+    override flush() : k::io::OutputStream<byte>& {
+        _out->flush();
+        return this;
+    }
+
+    override close() : k::io::OutputStream<byte>&
+            throws(k::crypto::MessageDigestException) {
+        if (_finalized) {
+            return this;
+        }
+
+        // Freeze before closing so failures cannot make a second close
+        // re-finalize the digest or allow further writes.
+        _finalized = true;
+        try {
+            flush();
+            _out->close();
+        } finally {
+            _result = _digest->finalize();
+        }
+        return this;
     }
 }
