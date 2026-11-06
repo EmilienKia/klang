@@ -67,7 +67,7 @@ private EVP_MD_CTX_free(ctx : EVP_MD_CTX*);
 @ffi::Extern("C")
 private EVP_DigestInit_ex(ctx : EVP_MD_CTX*, md : EVP_MD*, engine : ENGINE*) : int;
 @ffi::Extern("C")
-private EVP_DigestUpdate(ctx : EVP_MD_CTX*, data : unsigned byte*, len : unsigned int) : int;
+private EVP_DigestUpdate(ctx : EVP_MD_CTX*, data : const unsigned byte*, len : unsigned int) : int;
 @ffi::Extern("C", null, "__k_EVP_MD_CTX_get_size")
 private EVP_MD_CTX_get_size(ctx : EVP_MD_CTX*) : int; // Wrapped cause inlined in OpenSSL's libcrypto.
 @ffi::Extern("C")

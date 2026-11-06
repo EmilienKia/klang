@@ -27,6 +27,11 @@ channel callbacks, not arbitrary work on synchronous streams.
 For interruptible TCP and Unix-domain networking (`NetworkAddress`,
 `SocketChannel`, `ServerSocket`, `DatagramSocket`), see
 [Proactive Network I/O](io-network.md).
+The separately built `libk-crypto` package also provides
+`k::io::crypto::MessageDigestOutputStream`; see
+[Message Digests](crypto.md#kiocryptomessagedigestoutputstream). It hashes the
+bytes passing through its position in a stream chain, so place it next to the
+sink (after encoders or other transforms) when hashing final output bytes.
 
 The hierarchy:
 

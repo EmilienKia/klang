@@ -36,15 +36,28 @@ namespace {
 
 bool ensure_libk_crypto_loaded() {
     static void* handle = nullptr;
-    if (handle) return true;
+    static void* io_handle = nullptr;
+    if (handle && io_handle) return true;
     if (!ensure_libk_loaded()) return false;
 
-    const std::string path = std::string(LIBK_CRYPTO_LIB_DIR) + "/libk.crypto.so";
-    handle = dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL);
     if (!handle) {
-        std::cerr << "ensure_libk_crypto_loaded: cannot load " << path
-                  << ": " << dlerror() << std::endl;
-        return false;
+        const std::string path = std::string(LIBK_CRYPTO_LIB_DIR) + "/libk.crypto.so";
+        handle = dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL);
+        if (!handle) {
+            std::cerr << "ensure_libk_crypto_loaded: cannot load " << path
+                      << ": " << dlerror() << std::endl;
+            return false;
+        }
+    }
+
+    if (!io_handle) {
+        const std::string io_path = std::string(LIBK_CRYPTO_LIB_DIR) + "/libk.io.crypto.so";
+        io_handle = dlopen(io_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
+        if (!io_handle) {
+            std::cerr << "ensure_libk_crypto_loaded: cannot load " << io_path
+                      << ": " << dlerror() << std::endl;
+            return false;
+        }
     }
     return true;
 }

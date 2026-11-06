@@ -293,3 +293,222 @@ TEST_CASE("Message digest name lookup", "[crypto][digest]") {
     REQUIRE(test);
     CHECK(test() == 0);
 }
+
+TEST_CASE("MessageDigestOutputStream forwards and hashes bytes",
+          "[crypto][digest][output-stream]") {
+    auto jit = gen_jit_with_crypto(R"K(
+        module __crypto_message_digest_output_stream_test__;
+        import k::io::crypto;
+
+        hexDigit(n: unsigned int) : byte {
+            value : unsigned int = n & 0x0Fu;
+            if (value < 10u) return (byte) (((unsigned int) '0') + value);
+            return (byte) (((unsigned int) 'a') + (value - 10u));
+        }
+
+        bytesToHex(bytes: const unsigned byte[]) : String {
+            hex : unsigned byte[]! = new unsigned byte[bytes.size * 2u + 1u];
+            i : unsigned int = 0u;
+            while (i < bytes.size) {
+                value : unsigned int = ((unsigned int) bytes[i]) & 0xFFu;
+                hex[i * 2u] = (unsigned byte) hexDigit(value >> 4u);
+                hex[i * 2u + 1u] = (unsigned byte) hexDigit(value);
+                ++i;
+            }
+            hex[bytes.size * 2u] = (unsigned byte) 0;
+            result : String(hex);
+            delete hex;
+            return result;
+        }
+
+        test() : int {
+            try {
+                sink : k::io::ArrayOutputStream<byte>;
+                stream : k::io::crypto::MessageDigestOutputStream! =
+                    k::io::crypto::MessageDigestOutputStream::SHA256(sink);
+                if (stream == null) return 1;
+
+                stream.write((byte) 'a');
+                bytes : byte[]! = new byte[4u];
+                bytes[0u] = (byte) 'x';
+                bytes[1u] = (byte) 'b';
+                bytes[2u] = (byte) 'c';
+                bytes[3u] = (byte) 'y';
+                stream.write(bytes, 1u, 2u);
+                stream.close();
+
+                if (sink.size() != 3) return 2;
+                copied : byte[]! = sink.toArray();
+                if (copied[0] != (byte) 'a' || copied[1] != (byte) 'b' ||
+                    copied[2] != (byte) 'c') return 3;
+
+                digest : const unsigned byte[]? = stream.getDigest();
+                if (digest == null) return 4;
+                if (bytesToHex(digest) !=
+                    String("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")) {
+                    return 5;
+                }
+                return 0;
+            } catch (e: k::crypto::MessageDigestException&) {
+                return -1;
+            }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("MessageDigestOutputStream slice, close result, and frozen writes",
+          "[crypto][digest][output-stream]") {
+    auto jit = gen_jit_with_crypto(R"K(
+        module __crypto_message_digest_output_slice_test__;
+        import k::io::crypto;
+
+        hexDigit(n: unsigned int) : byte {
+            value : unsigned int = n & 0x0Fu;
+            if (value < 10u) return (byte) (((unsigned int) '0') + value);
+            return (byte) (((unsigned int) 'a') + (value - 10u));
+        }
+
+        bytesToHex(bytes: const unsigned byte[]) : String {
+            hex : unsigned byte[]! = new unsigned byte[bytes.size * 2u + 1u];
+            i : unsigned int = 0u;
+            while (i < bytes.size) {
+                value : unsigned int = ((unsigned int) bytes[i]) & 0xFFu;
+                hex[i * 2u] = (unsigned byte) hexDigit(value >> 4u);
+                hex[i * 2u + 1u] = (unsigned byte) hexDigit(value);
+                ++i;
+            }
+            hex[bytes.size * 2u] = (unsigned byte) 0;
+            result : String(hex);
+            delete hex;
+            return result;
+        }
+
+        test() : int {
+            try {
+                sink : k::io::ArrayOutputStream<byte>;
+                stream : k::io::crypto::MessageDigestOutputStream! =
+                    k::io::crypto::MessageDigestOutputStream::SHA256(sink);
+                source : byte[]! = new byte[5u];
+                source[0u] = (byte) 'x';
+                source[1u] = (byte) 'b';
+                source[2u] = (byte) 'c';
+                source[3u] = (byte) 'd';
+                source[4u] = (byte) 'y';
+                stream.write(source, 1u, 3u);
+                stream.close();
+                first : const unsigned byte[]? = stream.getDigest();
+                if (first == null) return 1;
+                firstText : String = bytesToHex(first);
+                if (firstText !=
+                    String("a6b0f90d2ac2b8d1f250c687301aef132049e9016df936680e81fa7bc7d81d70")) {
+                    return 2;
+                }
+
+                stream.close();
+                second : const unsigned byte[]? = stream.getDigest();
+                if (second == null || bytesToHex(second) != firstText) return 3;
+                if (sink.size() != 3) return 4;
+
+                rejected : bool = false;
+                try {
+                    stream.write((byte) '!');
+                } catch (e: IllegalStateException&) {
+                    rejected = true;
+                }
+                if (!rejected) return 5;
+
+                copied : byte[]! = sink.toArray();
+                if (copied[0] != (byte) 'b' || copied[1] != (byte) 'c' ||
+                    copied[2] != (byte) 'd') return 6;
+                return 0;
+            } catch (e: k::crypto::MessageDigestException&) {
+                return -1;
+            }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("MessageDigestOutputStream factories mirror MessageDigest",
+          "[crypto][digest][output-stream]") {
+    auto jit = gen_jit_with_crypto(R"K(
+        module __crypto_message_digest_output_factories_test__;
+        import k::io::crypto;
+
+        check(stream: k::io::crypto::MessageDigestOutputStream!)
+                : bool throws(k::crypto::MessageDigestException) {
+            if (stream == null) return false;
+            stream.close();
+            return stream.getDigest() != null;
+        }
+
+        test() : int {
+            try {
+                sink : k::io::ArrayOutputStream<byte>;
+                if (!check(k::io::crypto::MessageDigestOutputStream::MD5(sink))) return 1;
+                if (!check(k::io::crypto::MessageDigestOutputStream::SHA1(sink))) return 2;
+                if (!check(k::io::crypto::MessageDigestOutputStream::SHA224(sink))) return 3;
+                if (!check(k::io::crypto::MessageDigestOutputStream::SHA256(sink))) return 4;
+                if (!check(k::io::crypto::MessageDigestOutputStream::SHA384(sink))) return 5;
+                if (!check(k::io::crypto::MessageDigestOutputStream::SHA512(sink))) return 6;
+                if (!check(k::io::crypto::MessageDigestOutputStream::SHA512_224(sink))) return 7;
+                if (!check(k::io::crypto::MessageDigestOutputStream::SHA512_256(sink))) return 8;
+                if (!check(k::io::crypto::MessageDigestOutputStream::SHA3_224(sink))) return 9;
+                if (!check(k::io::crypto::MessageDigestOutputStream::SHA3_256(sink))) return 10;
+                if (!check(k::io::crypto::MessageDigestOutputStream::SHA3_384(sink))) return 11;
+                if (!check(k::io::crypto::MessageDigestOutputStream::SHA3_512(sink))) return 12;
+
+                name : const k::crypto::MessageDigestAlgorithm! = new String("SHA256");
+                if (!check(k::io::crypto::MessageDigestOutputStream::fromName(name, sink))) return 13;
+
+                unsupportedName : const k::crypto::MessageDigestAlgorithm! =
+                    new String("KLANG-UNSUPPORTED-DIGEST");
+                unsupported : k::io::crypto::MessageDigestOutputStream! =
+                    k::io::crypto::MessageDigestOutputStream::fromName(unsupportedName, sink);
+                if (unsupported != null) return 14;
+                return 0;
+            } catch (e: k::crypto::MessageDigestException&) {
+                return -1;
+            }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("MessageDigest const slice update checks bounds",
+          "[crypto][digest][slice]") {
+    auto jit = gen_jit_with_crypto(R"K(
+        module __crypto_message_digest_slice_bounds_test__;
+        import k::crypto;
+
+        test() : int {
+            try {
+                digest : k::crypto::MessageDigest! = k::crypto::MessageDigest::SHA256();
+                bytes : unsigned byte[]! = new unsigned byte[2u];
+                rejected : bool = false;
+                try {
+                    digest.update(bytes, 1u, 2u);
+                } catch (e: IndexOutOfBoundsError&) {
+                    rejected = true;
+                }
+                return rejected ? 0 : 1;
+            } catch (e: k::crypto::MessageDigestException&) {
+                return -1;
+            }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}

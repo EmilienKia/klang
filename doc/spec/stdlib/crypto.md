@@ -44,3 +44,27 @@ algorithm. Names and aliases are interpreted by OpenSSL.
 
 `update()` and `finalize()` report digest-operation failures with
 `MessageDigestException`.
+
+The whole-array `update(data)` API remains available. Slice overloads accept
+`const byte[]` or `const unsigned byte[]` with an offset and length; they check
+the range and update OpenSSL directly from the selected memory without making
+a temporary copy.
+
+## `k::io::crypto::MessageDigestOutputStream`
+
+This decorator is provided by the crypto library as the separate
+`k::io::crypto` module. Import `k::io::crypto` and link the `libk-crypto`
+package to use it. Its named factories and `fromName(name, output)` create an
+owned digest and wrap the supplied `k::io::OutputStream<byte>&`. The wrapped
+output is borrowed.
+
+Writes are forwarded unchanged and update the digest with the same bytes,
+including only the requested range for a bulk write. `close()` follows filter
+stream close behavior, finalizes the digest once, and freezes the stream.
+`getDigest()` returns a read-only view of the cached result after successful
+close-time finalization, or null before then. Digest failures remain
+`MessageDigestException`; writing after close throws `IllegalStateException`.
+
+The digest covers bytes that pass through the stream's position in a decorator
+chain. Place it next to the sink, downstream of encoders or other transforms,
+when the desired digest is over the final bytes written to that sink.
