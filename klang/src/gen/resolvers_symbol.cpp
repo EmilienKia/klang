@@ -23,6 +23,7 @@
 #include "../model/statements.hpp"
 #include "../model/expressions.hpp"
 #include "../errors.hpp"
+#include <optional>
 #include <queue>
 #include <unordered_set>
 namespace k::model::gen {
@@ -507,22 +508,25 @@ bool alias_target_denotes_namespace(const element& scope, const k::name& target_
             aggregate_type_resolver::resolve_struct_from(*from, name)) != nullptr;
     };
 
+    auto classify_target = [&](const std::shared_ptr<const ns>& from, const k::name& name)
+        -> std::optional<bool> {
+        auto target_ns = walk(from, name);
+        if (target_ns && target_ns->is_source_declared_namespace()) return true;
+        // KDI namespace trees can include synthetic aggregate scopes. They
+        // have no provenance in KDI, so prefer an imported aggregate over
+        // such a scope, but not over an explicit source namespace.
+        if (resolves_to_imported_aggregate(from, name)) return false;
+        if (target_ns) return true;
+        return std::nullopt;
+    };
+
     if (target_name.has_root_prefix()) {
         auto unrooted_name = target_name.without_root_prefix();
-        auto target_ns = walk(root, unrooted_name);
-        if (target_ns && target_ns->is_declared_namespace()) return true;
-        if (resolves_to_imported_aggregate(root, unrooted_name)) return false;
-        return target_ns != nullptr;
+        return classify_target(root, unrooted_name).value_or(false);
     }
 
     for (std::shared_ptr<const ns> current = enclosing; current; ) {
-        // Imported aggregates may also be materialised as namespace nodes so
-        // their qualified members can be resolved. Prefer the actual type
-        // when an alias target name identifies both representations.
-        auto target_ns = walk(current, target_name);
-        if (target_ns && target_ns->is_declared_namespace()) return true;
-        if (resolves_to_imported_aggregate(current, target_name)) return false;
-        if (target_ns) return true;
+        if (auto result = classify_target(current, target_name)) return *result;
         if (current->is_root()) break;
         current = current->parent<ns>();
     }

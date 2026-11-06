@@ -61,6 +61,8 @@ protected:
 
     /** Whether this is a source or KDI namespace rather than a synthetic lookup scope. */
     bool _declared_namespace = false;
+    /** Source declarations remain distinguishable from KDI lookup scopes. */
+    bool _source_declared_namespace = false;
 
     ns(std::shared_ptr<element> parent):
         element(parent) {}
@@ -102,6 +104,11 @@ public:
     bool is_root() const { return !!parent<unit>(); }
     bool is_declared_namespace() const { return _declared_namespace; }
     void mark_declared_namespace() { _declared_namespace = true; }
+    bool is_source_declared_namespace() const { return _source_declared_namespace; }
+    void mark_source_declared_namespace() {
+        _source_declared_namespace = true;
+        mark_declared_namespace();
+    }
 
     //
     // Children namespace manipulations
