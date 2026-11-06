@@ -65,6 +65,7 @@ When `T` is an aggregate type (`struct`/`class`), the enum is **object-backed**:
   declaration's scope.
 - The enum runtime value is still an integer index.
 - Each entry maps to one object in a static backing table.
+- Entry aliases share the same object and are visited only once in reverse lookup.
 - `E -> const T&` conversion returns a reference to the corresponding table element.
 
 ```k
@@ -76,16 +77,45 @@ struct Vec2 {
 enum Dir : Vec2 {
     UP{.x = 0, .y = 1} default;
     RIGHT{.x = 1, .y = 0};
-    DOWN;  // zero-init object
+    DOWN;  // increment the last integer field of RIGHT
 };
 ```
 
 Entry initializer forms for object-backed enums:
 
 - `NAME{ ... }` designated object initializer.
-- `NAME(args...)` constructor-style initializer.
-- `NAME()` default-construction form.
-- `NAME` implicit entry value (derived from previous entry when possible, otherwise zero-init).
+- `NAME(args...)` uses ordinary constructor overload resolution, conversions,
+  default arguments and access checks in the enum declaration's scope.
+- `NAME()` explicitly selects a zero-argument constructor; it is not `NAME`.
+- `NAME` is an implicit entry: the first is zero-initialized, and subsequent
+  entries increment the last integer field of the preceding backing value.
+
+An object-backed entry cannot use an integer value initializer such as
+`NAME = 1`. Constant tables support designated integer literal fields, trivial
+zero-initialization and supported trivial increments, including trivial struct
+bases and trivial classes with only the implicit `k::Object` base. Implicit and
+designated values do not invoke constructors. An implicit increment without
+an integer field is rejected.
+
+Enums may instead use runtime-constructed entries with explicit constructors
+and literal arguments. Supported trivial designated and implicit entries can
+also occur in a derived runtime table. Inherited slots come from the initialized
+base table, including an imported constant table; trivial backing values may be
+copied as values. Nontrivial backing types require an available copy constructor
+accepting a const reference.
+The entries are constructed once on first table access in slot order;
+aliases share their target. A failed initialization destroys the completed
+entries in reverse order, propagates the failure, and may be retried. Successfully
+initialized entries are destroyed in reverse order at module finalization.
+Imported runtime tables are accessed through their exported lazy accessor.
+Other nontrivial entry forms are diagnosed.
+
+```k
+struct Point { x : int; y : int; }
+enum Direction : Point { UP{.x = 0, .y = 1}; ZERO(); }
+// enum Bad : Point { UP(0, 1); }  // no matching constructor
+enum Label : String { HELLO("hello"); EMPTY(""); SAME = HELLO; }
+```
 
 Additional conversion rules for object-backed enums:
 

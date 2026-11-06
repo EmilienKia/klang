@@ -39,6 +39,15 @@
 
 namespace k::model::gen {
 
+inline bool is_enum_backing_const_reference(const std::shared_ptr<enum_type>& source,
+                                            const std::shared_ptr<type>& target) {
+    if (!source || !source->is_object_backed()) return false;
+    auto ref = std::dynamic_pointer_cast<reference_type>(type::remove_const(target));
+    if (!ref || !type::is_const(ref->get_subtype())) return false;
+    auto object = source->get_object_type();
+    return object && type::remove_const(ref->get_subtype()) == object;
+}
+
 /** Resolve a named ABI field against the final layout, not LLVM type identity. */
 inline std::optional<uint64_t> aggregate_field_offset(
     const aggregate& owner, const std::string& field_name,
@@ -732,17 +741,9 @@ inline llvm::ArrayType* enum_object_table_type(
 
     auto obj_type = en->get_object_type();
     if (!obj_type || !obj_type->is_resolved()) return nullptr;
-
     auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(ctx->get_llvm_type(obj_type));
     if (!llvm_st) return nullptr;
 
-    const std::string table_name = !en->get_table_symbol().empty()
-                                   ? en->get_table_symbol()
-                                   : ("__klang_enum_table_" + en->get_mangled_name() + "__");
-    if (auto* gv = ctx->module().getNamedGlobal(table_name)) {
-        en->set_table_global(gv);
-        return gv;
-    }
     size_t table_size = 0;
     for (const auto& entry : en->entries()) {
         if (entry.value >= 0)
@@ -781,6 +782,14 @@ inline llvm::GlobalVariable* ensure_enum_object_table_reference(
 
     auto* arr_ty = enum_object_table_type(en, ctx);
     if (!arr_ty) return nullptr;
+
+    const std::string table_name = !en->get_table_symbol().empty()
+                                   ? en->get_table_symbol()
+                                   : ("__klang_enum_table_" + en->get_mangled_name() + "__");
+    if (auto* gv = ctx->module().getNamedGlobal(table_name)) {
+        en->set_table_global(gv);
+        return gv;
+    }
 
     auto* gv = new llvm::GlobalVariable(
         ctx->module(),

@@ -1741,6 +1741,7 @@ TEST_CASE("import enum — local typed extension from imported typed base enum",
                 y : int;
             }
             enum Dir : Vec2 {
+                UP_ALIAS = UP;
                 UP{.x = 0, .y = 1} default;
                 RIGHT{.x = 1, .y = 0};
             }
@@ -1755,13 +1756,128 @@ TEST_CASE("import enum — local typed extension from imported typed base enum",
 
             main() : int {
                 p : const typedbase_lib::Vec2& = ExtendedDir::DOWN;
-                return p.y + ExtendedDir::DOWN;
+                q : const typedbase_lib::Vec2& = ExtendedDir::UP_ALIAS;
+                return p.y + ExtendedDir::DOWN + q.y;
             }
         )K");
 
     if (!result.out.empty()) INFO("stdout: " << result.out);
     if (!result.err.empty()) INFO("stderr: " << result.err);
-    REQUIRE( result.exit_code == 9 );  // y=7 and DOWN index=2
+    REQUIRE( result.exit_code == 10 );  // y=7, DOWN index=2, inherited y=1
+}
+
+TEST_CASE("import enum — String table and derived table access across modules",
+          "[import][e2e][import-enum][typed][runtime]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module stringenumlib;
+            enum Label : String {
+                FIRST("one");
+                ALIAS = FIRST;
+                SECOND("four");
+            }
+        )K",
+        R"K(
+            module exec_import_string_enum;
+            import stringenumlib;
+            enum Extended : stringenumlib::Label {
+                THIRD("five");
+                SAME = FIRST;
+            }
+            main() : int {
+                a : const String& = stringenumlib::Label::ALIAS;
+                b : const String& = Extended::SAME;
+                c : const String& = Extended::SECOND;
+                d : const String& = Extended::THIRD;
+                return a.size() + b.size() + c.size() + d.size() + Extended::THIRD;
+            }
+        )K");
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 16);
+}
+
+TEST_CASE("import enum — constant table inheritance preserves slots across re-export",
+          "[import][e2e][import-enum][typed][import-enum-derive][regression]") {
+    std::vector<LibSpec> libs = {
+        { R"K(
+            module constant_enum_base;
+            struct Value { x : int; y : int; }
+            enum Base : Value {
+                ALIAS = FIRST;
+                FIRST{.x = 8, .y = 13};
+                SECOND;
+                RESET();
+                AFTER;
+                LAST_ALIAS = AFTER;
+            }
+        )K" },
+        { R"K(
+            module constant_enum_mid;
+            import constant_enum_base;
+            enum Mid : constant_enum_base::Base {
+                MIDDLE{.x = 9, .y = 31};
+                NEXT;
+                OTHER_ALIAS = SECOND;
+            }
+        )K" }
+    };
+
+    auto result = build_exec_with_libs(libs, R"K(
+        module constant_enum_leaf;
+        import constant_enum_base;
+        import constant_enum_mid;
+        enum Leaf : constant_enum_mid::Mid {
+            LAST;
+            EXPLICIT{.y = 67};
+            SAME = AFTER;
+        }
+        main() : int {
+            a : const constant_enum_base::Value& = Leaf::ALIAS;
+            b : const constant_enum_base::Value& = Leaf::OTHER_ALIAS;
+            c : const constant_enum_base::Value& = Leaf::RESET;
+            d : const constant_enum_base::Value& = Leaf::SAME;
+            e : const constant_enum_base::Value& = Leaf::MIDDLE;
+            f : const constant_enum_base::Value& = Leaf::NEXT;
+            g : const constant_enum_base::Value& = Leaf::LAST;
+            h : const constant_enum_base::Value& = Leaf::EXPLICIT;
+            if (a.x != 8 || a.y != 13 || b.y != 14 || c.y != 0 || d.y != 1) return 1;
+            if (e.x != 9 || e.y != 31 || f.y != 32 || g.y != 33 || h.y != 67) return 2;
+            if (Leaf::ALIAS != 0 || Leaf::SECOND != 1 || Leaf::RESET != 2 ||
+                Leaf::AFTER != 3 || Leaf::MIDDLE != 4 || Leaf::NEXT != 5 ||
+                Leaf::LAST != 6 || Leaf::EXPLICIT != 7) return 3;
+            return 42;
+        }
+    )K");
+    INFO("stdout: " << result.out);
+    INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("import enum — constructor extension copies an imported constant table",
+          "[import][e2e][import-enum][typed][runtime][regression]") {
+    auto result = build_exec_with_lib(R"K(
+        module constant_ctor_base;
+        struct Value {
+            number : int;
+            Value(n : int) : number(n) {}
+        }
+        enum Base : Value { FIRST{.number = 17}; NEXT; }
+    )K", R"K(
+        module constant_ctor_leaf;
+        import constant_ctor_base;
+        enum Extended : constant_ctor_base::Base { THIRD(31); }
+        main() : int {
+            a : const constant_ctor_base::Value& = Extended::FIRST;
+            b : const constant_ctor_base::Value& = Extended::NEXT;
+            c : const constant_ctor_base::Value& = Extended::THIRD;
+            if (a.number != 17 || b.number != 18 || c.number != 31) return 1;
+            return Extended::THIRD + 40;
+        }
+    )K");
+    INFO("stdout: " << result.out);
+    INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

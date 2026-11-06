@@ -3198,6 +3198,15 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         effective_src = std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype();
     }
 
+    auto enum_backing_src = type::remove_const(effective_src);
+    if (type::is_reference(enum_backing_src)) {
+        enum_backing_src = type::remove_const(enum_backing_src->get_subtype());
+    }
+    if (is_enum_backing_const_reference(
+            std::dynamic_pointer_cast<enum_type>(enum_backing_src), tgt_nc)) {
+        return CAST_WIDENING;
+    }
+
     // --- Union conversion to alternative or polymorphic base ---
     {
         auto bare_src_un = type::remove_const(effective_src);
@@ -3805,7 +3814,9 @@ type_reference_resolver::get_best_matching_constructor(
         auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_STATIC_CTOR_INIT_FAILED),
             "No constructor found with {} argument(s){}",
             {std::to_string(arg_count), avail.empty() ? "" : "; available constructors have: " + avail});
+        if (failure_location) d.at(*failure_location);
         report(d);
+        if (throw_on_failure) throw resolution_error(std::move(d));
         return {nullptr, {}};
     }
 
@@ -3814,13 +3825,13 @@ type_reference_resolver::get_best_matching_constructor(
         for (auto& ctor : arity_matched) {
             if (!ctor->is_deleted()) non_deleted.push_back(ctor);
         }
-        if (failure_location) d.at(*failure_location);
         if (non_deleted.empty()) {
-        if (throw_on_failure) throw resolution_error(std::move(d));
             auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
                 "Use of deleted constructor: a constructor matching {} argument(s) exists but has been explicitly deleted with '-> delete'",
                 {std::to_string(arg_count)});
+            if (failure_location) d.at(*failure_location);
             report(d);
+            if (throw_on_failure) throw resolution_error(std::move(d));
             return {nullptr, {}};
         }
         arity_matched = std::move(non_deleted);
@@ -3829,9 +3840,7 @@ type_reference_resolver::get_best_matching_constructor(
     struct Candidate {
         std::shared_ptr<constructor> ctor;
         cast_weight score;
-            if (failure_location) d.at(*failure_location);
         size_t defaults_used;
-            if (throw_on_failure) throw resolution_error(std::move(d));
         bool is_template_instantiation;
         size_t template_specificity;
     };
@@ -3882,6 +3891,7 @@ type_reference_resolver::get_best_matching_constructor(
         auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
             "No viable constructor found: none of the {} candidate(s) accept the provided argument types",
             {std::to_string(failed_candidates.size())});
+        if (failure_location) d.at(*failure_location);
         for (auto& fc : failed_candidates) {
             std::string sig;
             bool first = true;
@@ -3891,7 +3901,6 @@ type_reference_resolver::get_best_matching_constructor(
                 first = false;
             }
             std::string failed_idxs;
-        if (failure_location) d.at(*failure_location);
             for (size_t idx : fc.failed_param_indices) {
                 if (!failed_idxs.empty()) failed_idxs += ", ";
                 failed_idxs += std::to_string(idx);
@@ -3899,6 +3908,7 @@ type_reference_resolver::get_best_matching_constructor(
             d.add_note("candidate constructor({}) — cannot implicitly cast argument(s) at position(s): {}", {sig, failed_idxs});
         }
         report(d);
+        if (throw_on_failure) throw resolution_error(std::move(d));
         return {nullptr, {}};
     }
 
@@ -3908,7 +3918,6 @@ type_reference_resolver::get_best_matching_constructor(
     bool best_is_template_instantiation = true;
     bool have_best = false;
     for (auto& cand : valid_candidates) {
-        if (throw_on_failure) throw resolution_error(std::move(d));
         if (cand.score < best_score ||
             (cand.score == best_score && cand.defaults_used < best_defaults)) {
             best_score = cand.score;

@@ -986,6 +986,15 @@ type_reference_resolver::adapt_from_reference(
         auto tgt_sub = tgt_ref->get_referenced_type();
         auto src_sub_nc = type::remove_const(src_sub);
         auto tgt_sub_nc = type::remove_const(tgt_sub);
+        if (is_enum_backing_const_reference(
+                std::dynamic_pointer_cast<enum_type>(src_sub_nc), type_nc)) {
+            auto parent = expr->parent<element>();
+            auto loaded = adapt_reference_load_value(expr);
+            if (!loaded) return {};
+            auto adapted = adapt_enum_type(loaded, type_nc);
+            if (adapted) adapted->set_parent(parent);
+            return adapted;
+        }
         // Exact match: ref<T> → ref<T> (structural equality, not just pointer identity)
         if (type::are_equal(src_sub_nc, tgt_sub_nc) && type::is_const(src_sub) == type::is_const(tgt_sub)) {
             return expr;
@@ -1216,26 +1225,11 @@ type_reference_resolver::adapt_enum_type(
     // Step 3: enum → underlying primitive or vice versa: cast_expression
     // enum → primitive int: implicit (use underlying type)
     if (enum_src && !enum_tgt) {
-        // ── Object-backed enum → const struct reference: GEP into backing table ──
-        // Check if target is a reference (or const reference) to the backing object type
-        if (enum_src->is_object_backed()) {
-            auto obj_type = enum_src->get_object_type();
-            auto tgt_ref = std::dynamic_pointer_cast<reference_type>(type_nc);
-            if (!tgt_ref) {
-                // Also check const_type wrapping a reference (const E &)
-                if (auto tgt_const = std::dynamic_pointer_cast<const_type>(type_nc)) {
-                    tgt_ref = std::dynamic_pointer_cast<reference_type>(tgt_const->get_subtype());
-                }
-            }
-            if (tgt_ref && obj_type) {
-                auto ref_inner_nc = type::remove_const(tgt_ref->get_subtype());
-                if (ref_inner_nc == obj_type) {
-                    // Cast: object-backed enum → const T& (backed by table GEP)
-                    auto cast = cast_expression::make_shared(expr, type_nc);
-                    cast->set_type(type_nc);
-                    return cast;
-                }
-            }
+        // Object-backed enum → const T&: reference the table entry.
+        if (is_enum_backing_const_reference(enum_src, type_nc)) {
+            auto cast = cast_expression::make_shared(expr, type_nc);
+            cast->set_type(type_nc);
+            return cast;
         }
 
         auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type_nc);

@@ -953,12 +953,21 @@ namespace k::model {
             en->set_documentation(doc::build_typed_doc<doc::enum_doc>(en, *decl.doc));
         }
 
-        // Resolve visibility
+        // Per-element visibility overrides the enclosing visibility group.
+        model::visibility vis = model::PUBLIC;
         if (auto vctx = current_context<visibility_context>()) {
             if (vctx->visibility != model::DEFAULT) {
-                en->set_visibility(vctx->visibility);
+                vis = vctx->visibility;
             }
         }
+        if (lex::keyword::has(decl.specifiers, lex::keyword::PUBLIC)) {
+            vis = model::PUBLIC;
+        } else if (lex::keyword::has(decl.specifiers, lex::keyword::PROTECTED)) {
+            vis = model::PROTECTED;
+        } else if (lex::keyword::has(decl.specifiers, lex::keyword::PRIVATE)) {
+            vis = model::PRIVATE;
+        }
+        en->set_visibility(vis);
 
         // Store base enum name if present (resolution deferred to symbol_resolver)
         if (decl.base_name.has_value()) {
@@ -986,6 +995,8 @@ namespace k::model {
             enum_raw_entry_def re;
             re.name = std::string{ast_entry->name.content};
             re.is_default = ast_entry->is_default;
+            re.has_paren_init = ast_entry->has_paren_initializer();
+            re.ast_entry = ast_entry;
 
             if (re.is_default) {
                 if (has_explicit_default) {
@@ -995,8 +1006,6 @@ namespace k::model {
             }
 
             if (ast_entry->literal_value.has_value()) {
-            re.has_paren_init = ast_entry->has_paren_initializer();
-            re.ast_entry = ast_entry;
                 auto& lit = *ast_entry->literal_value;
                 if (lit.index() == lex::any_literal_type_index::INTEGER) {
                     auto& int_lit = lit.get<lex::integer>();

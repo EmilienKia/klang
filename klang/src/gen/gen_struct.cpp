@@ -1927,6 +1927,28 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
             auto obj_agg = aliased_object_type
                 ? aliased_object_type->get_struct()
                 : scope_lookup::lookup_structure(en.shared_as<element>(), base_name_str);
+            if (!obj_agg && !aliased_object_type && base_name.size() == 1
+                && !base_name.has_root_prefix()) {
+                // Imported aggregates live in their module namespace, not the
+                // consumer's lexical aggregate chain. Do not bypass a namespace.
+                bool names_namespace = false;
+                for (auto current = en.shared_as<const element>(); current;
+                     current = current->parent<const element>()) {
+                    if (auto scope = std::dynamic_pointer_cast<const ns>(current)) {
+                        auto child = scope->get_child_namespace(base_name.front());
+                        if (child && child->is_declared_namespace()) {
+                            names_namespace = true;
+                            break;
+                        }
+                    }
+                    if (scope_lookup::is_definition_namespace_boundary(*current)) break;
+                }
+                if (!names_namespace) {
+                    base_en = _unit.get_or_create_imported_enum(base_name, _context);
+                    if (!base_en)
+                        obj_agg = _unit.get_or_create_imported_aggregate(base_name, _context);
+                }
+            }
             if (!obj_agg && base_name_str.find("::") != std::string::npos) {
                 // Also try via qualified name resolution
                 std::vector<std::string> parts;
@@ -1945,12 +1967,13 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
                 en.set_object_type(aliased_object_type ? aliased_object_type : obj_agg->get_struct_type());
                 // Object-backed enums have no base enum (derivation not supported)
                 // Fall through to entry resolution below (index assignment)
-            } else {
+            } else if (!base_en) {
                 throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_ENTRY_NOT_FOUND), en_lexeme,
                     "Enum '{}': base enum or underlying type '{}' not found",
                     {en.get_short_name(), base_name_str});
             }
-        } else {
+        }
+        if (base_en) {
             // Step 2: Determine the underlying type (explicit or inherited from base)
             // Recursively resolve the base if it hasn't been resolved yet
             resolve_enumeration(*base_en);
@@ -1979,6 +2002,8 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
         std::shared_ptr<k::parse::ast::brace_init_list> brace_init;
         // For object-backed entries: constructor args for `ENTRY(...)`
         std::vector<std::shared_ptr<expression>> ctor_args;
+        bool has_paren_init = false;
+        std::shared_ptr<k::parse::ast::enum_entry> ast_entry;
         // For implicitly incremented object-backed entries
         bool is_implicit_increment = false;
         // True for alias entries (`ENTRY = OTHER`).
@@ -1999,11 +2024,11 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
             we.is_default = be.is_default;
             we.brace_init = be.brace_init;
             we.ctor_args = be.ctor_args;
+            we.has_paren_init = be.has_paren_init;
+            we.ast_entry = be.ast_entry;
             we.is_implicit_increment = be.is_implicit_increment;
             we.is_alias = be.is_alias;
             work.push_back(std::move(we));
-        bool has_paren_init = false;
-        std::shared_ptr<k::parse::ast::enum_entry> ast_entry;
         }
     }
 
@@ -2014,9 +2039,18 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
         we.name = re.name;
         we.from_base = false;
         we.is_default = re.is_default;
+        we.ast_entry = re.ast_entry;
+        we.has_paren_init = re.has_paren_init;
 
         if (en.is_object_backed()) {
             // Object-backed entries keep rich initializer shape for table construction.
+            if (re.explicit_value) {
+                lex::opt_any_lexeme entry_lexeme = re.ast_entry
+                    ? lex::opt_any_lexeme{lex::any_lexeme{re.ast_entry->name}} : en_lexeme;
+                throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_OBJECT_VALUE_INITIALIZER),
+                    entry_lexeme, "Object-backed enum entry '{}' cannot use an integer value initializer",
+                    {re.name});
+            }
             we.brace_init = re.brace_init;
             we.ctor_args = re.ctor_args;
             if (!re.ref_name.empty()) {
@@ -2024,8 +2058,6 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
                 we.is_alias = true;
             }
         } else {
-            we.has_paren_init = be.has_paren_init;
-            we.ast_entry = be.ast_entry;
             if (re.explicit_value.has_value()) {
                 we.has_literal = true;
                 we.literal_value = *re.explicit_value;
@@ -2039,18 +2071,9 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
         if (en.has_base()) {
             for (size_t i = 0; i < local_start; ++i) {
                 if (work[i].name == we.name) {
-        we.ast_entry = re.ast_entry;
-        we.has_paren_init = re.has_paren_init;
                     warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_ENUM_ENTRY_SHADOW), en_lexeme,
                         "Enum '{}': entry '{}' shadows an inherited entry from base enum '{}'",
                         {en.get_short_name(), we.name, en.get_base()->get_short_name()});
-            if (re.explicit_value) {
-                lex::opt_any_lexeme entry_lexeme = re.ast_entry
-                    ? lex::opt_any_lexeme{lex::any_lexeme{re.ast_entry->name}} : en_lexeme;
-                throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_OBJECT_VALUE_INITIALIZER),
-                    entry_lexeme, "Object-backed enum entry '{}' cannot use an integer value initializer",
-                    {re.name});
-            }
                     break;
                 }
             }
@@ -2063,6 +2086,10 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
         // Assign indices to non-alias entries first.
         int64_t next_index = 0;
         for (auto& we : work) {
+            if (we.from_base) {
+                next_index = std::max(next_index, we.resolved_value + 1);
+                continue;
+            }
             if (we.is_alias) continue;
             we.resolved = true;
             we.resolved_value = next_index++;
@@ -2093,11 +2120,10 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
             }
         }
 
-        // Mark implicit entries (non-alias entries without explicit init and not first effective entry).
-        for (size_t i = 1; i < work.size(); ++i) {
-            auto& we = work[i];
-            if (we.is_alias) continue;
-            if (we.brace_init || !we.ctor_args.empty()) continue;
+        // The first backing slot can follow aliases in declaration order.
+        for (auto& we : work) {
+            if (we.from_base || we.is_alias || we.resolved_value == 0) continue;
+            if (we.brace_init || we.has_paren_init) continue;
             we.is_implicit_increment = true;
         }
     } else {

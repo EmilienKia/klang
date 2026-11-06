@@ -592,17 +592,19 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
 
                     auto en = enum_tgt->get_enumeration();
                     if (!en) return;
-                    auto* table_gv = ensure_enum_object_table_reference(en, _context);
-                    if (!table_gv) return;
-
-                    auto* arr_ty = llvm::dyn_cast<llvm::ArrayType>(table_gv->getValueType());
+                    auto* accessor = ensure_enum_object_table_accessor_reference(en, _context);
+                    auto* table_gv = accessor ? nullptr : ensure_enum_object_table_reference(en, _context);
+                    auto* arr_ty = enum_object_table_type(en, _context);
                     auto* llvm_st = arr_ty ? llvm::dyn_cast<llvm::StructType>(arr_ty->getElementType()) : nullptr;
                     auto* tgt_int_ty = llvm::dyn_cast_or_null<llvm::IntegerType>(enum_tgt->get_llvm_type());
-                    if (!arr_ty || !llvm_st || !tgt_int_ty) return;
+                    if (!arr_ty || !llvm_st || !tgt_int_ty || (!accessor && !table_gv)) return;
 
                     llvm::Value* src_ptr = _value;
                     // Symbol values for non-reference structs are addresses already; cast expressions may also provide pointers.
                     if (!src_ptr->getType()->isPointerTy()) return;
+                    llvm::Value* table_ptr = table_gv;
+                    if (accessor)
+                        table_ptr = create_call_or_invoke(accessor->getFunctionType(), accessor, {}, "enum_table");
 
                     auto* cur_fn = _builder->GetInsertBlock()->getParent();
                     auto* i1_ty = llvm::Type::getInt1Ty(_builder->getContext());
@@ -628,14 +630,14 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                         static_cast<uint64_t>(default_entry.value),
                         default_entry.value < 0);
 
-                    for (size_t i = 0; i < en->entries().size(); ++i) {
+                    for (size_t i = 0; i < arr_ty->getNumElements(); ++i) {
                         llvm::Value* indices[] = {
                             llvm::ConstantInt::get(llvm::Type::getInt64Ty(_builder->getContext()), 0),
                             llvm::ConstantInt::get(llvm::Type::getInt64Ty(_builder->getContext()), i)
                         };
                         auto* table_elem_ptr = _builder->CreateInBoundsGEP(
                             arr_ty,
-                            table_gv,
+                            table_ptr,
                             llvm::ArrayRef<llvm::Value*>(indices),
                             "enum_obj_tbl_elem");
 
@@ -724,17 +726,19 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                     expr.sub_expr()->accept(*this);
                     if (!_value) return;
 
-                    // Get the backing table global
                     auto en = enum_src->get_enumeration();
                     if (!en) return;
-                    auto* table_gv = ensure_enum_object_table_reference(en, _context);
-                    if (!table_gv) return;
-                    auto* arr_ty = llvm::dyn_cast<llvm::ArrayType>(
-                        table_gv->getValueType());
-                    if (!arr_ty) return;
+                    auto* accessor = ensure_enum_object_table_accessor_reference(en, _context);
+                    auto* table_gv = accessor ? nullptr : ensure_enum_object_table_reference(en, _context);
+                    auto* arr_ty = enum_object_table_type(en, _context);
+                    if (!arr_ty || (!accessor && !table_gv)) return;
+                    auto* index = _value;
+                    llvm::Value* table_ptr = table_gv;
+                    if (accessor)
+                        table_ptr = create_call_or_invoke(accessor->getFunctionType(), accessor, {}, "enum_table");
 
                     // Zero-extend the index to i64 for GEP
-                    auto* idx_i64 = _builder->CreateZExt(_value,
+                    auto* idx_i64 = _builder->CreateZExt(index,
                         llvm::Type::getInt64Ty(_builder->getContext()),
                         "enum_tbl_idx");
 
@@ -745,7 +749,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                     };
                     _value = _builder->CreateInBoundsGEP(
                         arr_ty,
-                        table_gv,
+                        table_ptr,
                         llvm::ArrayRef<llvm::Value*>(indices),
                         "enum_tbl_elem");
 
