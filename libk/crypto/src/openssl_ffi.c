@@ -21,6 +21,10 @@
 
 #include <openssl/evp.h>
 
+EVP_MD* __k_EVP_MD_fetch(const unsigned char* name) {
+    return EVP_MD_fetch(NULL, (const char*)name, NULL);
+}
+
 // Wrap of inlined EVP_MD_CTX_get_size(...).
 int __k_EVP_MD_CTX_get_size(EVP_MD_CTX* ctx) {
     return EVP_MD_CTX_size(ctx);

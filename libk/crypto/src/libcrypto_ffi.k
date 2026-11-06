@@ -30,6 +30,10 @@ private struct ENGINE {}
 private struct EVP_MD {}
 private struct EVP_MD_CTX {}
 
+@ffi::Extern("C")
+private __k_EVP_MD_fetch(name : const unsigned byte*) : EVP_MD*;
+@ffi::Extern("C")
+private EVP_MD_free(md : EVP_MD*);
 
 @ffi::Extern("C")
 private EVP_md5() : EVP_MD*;
