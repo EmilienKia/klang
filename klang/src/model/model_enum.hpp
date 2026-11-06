@@ -28,6 +28,12 @@ struct enum_entry_def {
     std::shared_ptr<k::parse::ast::brace_init_list> brace_init;
     /** For object-backed enums: constructor-style args for `ENTRY(...)` initializers. */
     std::vector<std::shared_ptr<expression>> ctor_args;
+    /** Selected constructor and its adapted arguments, retained for table construction. */
+    std::shared_ptr<constructor> resolved_constructor;
+    std::vector<std::shared_ptr<expression>> adapted_ctor_args;
+    /** Distinguishes `ENTRY()` from a bare entry. */
+    bool has_paren_init = false;
+    std::shared_ptr<k::parse::ast::enum_entry> ast_entry;
     /** For object-backed enums: true if this entry is implicitly incremented from the previous one. */
     bool is_implicit_increment = false;
     /** True when this entry aliases another entry (shares its backing-table slot). */
@@ -47,6 +53,8 @@ struct enum_raw_entry_def {
     std::shared_ptr<k::parse::ast::brace_init_list> brace_init;
     /** Constructor-style args for object-backed enum entries (e.g. `ENTRY(1, 2)`). */
     std::vector<std::shared_ptr<expression>> ctor_args;
+    bool has_paren_init = false;
+    std::shared_ptr<k::parse::ast::enum_entry> ast_entry;
 };
 
 /**
@@ -82,10 +90,13 @@ protected:
     std::shared_ptr<primitive_type> _explicit_underlying_type;
     /** Non-null for object-backed typed enums: the struct_type of the backing object. */
     std::shared_ptr<struct_type> _object_type;
-    /** LLVM global constant array for object-backed typed enums: `[N x StructType]`. */
+    /** LLVM array storage for object-backed typed enums: `[N x StructType]`. */
     llvm::GlobalVariable* _table_global = nullptr;
-    /** Canonical LLVM symbol name for the object-backed enum table. */
+    llvm::Function* _table_accessor = nullptr;
+    /** Exported constant-table symbol or runtime table accessor symbol. */
     std::string _table_symbol;
+    bool _runtime_table = false;
+    bool _imported = false;
     visibility _visibility = PUBLIC;
 
     /** Optional base enum name (unresolved, from AST). */
@@ -98,6 +109,8 @@ protected:
     bool _resolved = false;
     /** True while this enum is being resolved (for cycle detection). */
     bool _resolving = false;
+    bool _initializer_symbols_resolved = false;
+    bool _initializers_resolved = false;
 
     enumeration(std::shared_ptr<element> parent)
         : element(parent) {}
@@ -114,8 +127,20 @@ public:
                    std::shared_ptr<k::parse::ast::brace_init_list> brace_init = nullptr,
                    std::vector<std::shared_ptr<expression>> ctor_args = {},
                    bool is_implicit_increment = false,
-                   bool is_alias = false) {
-        _entries.push_back({name, value, is_default, std::move(brace_init), std::move(ctor_args), is_implicit_increment, is_alias});
+                   bool is_alias = false,
+                   bool has_paren_init = false,
+                   std::shared_ptr<k::parse::ast::enum_entry> ast_entry = nullptr) {
+        enum_entry_def entry;
+        entry.name = name;
+        entry.value = value;
+        entry.is_default = is_default;
+        entry.brace_init = std::move(brace_init);
+        entry.ctor_args = std::move(ctor_args);
+        entry.has_paren_init = has_paren_init;
+        entry.ast_entry = std::move(ast_entry);
+        entry.is_implicit_increment = is_implicit_increment;
+        entry.is_alias = is_alias;
+        _entries.push_back(std::move(entry));
     }
 
     std::optional<enum_entry_def> get_entry_by_name(const std::string& name) const {
@@ -148,14 +173,20 @@ public:
     std::shared_ptr<struct_type> get_object_type() const { return _object_type; }
     void set_object_type(std::shared_ptr<struct_type> st) { _object_type = std::move(st); }
 
-    /** LLVM global constant array used at runtime for object-backed enums. */
+    /** LLVM backing storage used at runtime for object-backed enums. */
     llvm::GlobalVariable* get_table_global() const { return _table_global; }
+    llvm::Function* get_table_accessor() const { return _table_accessor; }
+    void set_table_accessor(llvm::Function* fn) { _table_accessor = fn; }
     void set_table_global(llvm::GlobalVariable* gv) {
         _table_global = gv;
         if (gv) _table_symbol = gv->getName().str();
     }
     const std::string& get_table_symbol() const { return _table_symbol; }
     void set_table_symbol(std::string symbol) { _table_symbol = std::move(symbol); }
+    bool has_runtime_table() const { return _runtime_table; }
+    void set_runtime_table(bool value) { _runtime_table = value; }
+    bool is_imported() const { return _imported; }
+    void set_imported(bool value) { _imported = value; }
 
     visibility get_visibility() const { return _visibility; }
     void set_visibility(visibility v) { _visibility = v; }
@@ -178,7 +209,9 @@ public:
     }
 
     const std::vector<enum_raw_entry_def>& raw_entries() const { return _raw_entries; }
-    void add_raw_entry(const enum_raw_entry_def& e) { _raw_entries.push_back(e); }
+    void add_raw_entry(const enum_raw_entry_def& e);
+    void attach_initializer_arguments(const std::vector<std::shared_ptr<expression>>& args);
+    void attach_adapted_initializer_arguments(const enum_entry_def& entry);
 
     bool is_resolved() const { return _resolved; }
     void set_resolved(bool v) { _resolved = v; }

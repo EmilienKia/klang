@@ -34,6 +34,8 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/ADT/ScopeExit.h>
+#include <llvm/Transforms/Utils/ModuleUtils.h>
 
 #include <limits>
 #include <queue>
@@ -42,6 +44,95 @@
 #include "../errors.hpp"
 
 namespace k::model::gen {
+
+namespace {
+const base_spec* enum_implicit_object_base(const std::shared_ptr<aggregate>& agg) {
+    if (!agg || !agg->is_class() || agg->is_inner()) return nullptr;
+    auto ast = agg->get_ast_aggregate_decl();
+    if (!ast || !ast->bases.empty() || agg->get_bases().size() != 1) return nullptr;
+    const auto& base = agg->get_bases().front();
+    return base.base && base.base->get_name().without_root_prefix().to_string() == "k::Object"
+        && !base.is_virtual ? &base : nullptr;
+}
+
+bool enum_constant_safe_type(const std::shared_ptr<type>& source, bool nested = false) {
+    auto t = type::canonical(type::remove_const(source));
+    if (!t || type::is_owner(t) || type::is_drain(t)
+        || type::is_reference(t) || type::is_link(t)) return false;
+    if (auto array = std::dynamic_pointer_cast<sized_array_type>(t))
+        return enum_constant_safe_type(array->get_subtype(), true);
+    auto st = std::dynamic_pointer_cast<struct_type>(t);
+    if (!st) return true;
+    auto agg = st->get_struct();
+    if (!agg) return false;
+    const auto* object_base = enum_implicit_object_base(agg);
+    if (nested && object_base) return false;
+    if (agg->has_bases() && !object_base) {
+        if (!agg->is_struct()) return false;
+        for (const auto& base : agg->get_bases()) {
+            if (!base.base || base.is_virtual || !base.base->is_struct()
+                || !enum_constant_safe_type(base.base->get_struct_type(), true)) return false;
+        }
+    }
+    auto dtor = agg->get_destructor();
+    if (dtor && !dtor->is_compiler_generated()) return false;
+    auto copy = agg->get_copy_constructor();
+    if (copy && !copy->is_compiler_generated()) return false;
+    if (nested) {
+        const auto& ctors = agg->constructors();
+        if (std::none_of(ctors.begin(), ctors.end(), [](const auto& ctor) {
+                return ctor && ctor->is_compiler_generated() && !ctor->is_deleted()
+                    && ctor->parameters().empty();
+            })) return false;
+    }
+    auto trivial_base_field = [&](const std::string& name) {
+        return !object_base && std::any_of(agg->get_bases().begin(), agg->get_bases().end(),
+            [&](const auto& base) { return name == "__base_" + base.sanitised_name() + "__"; });
+    };
+    for (auto it = st->fields_begin(); it != st->fields_end(); ++it) {
+        if (it->name.rfind("__", 0) == 0 &&
+            (!object_base ||
+             (it->name != "__vptr__" && it->name != "__base_Object__")) &&
+            !trivial_base_field(it->name)) return false;
+    }
+    for (const auto& [name, var] : agg->variables()) {
+        auto member = std::dynamic_pointer_cast<member_variable_definition>(var);
+        if (!member) continue;
+        if (object_base &&
+            (name == "__vptr__" || name == "__base_Object__")) continue;
+        auto init = member->get_init_expr();
+        auto default_init = std::dynamic_pointer_cast<constructor_invocation_expression>(init);
+        if (init && (!default_init || !default_init->empty())) return false;
+        if (!enum_constant_safe_type(member->get_type(), true)) return false;
+    }
+    return true;
+}
+
+bool enum_runtime_literal_argument(std::shared_ptr<expression> arg) {
+    while (auto cast = std::dynamic_pointer_cast<cast_expression>(arg))
+        arg = cast->sub_expr();
+    auto value = std::dynamic_pointer_cast<value_expression>(arg);
+    return value && value->is_literal();
+}
+
+bool enum_entry_requires_runtime_table(const enum_entry_def& entry,
+                                       const std::shared_ptr<type>& object_type) {
+    return !entry.is_alias && entry.has_paren_init &&
+        (!entry.resolved_constructor || !entry.resolved_constructor->is_compiler_generated()
+         || !entry.adapted_ctor_args.empty() || !enum_constant_safe_type(object_type));
+}
+
+bool enum_requires_runtime_table(const enumeration& en) {
+    if (en.is_imported()) return en.has_runtime_table();
+    if (auto base = en.get_base(); base && (base->is_imported() || enum_requires_runtime_table(*base)))
+        return true;
+    const size_t inherited = en.get_base() ? en.get_base()->entries().size() : 0;
+    return std::any_of(en.entries().begin() + inherited, en.entries().end(),
+        [&](const enum_entry_def& entry) {
+            return enum_entry_requires_runtime_table(entry, en.get_object_type());
+        });
+}
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared annotation resolution & @Target validation
@@ -985,95 +1076,137 @@ void declaration_generator::visit_aggregate(aggregate& st) {
 // declaration_generator::visit_enumeration
 // -----------------------------------------
 // For integer enums, there are no LLVM-level declarations to emit.
-// For object-backed typed enums, emits a `[N x StructType]` global constant array
-// that serves as the backing table for runtime `E → const T&` conversions.
+// For object-backed typed enums, emits a backing array and, when construction
+// is required, a lazy accessor for runtime `E → const T&` conversions.
 void declaration_generator::visit_enumeration(enumeration& en) {
     if (!en.is_resolved() || !en.is_object_backed()) return;
+    if (en.get_table_global() || en.is_imported()) return;
+    if (auto base = en.get_base(); base && !base->is_imported() && !base->get_table_global())
+        visit_enumeration(*base);
 
     auto obj_type = en.get_object_type();
-    if (!obj_type || !obj_type->is_resolved()) return;
+    if (!obj_type || !obj_type->is_resolved()) {
+        throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER),
+            en.get_interest_lexeme(), "Cannot build enum '{}' backing table: unresolved backing type",
+            {en.get_short_name()});
+    }
 
     auto* llvm_st = llvm::dyn_cast_or_null<llvm::StructType>(
         _context->get_llvm_type(obj_type));
-    if (!llvm_st) return;
+    if (!llvm_st) {
+        throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER),
+            en.get_interest_lexeme(), "Cannot build enum '{}' backing table: missing aggregate layout",
+            {en.get_short_name()});
+    }
+    if (llvm_st->isOpaque()) {
+        throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER),
+            en.get_interest_lexeme(), "Cannot build enum '{}' backing table: incomplete aggregate layout",
+            {en.get_short_name()});
+    }
 
-    auto& llvm_ctx = _context->module().getContext();
-
-    auto extract_i64_from_model_expr = [](const std::shared_ptr<expression>& expr) -> std::optional<int64_t> {
-        auto val = std::dynamic_pointer_cast<value_expression>(expr);
-        if (!val || !val->is_literal()) return std::nullopt;
-        const auto& any = val->any_literal();
-        if (any.index() != lex::any_literal_type_index::INTEGER) return std::nullopt;
-        return static_cast<int64_t>(any.get<lex::integer>().to_unsigned_int());
+    auto reject_initializer = [&](const enum_entry_def& entry, const std::string& reason) {
+        auto location = entry.ast_entry
+            ? lex::opt_any_lexeme{lex::any_lexeme{entry.ast_entry->name}}
+            : en.get_interest_lexeme();
+        throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER),
+            location, "Cannot build backing table for enum entry '{}': {}", {entry.name, reason});
     };
 
-    // Helper: build a constant struct from enum entry explicit init (designated or ctor-args).
+    auto aggregate = obj_type->get_struct();
+    if (enum_implicit_object_base(aggregate) &&
+        (!obj_type->get_member("__vptr__") || !obj_type->get_member("__base_Object__"))) {
+        throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER),
+            en.get_interest_lexeme(), "Cannot build enum '{}' backing table: incomplete class layout",
+            {en.get_short_name()});
+    }
+    auto zero_default_supported = [&] { return enum_constant_safe_type(obj_type); };
+
+    // Only the existing literal designated form can be represented as a constant.
     auto build_entry_constant = [&](const enum_entry_def& entry) -> llvm::Constant* {
-        // Start with all-zero fields
+        if (entry.has_paren_init &&
+            (!entry.resolved_constructor || !entry.resolved_constructor->is_compiler_generated()
+             || !entry.adapted_ctor_args.empty() || !zero_default_supported())) {
+            reject_initializer(entry, "constructor execution requires runtime table initialization");
+        }
+        if (!entry.brace_init && !entry.has_paren_init) {
+            if (!zero_default_supported())
+                reject_initializer(entry, "implicit initialization requires runtime table initialization");
+        }
+        if (entry.brace_init && !zero_default_supported())
+            reject_initializer(entry, "this designated value requires runtime table initialization");
+        if (entry.brace_init && !entry.brace_init->is_designated)
+            reject_initializer(entry, "only designated integer literal initializers are supported");
+
+        // Class dispatch pointers must refer to the same tables as a constructed object.
         std::vector<llvm::Constant*> field_values;
         for (auto it = obj_type->fields_begin(); it != obj_type->fields_end(); ++it) {
+            if (it->index >= llvm_st->getNumElements())
+                reject_initializer(entry, "backing field has no LLVM layout");
+            auto* field_llvm_type = llvm_st->getElementType(it->index);
+            if (auto base = enum_implicit_object_base(aggregate);
+                base && (it->name == "__vptr__" || it->name == "__base_Object__")) {
+                auto cls = std::dynamic_pointer_cast<klass>(aggregate);
+                auto vt = cls ? cls->get_vtable() : nullptr;
+                if (!vt || !vt->llvm_global)
+                    reject_initializer(entry, "class vtable is unavailable for constant initialization");
+                if (it->name == "__vptr__") {
+                    if (!field_llvm_type->isPointerTy())
+                        reject_initializer(entry, "invalid class vtable field");
+                    field_values.push_back(vt->llvm_global);
+                } else {
+                    auto* base_type = llvm::dyn_cast<llvm::StructType>(field_llvm_type);
+                    if (!base_type || base_type->isOpaque() || base_type->getNumElements() != 1
+                        || !base_type->getElementType(0)->isPointerTy())
+                        reject_initializer(entry, "unsupported Object base layout");
+                    llvm::GlobalVariable* base_vtable = nullptr;
+                    for (const auto& [base_agg, secondary] : cls->get_secondary_vtables()) {
+                        if (base_agg == base->base && secondary) {
+                            base_vtable = secondary->llvm_global;
+                            break;
+                        }
+                    }
+                    if (!base_vtable)
+                        reject_initializer(entry, "Object base vtable is unavailable for constant initialization");
+                    field_values.push_back(llvm::ConstantStruct::get(base_type, {base_vtable}));
+                }
+                continue;
+            }
             auto ft = it->field_type.lock();
             if (ft && ft->get_llvm_type()) {
                 field_values.push_back(llvm::Constant::getNullValue(ft->get_llvm_type()));
             } else {
-                field_values.push_back(llvm::ConstantInt::get(llvm::Type::getInt32Ty(llvm_ctx), 0));
+                reject_initializer(entry, "backing field has no LLVM type");
             }
         }
 
         if (entry.brace_init && entry.brace_init->is_designated) {
+            std::unordered_set<size_t> initialized_fields;
             for (auto& elem : entry.brace_init->elements) {
-                if (!elem) continue;
+                if (!elem) reject_initializer(entry, "invalid designated initializer");
                 auto desig = std::dynamic_pointer_cast<k::parse::ast::designated_init_element>(elem);
-                if (!desig || desig->is_call_form) continue;
+                if (!desig || desig->is_call_form)
+                    reject_initializer(entry, "only designated integer literal initializers are supported");
 
                 std::string field_name{desig->member_name.content};
                 auto field_opt = obj_type->get_member(field_name);
-                if (!field_opt) continue;
+                if (!field_opt) reject_initializer(entry, "unknown designated field");
                 size_t field_idx = field_opt->index;
+                if (field_idx >= field_values.size()) reject_initializer(entry, "invalid designated field");
+                if (!initialized_fields.insert(field_idx).second)
+                    reject_initializer(entry, "duplicate designated field");
 
                 // Evaluate the value expression — only integer literals are supported for constants
                 auto lit = std::dynamic_pointer_cast<k::parse::ast::literal_expr>(desig->value);
-                if (!lit) continue;
+                if (!lit) reject_initializer(entry, "designated field value is not an integer literal");
                 auto& any_lit = lit->literal;
-                if (any_lit.index() != lex::any_literal_type_index::INTEGER) continue;
+                if (any_lit.index() != lex::any_literal_type_index::INTEGER)
+                    reject_initializer(entry, "designated field value is not an integer literal");
                 auto& int_lit = any_lit.get<lex::integer>();
                 auto ft = field_opt->field_type.lock();
-                if (ft && ft->get_llvm_type()) {
-                    field_values[field_idx] = llvm::ConstantInt::get(
-                        ft->get_llvm_type(),
-                        int_lit.to_unsigned_int());
-                }
-            }
-        } else if (!entry.ctor_args.empty()) {
-            // Constructor-form fallback: map integer literal args to user fields in declaration order.
-            std::vector<size_t> user_int_fields;
-            for (auto it = obj_type->fields_begin(); it != obj_type->fields_end(); ++it) {
-                if (it->name.rfind("__", 0) == 0) continue;
-                auto ft = it->field_type.lock();
-                auto* llvm_ft = ft ? ft->get_llvm_type() : nullptr;
-                if (llvm_ft && llvm_ft->isIntegerTy()) {
-                    user_int_fields.push_back(it->index);
-                }
-            }
-
-            const size_t assign_n = std::min(user_int_fields.size(), entry.ctor_args.size());
-            for (size_t i = 0; i < assign_n; ++i) {
-                auto lit_opt = extract_i64_from_model_expr(entry.ctor_args[i]);
-                if (!lit_opt.has_value()) continue;
-
-                size_t field_idx = user_int_fields[i];
-                auto fit = obj_type->fields_begin();
-                for (; fit != obj_type->fields_end(); ++fit) {
-                    if (fit->index == field_idx) break;
-                }
-                if (fit == obj_type->fields_end()) continue;
-
-                auto ft = fit->field_type.lock();
-                if (!ft || !ft->get_llvm_type() || !ft->get_llvm_type()->isIntegerTy()) continue;
+                if (!ft || !ft->get_llvm_type() || !ft->get_llvm_type()->isIntegerTy())
+                    reject_initializer(entry, "designated field is not an integer");
                 field_values[field_idx] = llvm::ConstantInt::get(
-                    ft->get_llvm_type(),
-                    static_cast<uint64_t>(*lit_opt),
-                    /*isSigned=*/(*lit_opt < 0));
+                    ft->get_llvm_type(), int_lit.to_unsigned_int());
             }
         }
 
@@ -1081,14 +1214,13 @@ void declaration_generator::visit_enumeration(enumeration& en) {
     };
 
     // Helper: implicit progression from previous value (copy + heuristic ++ on last user integer field).
-    auto build_implicit_from_previous = [&](llvm::Constant* previous) -> llvm::Constant* {
-        auto* prev_st = llvm::dyn_cast_or_null<llvm::ConstantStruct>(previous);
-        if (!prev_st) return previous;
-
+    auto build_implicit_from_previous = [&](const enum_entry_def& entry, llvm::Constant* previous) -> llvm::Constant* {
         std::vector<llvm::Constant*> fields;
-        fields.reserve(prev_st->getNumOperands());
-        for (unsigned i = 0; i < prev_st->getNumOperands(); ++i) {
-            fields.push_back(llvm::cast<llvm::Constant>(prev_st->getOperand(i)));
+        fields.reserve(llvm_st->getNumElements());
+        for (unsigned i = 0; i < llvm_st->getNumElements(); ++i) {
+            auto* field = previous ? previous->getAggregateElement(i) : nullptr;
+            if (!field) reject_initializer(entry, "previous entry is not a constant aggregate");
+            fields.push_back(field);
         }
 
         int target_index = -1;
@@ -1099,17 +1231,67 @@ void declaration_generator::visit_enumeration(enumeration& en) {
             target_index = static_cast<int>(it->index);
         }
 
-        if (target_index >= 0) {
-            auto* int_ty = llvm::dyn_cast<llvm::IntegerType>(fields[static_cast<size_t>(target_index)]->getType());
-            if (!int_ty) return previous;
-            auto* one = llvm::ConstantInt::get(int_ty, 1, /*isSigned=*/false);
-            fields[static_cast<size_t>(target_index)] =
-                llvm::ConstantExpr::getAdd(fields[static_cast<size_t>(target_index)], one);
-            return llvm::ConstantStruct::get(llvm_st, fields);
-        }
-
-        return previous;
+        if (target_index < 0) reject_initializer(entry, "implicit increment requires an integer field");
+        auto* int_ty = llvm::cast<llvm::IntegerType>(fields[static_cast<size_t>(target_index)]->getType());
+        auto* one = llvm::ConstantInt::get(int_ty, 1, /*isSigned=*/false);
+        fields[static_cast<size_t>(target_index)] =
+            llvm::ConstantExpr::getAdd(fields[static_cast<size_t>(target_index)], one);
+        return llvm::ConstantStruct::get(llvm_st, fields);
     };
+
+    const size_t inherited = en.get_base() ? en.get_base()->entries().size() : 0;
+    if (enum_requires_runtime_table(en)) {
+        size_t table_size = 0;
+        std::vector<std::pair<size_t, const enum_entry_def*>> ordered_entries;
+        for (size_t i = 0; i < en.entries().size(); ++i) {
+            const auto& entry = en.entries()[i];
+            if (!entry.is_alias) ordered_entries.emplace_back(i, &entry);
+        }
+        std::sort(ordered_entries.begin(), ordered_entries.end(), [](const auto& a, const auto& b) {
+            return a.second->value < b.second->value;
+        });
+        std::vector<llvm::Constant*> elements;
+        for (const auto& [i, entry_ptr] : ordered_entries) {
+            const auto& entry = *entry_ptr;
+            if (entry.value != static_cast<int64_t>(table_size))
+                reject_initializer(entry, "backing slots must be contiguous");
+            auto* initial = llvm::Constant::getNullValue(llvm_st);
+            if (i >= inherited) {
+                if (entry.has_paren_init) {
+                    if (!entry.resolved_constructor)
+                        reject_initializer(entry, "runtime tables require resolved constructors");
+                    for (const auto& arg : entry.adapted_ctor_args) {
+                        if (!enum_runtime_literal_argument(arg))
+                            reject_initializer(entry, "runtime table constructor arguments must be literals");
+                    }
+                } else if (entry.is_implicit_increment) {
+                    if (!zero_default_supported())
+                        reject_initializer(entry, "implicit increment requires a trivially copyable backing type");
+                    // Validate the increment field using the same rules as constant tables.
+                    build_implicit_from_previous(entry, initial);
+                } else {
+                    initial = build_entry_constant(entry);
+                }
+            }
+            elements.push_back(initial);
+            ++table_size;
+        }
+        auto* arr_ty = llvm::ArrayType::get(llvm_st, table_size);
+        auto name = "__klang_enum_table_" + en.get_mangled_name() + "__";
+        auto* table = new llvm::GlobalVariable(_context->module(), arr_ty, false,
+            llvm::GlobalValue::InternalLinkage,
+            llvm::ConstantArray::get(arr_ty, elements), name);
+        en.set_table_global(table);
+        auto* accessor_type = llvm::FunctionType::get(llvm::PointerType::get(**_context, 0), false);
+        auto linkage = en.get_visibility() == k::model::PUBLIC
+            ? llvm::GlobalValue::ExternalLinkage : llvm::GlobalValue::InternalLinkage;
+        auto* accessor = llvm::Function::Create(accessor_type, linkage,
+            name + ".get", _context->module());
+        en.set_table_accessor(accessor);
+        en.set_table_symbol(accessor->getName().str());
+        en.set_runtime_table(true);
+        return;
+    }
 
     // Build the array initializer by unique backing index (aliases share slots).
     size_t table_size = 0;
@@ -1136,14 +1318,16 @@ void declaration_generator::visit_enumeration(enumeration& en) {
         const size_t idx = static_cast<size_t>(entry.value);
         if (idx >= elements.size() || elements[idx] != nullptr) continue;
         if (idx > 0 && elements[idx - 1] != nullptr) {
-            elements[idx] = build_implicit_from_previous(elements[idx - 1]);
+            elements[idx] = build_implicit_from_previous(entry, elements[idx - 1]);
         }
     }
 
-    // Pass 3: any unresolved slot defaults to zero-init.
+    // Every unique slot must have a real initializer.
     for (size_t i = 0; i < elements.size(); ++i) {
         if (!elements[i]) {
-            elements[i] = llvm::Constant::getNullValue(llvm_st);
+            throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER),
+                en.get_interest_lexeme(), "Cannot build enum '{}' backing table: missing initializer for slot {}",
+                {en.get_short_name(), std::to_string(i)});
         }
     }
 
@@ -1165,6 +1349,276 @@ void declaration_generator::visit_enumeration(enumeration& en) {
     gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
 
     en.set_table_global(gv);
+}
+
+void implementation_generator::visit_enumeration(enumeration& en) {
+    auto* accessor = en.get_table_accessor();
+    auto* table = en.get_table_global();
+    if (!accessor || !table || !accessor->empty()) return;
+
+    auto& ctx = _context->llvm_context();
+    auto& mod = get_module();
+    auto* ptr_ty = llvm::PointerType::get(ctx, 0);
+    auto* i32_ty = llvm::Type::getInt32Ty(ctx);
+    auto* i64_ty = llvm::Type::getInt64Ty(ctx);
+    auto* void_ty = llvm::Type::getVoidTy(ctx);
+    auto* arr_ty = llvm::cast<llvm::ArrayType>(table->getValueType());
+    auto* guard = new llvm::GlobalVariable(mod, i64_ty, false,
+        llvm::GlobalValue::InternalLinkage, llvm::ConstantInt::get(i64_ty, 0),
+        table->getName() + ".guard");
+    auto* count = new llvm::GlobalVariable(mod, i64_ty, false,
+        llvm::GlobalValue::InternalLinkage, llvm::ConstantInt::get(i64_ty, 0),
+        table->getName() + ".count");
+    auto* guard_fn_ty = llvm::FunctionType::get(void_ty, {ptr_ty}, false);
+    auto acquire = mod.getOrInsertFunction("__cxa_guard_acquire",
+        llvm::FunctionType::get(i32_ty, {ptr_ty}, false));
+    auto release = mod.getOrInsertFunction("__cxa_guard_release", guard_fn_ty);
+    auto abort = mod.getOrInsertFunction("__cxa_guard_abort", guard_fn_ty);
+    auto personality = mod.getOrInsertFunction("__gxx_personality_v0",
+        llvm::FunctionType::get(i32_ty, true));
+    accessor->setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
+
+    llvm::Function* destructor_fn = nullptr;
+    auto object = en.get_object_type()->get_struct();
+    if (object && object->get_destructor()) {
+        auto it = _context->_functions.find(object->get_destructor()->shared_as<function>());
+        if (it == _context->_functions.end() || !it->second)
+            throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER),
+                en.get_interest_lexeme(), "Cannot find destructor for enum '{}' backing type",
+                {en.get_short_name()});
+        destructor_fn = it->second;
+    }
+
+    llvm::IRBuilderBase::InsertPointGuard insertion_guard(*_builder);
+    auto previous_cleanup = std::exchange(_cleanup_lpad_stack, {});
+    auto previous_catches = std::exchange(_landing_pad_stack, {});
+    auto previous_depth = std::exchange(_lpad_depth_counter, 0);
+    auto* previous_exc_ptr = std::exchange(_exc_ptr_slot, nullptr);
+    auto* previous_exc_sel = std::exchange(_exc_sel_slot, nullptr);
+    auto* previous_sret = std::exchange(_sret_destination, nullptr);
+    auto previous_temporaries = std::exchange(_expression_temporaries, {});
+    auto* previous_null_failure = std::exchange(_null_failure_bb, nullptr);
+    auto* previous_union_failure = std::exchange(_union_failure_bb, nullptr);
+    auto* previous_scope = std::exchange(_current_debug_scope, nullptr);
+    auto previous_debug_loc = _builder->getCurrentDebugLocation();
+    auto* previous_value = _value;
+    auto restore = llvm::make_scope_exit([&]() {
+        _cleanup_lpad_stack = std::move(previous_cleanup);
+        _landing_pad_stack = std::move(previous_catches);
+        _lpad_depth_counter = previous_depth;
+        _exc_ptr_slot = previous_exc_ptr;
+        _exc_sel_slot = previous_exc_sel;
+        _sret_destination = previous_sret;
+        _expression_temporaries = std::move(previous_temporaries);
+        _null_failure_bb = previous_null_failure;
+        _union_failure_bb = previous_union_failure;
+        _current_debug_scope = previous_scope;
+        _builder->SetCurrentDebugLocation(previous_debug_loc);
+        _value = previous_value;
+    });
+    _builder->SetCurrentDebugLocation(llvm::DebugLoc{});
+
+    auto* entry_bb = llvm::BasicBlock::Create(ctx, "entry", accessor);
+    auto* init_bb = llvm::BasicBlock::Create(ctx, "initialize", accessor);
+    auto* done_bb = llvm::BasicBlock::Create(ctx, "ready", accessor);
+    auto* unwind_bb = llvm::BasicBlock::Create(ctx, "init_unwind", accessor);
+    _builder->SetInsertPoint(entry_bb);
+    auto* acquired = _builder->CreateCall(acquire, {guard});
+    _builder->CreateCondBr(_builder->CreateICmpNE(acquired, _builder->getInt32(0)),
+                           init_bb, done_bb);
+    _builder->SetInsertPoint(init_bb);
+    cleanup_lpad_context cleanup{};
+    cleanup.lpad_bb = unwind_bb;
+    cleanup.continuation = cleanup_lpad_context::RESUME;
+    cleanup.depth = ++_lpad_depth_counter;
+    _cleanup_lpad_stack.push(cleanup);
+
+    const auto base = en.get_base();
+    const size_t inherited = base ? base->entries().size() : 0;
+    llvm::Value* base_table = nullptr;
+    llvm::ArrayType* base_arr_ty = nullptr;
+    llvm::Function* copy_fn = nullptr;
+    if (inherited) {
+        auto* base_accessor = ensure_enum_object_table_accessor_reference(base, _context);
+        auto* base_global = base_accessor ? nullptr : ensure_enum_object_table_reference(base, _context);
+        base_arr_ty = enum_object_table_type(base, _context);
+        if (!base_arr_ty || (!base_accessor && !base_global))
+            throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER),
+                en.get_interest_lexeme(), "Cannot find base table for enum '{}'", {en.get_short_name()});
+        base_table = base_accessor
+            ? create_call_or_invoke(base_accessor->getFunctionType(), base_accessor, {}, "base_enum_table")
+            : static_cast<llvm::Value*>(base_global);
+        // A constant table was emitted only for a constant-safe backing type;
+        // copying its complete value must not require a synthetic mutable copy
+        // constructor whose compiler-generated status is absent from old KDI.
+        const bool constant_base = base->is_imported() && !base->has_runtime_table();
+        auto copy = !constant_base && object ? object->get_copy_constructor() : nullptr;
+        if (copy && !copy->is_deleted()) {
+            auto param = copy->get_parameter(0);
+            auto ref = param ? std::dynamic_pointer_cast<reference_type>(type::remove_const(param->get_type())) : nullptr;
+            if (!ref || (!type::is_const(ref->get_subtype()) && !copy->is_compiler_generated()))
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE),
+                    en.get_interest_lexeme(), "Inherited enum backing type '{}' requires a copy constructor accepting const reference",
+                    {en.get_object_type()->to_string()});
+            auto it = _context->_functions.find(copy->shared_as<function>());
+            if (it != _context->_functions.end()) copy_fn = it->second;
+            if (!copy_fn)
+                throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER),
+                    en.get_interest_lexeme(), "Cannot find copy constructor for enum '{}'", {en.get_short_name()});
+        } else if (!constant_base && (copy || !aggregate_type_is_trivially_copyable(en.get_object_type()))) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE),
+                en.get_interest_lexeme(), "Inherited enum backing type '{}' is not copyable",
+                {en.get_object_type()->to_string()});
+        }
+    }
+
+    std::vector<std::pair<size_t, const enum_entry_def*>> ordered_entries;
+    for (size_t i = 0; i < en.entries().size(); ++i) {
+        const auto& entry = en.entries()[i];
+        if (!entry.is_alias) ordered_entries.emplace_back(i, &entry);
+    }
+    std::sort(ordered_entries.begin(), ordered_entries.end(), [](const auto& a, const auto& b) {
+        return a.second->value < b.second->value;
+    });
+    for (const auto& [i, entry_ptr] : ordered_entries) {
+        const auto& entry = *entry_ptr;
+        llvm::Value* indices[] = {_builder->getInt64(0), _builder->getInt64(entry.value)};
+        auto* slot = _builder->CreateInBoundsGEP(arr_ty, table, indices, "enum_slot");
+        if (i < inherited) {
+            auto* source = _builder->CreateInBoundsGEP(base_arr_ty, base_table, indices, "base_enum_slot");
+            if (copy_fn) {
+                create_call_or_invoke(copy_fn->getFunctionType(), copy_fn, {slot, source});
+            } else {
+                auto* value = _builder->CreateLoad(arr_ty->getElementType(), source);
+                _builder->CreateStore(value, slot);
+            }
+            _builder->CreateStore(_builder->getInt64(entry.value + 1), count);
+            continue;
+        }
+        if (!entry.has_paren_init) {
+            if (entry.is_implicit_increment) {
+                llvm::Value* previous_indices[] = {
+                    _builder->getInt64(0), _builder->getInt64(entry.value - 1)};
+                auto* previous = _builder->CreateInBoundsGEP(arr_ty, table, previous_indices);
+                _builder->CreateStore(_builder->CreateLoad(arr_ty->getElementType(), previous), slot);
+                size_t field_index = 0;
+                for (auto field = en.get_object_type()->fields_begin();
+                     field != en.get_object_type()->fields_end(); ++field) {
+                    if (field->name.rfind("__", 0) != 0
+                        && field->index < llvm::cast<llvm::StructType>(arr_ty->getElementType())->getNumElements()
+                        && llvm::cast<llvm::StructType>(arr_ty->getElementType())
+                               ->getElementType(field->index)->isIntegerTy()) {
+                        field_index = field->index;
+                    }
+                }
+                auto* struct_ty = llvm::cast<llvm::StructType>(arr_ty->getElementType());
+                auto* field_ptr = _builder->CreateStructGEP(struct_ty, slot, field_index);
+                auto* field_ty = struct_ty->getElementType(field_index);
+                auto* value = _builder->CreateLoad(field_ty, field_ptr);
+                _builder->CreateStore(_builder->CreateAdd(value, llvm::ConstantInt::get(field_ty, 1)), field_ptr);
+            }
+            _builder->CreateStore(_builder->getInt64(entry.value + 1), count);
+            continue;
+        }
+        auto it = _context->_functions.find(entry.resolved_constructor->shared_as<function>());
+        if (it == _context->_functions.end() || !it->second)
+            throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER),
+                en.get_interest_lexeme(), "Cannot find constructor for enum entry '{}'", {entry.name});
+        std::vector<llvm::Value*> args{slot};
+        for (const auto& arg : entry.adapted_ctor_args) {
+            _value = nullptr;
+            arg->accept(*this);
+            if (!_value)
+                throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER),
+                    en.get_interest_lexeme(), "Cannot generate constructor argument for enum entry '{}'",
+                    {entry.name});
+            args.push_back(_value);
+        }
+        create_call_or_invoke(it->second->getFunctionType(), it->second, args);
+        _builder->CreateStore(_builder->getInt64(entry.value + 1), count);
+    }
+    _cleanup_lpad_stack.pop();
+    _builder->CreateCall(release, {guard});
+    _builder->CreateBr(done_bb);
+    _builder->SetInsertPoint(done_bb);
+    _builder->CreateRet(table);
+
+    // Both shutdown and rollback consume the completed prefix, in reverse order.
+    auto emit_cleanup = [&](llvm::Function* fn, bool unwinding, llvm::Value* exception) {
+        auto* loop = llvm::BasicBlock::Create(ctx, "destroy_test", fn);
+        auto* destroy = llvm::BasicBlock::Create(ctx, "destroy_entry", fn);
+        auto* finish = llvm::BasicBlock::Create(ctx, "destroy_done", fn);
+        llvm::Value* saved_chain = nullptr;
+        llvm::Value* saved_type = nullptr;
+        llvm::Value* chain_slot = nullptr;
+        llvm::Value* type_slot = nullptr;
+        if (unwinding && destructor_fn) {
+            chain_slot = get_thrown_state_slot("__k_thrown_typeinfo_chain_addr");
+            type_slot = get_thrown_state_slot("__k_thrown_typeinfo_addr");
+            saved_chain = _builder->CreateLoad(ptr_ty, chain_slot);
+            saved_type = _builder->CreateLoad(ptr_ty, type_slot);
+        }
+        _builder->CreateBr(loop);
+        _builder->SetInsertPoint(loop);
+        auto* live = _builder->CreateLoad(i64_ty, count);
+        _builder->CreateCondBr(_builder->CreateICmpNE(live, _builder->getInt64(0)), destroy, finish);
+        _builder->SetInsertPoint(destroy);
+        auto* index = _builder->CreateSub(live, _builder->getInt64(1));
+        _builder->CreateStore(index, count);
+        if (destructor_fn) {
+            llvm::Value* indices[] = {_builder->getInt64(0), index};
+            auto* slot = _builder->CreateInBoundsGEP(arr_ty, table, indices, "enum_destroy_slot");
+            if (unwinding) {
+                auto* caught = llvm::BasicBlock::Create(ctx, "destroy_exception", fn);
+                _builder->CreateInvoke(destructor_fn, loop, caught, {slot});
+                _builder->SetInsertPoint(caught);
+                auto* secondary = _builder->CreateLandingPad(
+                    llvm::StructType::get(ctx, {ptr_ty, i32_ty}), 1);
+                secondary->addClause(llvm::ConstantPointerNull::get(ptr_ty));
+                auto begin = mod.getOrInsertFunction("__cxa_begin_catch",
+                    llvm::FunctionType::get(ptr_ty, {ptr_ty}, false));
+                auto end = mod.getOrInsertFunction("__cxa_end_catch",
+                    llvm::FunctionType::get(void_ty, false));
+                _builder->CreateCall(begin, {_builder->CreateExtractValue(secondary, 0)});
+                _builder->CreateCall(end, {});
+                _builder->CreateStore(saved_chain, chain_slot);
+                _builder->CreateStore(saved_type, type_slot);
+                _builder->CreateBr(loop);
+            } else {
+                _builder->CreateCall(destructor_fn, {slot});
+                _builder->CreateBr(loop);
+            }
+        } else {
+            _builder->CreateBr(loop);
+        }
+        _builder->SetInsertPoint(finish);
+        if (unwinding) {
+            if (destructor_fn) {
+                _builder->CreateStore(saved_chain, chain_slot);
+                _builder->CreateStore(saved_type, type_slot);
+            }
+            _builder->CreateCall(abort, {guard});
+            _builder->CreateResume(exception);
+        } else {
+            _builder->CreateRetVoid();
+        }
+    };
+
+    _builder->SetInsertPoint(unwind_bb);
+    auto* exception = _builder->CreateLandingPad(
+        llvm::StructType::get(ctx, {ptr_ty, i32_ty}), 0, "enum_exception");
+    exception->setCleanup(true);
+    emit_cleanup(accessor, true, exception);
+
+    auto* dtor = llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
+        llvm::GlobalValue::InternalLinkage, table->getName() + ".destroy", mod);
+    _builder->SetInsertPoint(llvm::BasicBlock::Create(ctx, "entry", dtor));
+    emit_cleanup(dtor, false, nullptr);
+    if (llvm::verifyFunction(*accessor) || llvm::verifyFunction(*dtor))
+        throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER),
+            en.get_interest_lexeme(), "Cannot generate runtime backing table for enum '{}'",
+            {en.get_short_name()});
+    llvm::appendToGlobalDtors(mod, dtor, 65535);
 }
 
 // declaration_generator::visit_union
@@ -1231,6 +1685,102 @@ void declaration_generator::visit_union(union_type_def& un) {
 void symbol_resolver::visit_enumeration(enumeration& en) {
     visit_named_element(en);
     resolve_enumeration(en);
+    if (!en.is_object_backed() || en._initializer_symbols_resolved) return;
+    en._initializer_symbols_resolved = true;
+    for (const auto& entry : en.raw_entries()) {
+        for (const auto& arg : entry.ctor_args) {
+            if (arg) arg->accept(*this);
+        }
+    }
+}
+
+void type_reference_resolver::visit_enumeration(enumeration& en) {
+    if (!en.is_resolved() || !en.is_object_backed() || en._initializers_resolved || en.is_imported()) return;
+    if (auto base = en.get_base()) {
+        visit_enumeration(*base);
+        for (size_t i = 0; i < base->entries().size(); ++i) {
+            en._entries[i].ctor_args = base->entries()[i].ctor_args;
+            en._entries[i].resolved_constructor = base->entries()[i].resolved_constructor;
+            en._entries[i].adapted_ctor_args = base->entries()[i].adapted_ctor_args;
+        }
+    }
+
+    auto object = en.get_object_type();
+    auto aggregate = object ? object->get_struct() : nullptr;
+    const size_t inherited = en.get_base() ? en.get_base()->entries().size() : 0;
+    for (size_t i = inherited; i < en._entries.size(); ++i) {
+        auto& entry = en._entries[i];
+        auto location = entry.ast_entry
+            ? lex::opt_any_lexeme{lex::any_lexeme{entry.ast_entry->name}}
+            : en.get_interest_lexeme();
+        if (entry.is_alias) continue;
+        if (!entry.has_paren_init) {
+            if (!entry.brace_init && !enum_constant_safe_type(object)) {
+                throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER),
+                    location, "Implicit entry '{}' requires a trivially copyable backing type",
+                    {entry.name});
+            }
+            continue;
+        }
+
+        for (auto& arg : entry.ctor_args) {
+            _replacement_expr = nullptr;
+            arg->accept(*this);
+            if (_replacement_expr) {
+                arg = _replacement_expr;
+                _replacement_expr = nullptr;
+            }
+        }
+        en.attach_initializer_arguments(entry.ctor_args);
+        if (!aggregate || aggregate->is_abstract()) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_MEMBER_FUNC_NO_MATCH),
+                location, "Cannot construct backing type for enum entry '{}'", {entry.name});
+        }
+        if (aggregate->is_inner()) {
+            throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER),
+                location, "Enum entry '{}' cannot construct an inner aggregate without an enclosing instance",
+                {entry.name});
+        }
+        // Defaults must be typed even when the backing declaration follows this enum.
+        for (const auto& ctor : aggregate->constructors()) {
+            if (!ctor || ctor->is_template()) continue;
+            for (const auto& param : ctor->parameters()) {
+                if (param->has_default_expr()) param->accept(*this);
+            }
+        }
+        auto [ctor, adapted] = get_best_matching_constructor(
+            aggregate->constructors(), entry.ctor_args, true, location);
+        if (!ctor) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_MEMBER_NO_MATCH),
+                location, "No matching constructor for enum entry '{}' of type '{}'",
+                {entry.name, object->to_string()});
+        }
+        check_constructor_visibility(*ctor, en);
+        entry.resolved_constructor = std::move(ctor);
+        entry.adapted_ctor_args = std::move(adapted);
+        en.attach_adapted_initializer_arguments(entry);
+    }
+    const auto local_begin = en._entries.begin() + inherited;
+    if (std::any_of(local_begin, en._entries.end(), [&](const enum_entry_def& entry) {
+            return enum_entry_requires_runtime_table(entry, object);
+        })) {
+        for (auto it = local_begin; it != en._entries.end(); ++it) {
+            if (it->is_alias || !it->brace_init) continue;
+            auto location = it->ast_entry
+                ? lex::opt_any_lexeme{lex::any_lexeme{it->ast_entry->name}}
+                : en.get_interest_lexeme();
+            throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER),
+                location, "Enum entry '{}' cannot mix designated initialization with runtime constructors",
+                {it->name});
+        }
+    }
+    const auto base = en.get_base();
+    const bool constant_import = base && base->is_imported() && !base->has_runtime_table();
+    if (inherited && !constant_import && enum_requires_runtime_table(en) && aggregate) {
+        if (auto copy = aggregate->get_copy_constructor(); copy && !copy->is_deleted())
+            check_constructor_visibility(*copy, en);
+    }
+    en._initializers_resolved = true;
 }
 
 /**
@@ -1452,6 +2002,8 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
             we.is_implicit_increment = be.is_implicit_increment;
             we.is_alias = be.is_alias;
             work.push_back(std::move(we));
+        bool has_paren_init = false;
+        std::shared_ptr<k::parse::ast::enum_entry> ast_entry;
         }
     }
 
@@ -1472,6 +2024,8 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
                 we.is_alias = true;
             }
         } else {
+            we.has_paren_init = be.has_paren_init;
+            we.ast_entry = be.ast_entry;
             if (re.explicit_value.has_value()) {
                 we.has_literal = true;
                 we.literal_value = *re.explicit_value;
@@ -1485,9 +2039,18 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
         if (en.has_base()) {
             for (size_t i = 0; i < local_start; ++i) {
                 if (work[i].name == we.name) {
+        we.ast_entry = re.ast_entry;
+        we.has_paren_init = re.has_paren_init;
                     warn(static_cast<unsigned int>(k::diag::structure_diag::WARN_ENUM_ENTRY_SHADOW), en_lexeme,
                         "Enum '{}': entry '{}' shadows an inherited entry from base enum '{}'",
                         {en.get_short_name(), we.name, en.get_base()->get_short_name()});
+            if (re.explicit_value) {
+                lex::opt_any_lexeme entry_lexeme = re.ast_entry
+                    ? lex::opt_any_lexeme{lex::any_lexeme{re.ast_entry->name}} : en_lexeme;
+                throw_error(static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_OBJECT_VALUE_INITIALIZER),
+                    entry_lexeme, "Object-backed enum entry '{}' cannot use an integer value initializer",
+                    {re.name});
+            }
                     break;
                 }
             }
@@ -1691,7 +2254,8 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
     // ── 6. Populate the resolved entries ──
     // Store ALL entries (base + local) so that entries() returns the full set.
     for (auto& we : work) {
-        en.add_entry(we.name, we.resolved_value, we.is_default, we.brace_init, we.ctor_args, we.is_implicit_increment, we.is_alias);
+        en.add_entry(we.name, we.resolved_value, we.is_default, we.brace_init, we.ctor_args,
+                     we.is_implicit_increment, we.is_alias, we.has_paren_init, we.ast_entry);
     }
 
     // Step 3: Build the enum_type from the enumeration model

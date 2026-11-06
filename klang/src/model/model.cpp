@@ -486,6 +486,26 @@ void enumeration::accept(model_visitor& visitor) {
     visitor.visit_enumeration(*this);
 }
 
+void enumeration::attach_initializer_arguments(const std::vector<std::shared_ptr<expression>>& args) {
+    for (const auto& arg : args) element::set_parent(shared_as<element>(), arg);
+}
+
+void enumeration::attach_adapted_initializer_arguments(const enum_entry_def& entry) {
+    for (size_t i = 0; i < entry.adapted_ctor_args.size(); ++i) {
+        auto parent = shared_as<element>();
+        if (i >= entry.ctor_args.size() && entry.resolved_constructor
+            && i < entry.resolved_constructor->parameters().size()) {
+            parent = entry.resolved_constructor->parameters()[i];
+        }
+        element::set_parent(parent, entry.adapted_ctor_args[i]);
+    }
+}
+
+void enumeration::add_raw_entry(const enum_raw_entry_def& entry) {
+    attach_initializer_arguments(entry.ctor_args);
+    _raw_entries.push_back(entry);
+}
+
 
 //
 // Alias definition

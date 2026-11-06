@@ -213,7 +213,7 @@ void type_reference_resolver::check_function_visibility(const function& func, co
     }
 }
 
-void type_reference_resolver::check_constructor_visibility(const constructor& ctor, const element& /*access_site*/) {
+void type_reference_resolver::check_constructor_visibility(const constructor& ctor, const element& access_site) {
     auto vis = ctor.get_visibility();
     if (vis == PUBLIC) return;
 
@@ -222,6 +222,14 @@ void type_reference_resolver::check_constructor_visibility(const constructor& ct
 
     if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
     if (scope_lookup::is_friend_of(*owner_agg, _function_stack, _unit)) return;
+    if (dynamic_cast<const enumeration*>(&access_site)) {
+        for (auto scope = access_site.parent<element>(); scope; scope = scope->parent<element>()) {
+            auto enclosing = std::dynamic_pointer_cast<const aggregate>(scope);
+            if (!enclosing) continue;
+            if (enclosing == owner_agg || (vis == PROTECTED && enclosing->is_derived_from(owner_agg)))
+                return;
+        }
+    }
 
     throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_CTOR_VISIBILITY_MISMATCH), ctor.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{ctor.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
         "{} constructor of struct '{}' is not accessible here; "
@@ -3632,7 +3640,10 @@ std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::sha
  *
  * @return {best_constructor, adapted_args} or {nullptr, {}} on failure.
  */
-type_reference_resolver::get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args) {
+type_reference_resolver::get_best_matching_constructor(
+    const std::vector<std::shared_ptr<constructor>>& constructors,
+    const std::vector<std::shared_ptr<expression>>& args,
+    bool throw_on_failure, const lex::opt_any_lexeme& failure_location) {
     auto available = constructors;
     if (!constructors.empty() && constructors.front()) {
         if (auto owner = constructors.front()->get_owner()) {
@@ -3803,7 +3814,9 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         for (auto& ctor : arity_matched) {
             if (!ctor->is_deleted()) non_deleted.push_back(ctor);
         }
+        if (failure_location) d.at(*failure_location);
         if (non_deleted.empty()) {
+        if (throw_on_failure) throw resolution_error(std::move(d));
             auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
                 "Use of deleted constructor: a constructor matching {} argument(s) exists but has been explicitly deleted with '-> delete'",
                 {std::to_string(arg_count)});
@@ -3816,7 +3829,9 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
     struct Candidate {
         std::shared_ptr<constructor> ctor;
         cast_weight score;
+            if (failure_location) d.at(*failure_location);
         size_t defaults_used;
+            if (throw_on_failure) throw resolution_error(std::move(d));
         bool is_template_instantiation;
         size_t template_specificity;
     };
@@ -3876,6 +3891,7 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
                 first = false;
             }
             std::string failed_idxs;
+        if (failure_location) d.at(*failure_location);
             for (size_t idx : fc.failed_param_indices) {
                 if (!failed_idxs.empty()) failed_idxs += ", ";
                 failed_idxs += std::to_string(idx);
@@ -3892,6 +3908,7 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
     bool best_is_template_instantiation = true;
     bool have_best = false;
     for (auto& cand : valid_candidates) {
+        if (throw_on_failure) throw resolution_error(std::move(d));
         if (cand.score < best_score ||
             (cand.score == best_score && cand.defaults_used < best_defaults)) {
             best_score = cand.score;
@@ -3943,7 +3960,9 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
             "Ambiguous constructor call: {} equally viable overloads",
             {std::to_string(best_candidates.size())});
-        if (!args.empty() && args.front()) {
+        if (failure_location) {
+            d.at(*failure_location);
+        } else if (!args.empty() && args.front()) {
             if (auto lexeme = args.front()->first_lexeme()) d.at(*lexeme);
         }
         for (auto* c : best_candidates) {

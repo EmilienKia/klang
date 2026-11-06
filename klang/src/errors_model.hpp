@@ -161,6 +161,8 @@ enum class structure_diag : unsigned int {
     ERR_VIRTUAL_DTOR_SECONDARY_BASE               = 0x061C,  ///< Virtual destructor reachable only via a secondary (non-primary) vtable base — needs a this-adjustment thunk, not yet supported (see TODO.md)
     ERR_ENUM_EXPLICIT_UNDERLYING_NOT_INTEGER      = 0x061D,  ///< 'enum X : <primitive>' names a non-integer primitive type (float/double/bool/char)
     ERR_ENUM_EXPLICIT_UNDERLYING_TOO_SMALL        = 0x061E,  ///< 'enum X : <primitive>' cannot hold the range of declared entry values
+    ERR_ENUM_OBJECT_VALUE_INITIALIZER             = 0x061F,  ///< An object-backed entry cannot be initialized with an integer value.
+    ERR_ENUM_UNSUPPORTED_INITIALIZER              = 0x0620,  ///< Object-backed enum initializer needs unsupported table construction.
 };
 
 // ────────────────────────────────────────────────────────────────────────────

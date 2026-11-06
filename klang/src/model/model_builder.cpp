@@ -995,6 +995,8 @@ namespace k::model {
             }
 
             if (ast_entry->literal_value.has_value()) {
+            re.has_paren_init = ast_entry->has_paren_initializer();
+            re.ast_entry = ast_entry;
                 auto& lit = *ast_entry->literal_value;
                 if (lit.index() == lex::any_literal_type_index::INTEGER) {
                     auto& int_lit = lit.get<lex::integer>();
