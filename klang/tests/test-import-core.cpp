@@ -32,8 +32,10 @@
 
 #include "helpers.hpp"
 #include "../src/errors.hpp"
+#include "../src/model/context.hpp"
 #include "../src/model/imported.hpp"
 
+#include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/DynamicLibrary.h>
@@ -42,6 +44,130 @@
 #include <algorithm>
 
 namespace fs = std::filesystem;
+
+TEST_CASE("KDI duplicate layouts require compatible referenced definitions",
+          "[import][kdi-layout][regression]") {
+    auto provider = std::make_shared<kdi::kdi_file>();
+    provider->header.module_name = "layoutprovider";
+    provider->unit.root_ns.name = "layoutprovider";
+    provider->unit.root_ns.fq_name = "layoutprovider";
+    kdi::kdi_aggregate base;
+    base.name = "Base";
+    base.fq_name = "::layoutprovider::Base";
+    base.mangled_name = "LayoutBase";
+    base.llvm_def = "%LayoutBase = type { %LayoutInner }\n"
+                    "%LayoutInner = type { %LayoutLeaf }\n"
+                    "%LayoutLeaf = type { i32 }";
+    kdi::kdi_aggregate inner;
+    inner.name = "Inner";
+    inner.fq_name = "layoutprovider::Inner";
+    inner.mangled_name = "LayoutInner";
+    inner.llvm_def = "%LayoutInner = type { %LayoutLeaf }\n"
+                     "%LayoutLeaf = type { i32 }";
+    kdi::kdi_aggregate leaf;
+    leaf.name = "Leaf";
+    leaf.fq_name = "layoutprovider::Leaf";
+    leaf.mangled_name = "LayoutLeaf";
+    leaf.llvm_def = "%LayoutLeaf = type { i32 }";
+    provider->unit.root_ns.aggregates = {base, inner, leaf};
+
+    auto wrapper = std::make_shared<kdi::kdi_file>();
+    wrapper->header.module_name = "layoutwrapper";
+    wrapper->unit.root_ns.name = "layoutwrapper";
+    wrapper->unit.root_ns.fq_name = "layoutwrapper";
+    kdi::kdi_aggregate outer;
+    outer.name = "Wrapper";
+    outer.fq_name = "layoutwrapper::Wrapper";
+    outer.mangled_name = "LayoutWrapper";
+    outer.llvm_def = "%LayoutWrapper = type { %LayoutBase }\n"
+                     "%LayoutBase = type { %LayoutInner.691 }\n"
+                     "%LayoutInner.691 = type { %LayoutLeaf.692 }\n"
+                     "%LayoutLeaf.692 = type { i32 }";
+    const bool wrapper_first = GENERATE(false, true);
+    bool conflict = false;
+    bool identity_conflict = false;
+    bool distinct_suffixed_type = false;
+    SECTION("context-local copies have equivalent recursive layouts") {}
+    SECTION("same mangled name can denote distinct registered LLVM types") {
+        kdi::kdi_aggregate other;
+        other.name = "Other";
+        other.fq_name = "layoutwrapper::Other";
+        other.mangled_name = "LayoutLeaf";
+        other.llvm_def = "%LayoutLeaf.77 = type { i64 }";
+        wrapper->unit.root_ns.aggregates.push_back(other);
+        distinct_suffixed_type = true;
+    }
+    SECTION("a nested copy has an incompatible layout") {
+        outer.llvm_def.replace(outer.llvm_def.find("i32"), 3, "i64");
+        conflict = true;
+    }
+    SECTION("a referenced copy has no definition") {
+        outer.llvm_def.erase(outer.llvm_def.find("%LayoutLeaf.692 = type"));
+        conflict = true;
+    }
+    SECTION("a suffixed reference has a different KDI identity") {
+        kdi::kdi_aggregate other;
+        other.name = "Other";
+        other.fq_name = "layoutwrapper::Other";
+        other.mangled_name = "LayoutLeaf.692";
+        other.llvm_def = "%LayoutLeaf.692 = type { i32 }";
+        wrapper->unit.root_ns.aggregates.push_back(other);
+        conflict = true;
+    }
+    SECTION("different types claim the same LLVM name and layout") {
+        kdi::kdi_aggregate other;
+        other.name = "Other";
+        other.fq_name = "layoutwrapper::Other";
+        other.mangled_name = "LayoutBase";
+        other.llvm_def = base.llvm_def;
+        wrapper->unit.root_ns.aggregates.push_back(other);
+        conflict = true;
+        identity_conflict = true;
+    }
+    wrapper->unit.root_ns.aggregates.push_back(outer);
+
+    auto compiler = k::compiler::create();
+    auto unit = compiler->get_unit();
+    unit->add_import(k::name::from(wrapper_first ? "layoutwrapper" : "layoutprovider"));
+    unit->add_import(k::name::from(wrapper_first ? "layoutprovider" : "layoutwrapper"));
+    unit->get_imports()[0].kdi = wrapper_first ? wrapper : provider;
+    unit->get_imports()[1].kdi = wrapper_first ? provider : wrapper;
+    k::path_lookup_file_resolver resolver;
+    test_logger logger;
+    k::model::kdi_importer importer(*unit, resolver, logger);
+    auto ctx = compiler->get_context_for_test();
+    ctx->init_module("layoutconsumer");
+    if (conflict) {
+        REQUIRE_THROWS_MATCHES(importer.materialise_all(ctx), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>(
+                [identity_conflict](const k::log::compiler_error& error) {
+                    const auto& diagnostic = error.get_diagnostic();
+                    return diagnostic.code == static_cast<unsigned int>(
+                               k::diag::codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT) &&
+                           (!identity_conflict ||
+                            (diagnostic.message.find("distinct KDI identities") != std::string::npos &&
+                             diagnostic.args.size() == 3));
+                }, "duplicate imported LLVM layout conflict"));
+    } else {
+        REQUIRE_NOTHROW(importer.materialise_all(ctx));
+        auto* imported_base = llvm::StructType::getTypeByName(ctx->llvm_context(), "LayoutBase");
+        REQUIRE(imported_base);
+        REQUIRE_FALSE(imported_base->isOpaque());
+        auto* imported_inner = llvm::dyn_cast<llvm::StructType>(imported_base->getElementType(0));
+        REQUIRE(imported_inner);
+        CHECK(imported_inner->getName() == "LayoutInner");
+        auto* imported_leaf = llvm::dyn_cast<llvm::StructType>(imported_inner->getElementType(0));
+        REQUIRE(imported_leaf);
+        CHECK(imported_leaf->getElementType(0)->isIntegerTy(32));
+        if (distinct_suffixed_type) {
+            auto* other = llvm::StructType::getTypeByName(ctx->llvm_context(), "LayoutLeaf.77");
+            REQUIRE(other);
+            REQUIRE_FALSE(other->isOpaque());
+            CHECK(other != imported_leaf);
+            CHECK(other->getElementType(0)->isIntegerTy(64));
+        }
+    }
+}
 
 TEST_CASE("imported parameter defaults preserve primitive and enum arguments",
           "[import][default-args][regression]") {
