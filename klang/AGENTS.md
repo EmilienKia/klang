@@ -336,7 +336,7 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-templates-core` | template functions/instantiation/mangling/members; CTest shards 0–1 |
 | `klang-tests-gen-templates-deduction` | template deduction/constraints/packs/value params |
 | `klang-tests-gen-generics` | generic (type-erased) declarations, restrictions, single synthesis |
-| `klang-tests-import-core` | KDI import core, namespaces, enums, transitive |
+| `klang-tests-import-core` | KDI import core, namespaces, enums, transitive; CTest shards 0–1 |
 | `klang-tests-import-templates` | KDI cross-module template instantiation; CTest shards 0–14 |
 | `klang-tests-import-interop` | KDI aliases, typedefs, callables, prod-lib |
 | `klangc-tests` | CLI/integration behavior |
