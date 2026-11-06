@@ -59,6 +59,9 @@ protected:
     /** Map of direct child namespaces. */
     std::map<std::string, std::shared_ptr<ns>> _ns;
 
+    /** Whether this is a source or KDI namespace rather than a synthetic lookup scope. */
+    bool _declared_namespace = false;
+
     ns(std::shared_ptr<element> parent):
         element(parent) {}
 
@@ -97,6 +100,8 @@ public:
      * @return True if root namespace, false otherwise.
      */
     bool is_root() const { return !!parent<unit>(); }
+    bool is_declared_namespace() const { return _declared_namespace; }
+    void mark_declared_namespace() { _declared_namespace = true; }
 
     //
     // Children namespace manipulations

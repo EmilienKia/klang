@@ -824,9 +824,14 @@ scope_lookup::materialize_alias_type(const std::shared_ptr<alias_definition>& al
                                      const std::shared_ptr<context>& ctx,
                                      const std::function<std::shared_ptr<type>(const k::name&, const element&)>& resolve_by_name,
                                      bool& cycle,
-                                     const std::function<std::shared_ptr<type>(const std::shared_ptr<type>&, const element&)>& resolve_chain) {
+                                     const std::function<std::shared_ptr<type>(const std::shared_ptr<type>&, const element&)>& resolve_chain,
+                                     bool allow_unlaid_out_aggregate) {
     cycle = false;
     if (!alias) return {};
+    const auto usable_target = [allow_unlaid_out_aggregate](const std::shared_ptr<type>& t) {
+        return type::is_resolved(t)
+            || (allow_unlaid_out_aggregate && std::dynamic_pointer_cast<struct_type>(t));
+    };
 
     // A parameterised alias denotes no type by itself: 'Vec' alone is not a
     // type, only 'Vec<int>' is. Resolution happens at the use site, through
@@ -852,7 +857,7 @@ scope_lookup::materialize_alias_type(const std::shared_ptr<alias_definition>& al
         alias->_resolving = true;
         target = resolve_by_name(alias->get_target_name(), *scope);
         alias->_resolving = false;
-        if (!target || !type::is_resolved(target)) {
+        if (!usable_target(target)) {
             // Not a type — the alias targets a function or a variable, resolved elsewhere.
             return {};
         }
@@ -870,27 +875,27 @@ scope_lookup::materialize_alias_type(const std::shared_ptr<alias_definition>& al
     // A composite target — most notably a callable prototype `(int):bool` —
     // is resolved through the caller's own type-resolution chain: its
     // components are types, not a name.
-    if (!type::is_resolved(target) && scope && resolve_chain) {
+    if (!usable_target(target) && scope && resolve_chain) {
         if (auto resolved = resolve_chain(target, *scope)) {
-            if (type::is_resolved(resolved)) target = resolved;
+            if (usable_target(resolved)) target = resolved;
         }
     }
-    if (!type::is_resolved(target) && ctx) {
+    if (!usable_target(target) && ctx) {
         if (auto resolved = ctx->resolve_type(target)) {
-            if (type::is_resolved(resolved)) target = resolved;
+            if (usable_target(resolved)) target = resolved;
         }
     }
-    if (!type::is_resolved(target) && scope && resolve_by_name) {
+    if (!usable_target(target) && scope && resolve_by_name) {
         if (auto unres = std::dynamic_pointer_cast<unresolved_type>(target)) {
             if (auto resolved = resolve_by_name(unres->type_id(), *scope)) {
-                if (type::is_resolved(resolved)) target = resolved;
+                if (usable_target(resolved)) target = resolved;
             }
         }
     }
 
     alias->_resolving = false;
 
-    if (!type::is_resolved(target)) {
+    if (!usable_target(target)) {
         return {};
     }
 

@@ -1270,6 +1270,8 @@ With an explicit primitive type (`enum E : unsigned byte`), that explicit primit
 
 `enum E : AggregateType { ... }` defines an object-backed enum:
 
+- A transparent alias or alias chain may name the aggregate, including an
+  imported aggregate; each alias target resolves in its declaration scope.
 - Runtime representation is an integer index.
 - Each entry maps to one object in a static backing table.
 - `E -> const AggregateType&` conversion returns a reference to that table entry.

@@ -282,9 +282,9 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
     std::shared_ptr<struct_type> st_type = st.get_struct_type();
     if (!st_type) {
         st_type = std::make_shared<struct_type>(st.get_short_name()/*st.get_mangled_name()*/, st.shared_as<aggregate>());
-        _context->add_struct(st_type);
         st.set_struct_type(st_type);
     }
+    _context->add_struct(st_type);
 
     // Visit nested aggregate children first unless they depend on this layout.
     visit_nested_aggregates(st);
@@ -1261,13 +1261,101 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
     if (en.get_base_name().has_value()) {
         const std::string& base_name_str = *en.get_base_name();
         std::shared_ptr<enumeration> base_en;
+        std::shared_ptr<struct_type> aliased_object_type;
+
+        const auto base_name = k::name::from(base_name_str);
+        if (scope_lookup::lookup_alias(en.shared_as<element>(), base_name)) {
+            aggregate_type_resolver type_resolver(_log, _context, _unit);
+            std::function<std::shared_ptr<type>(const k::name&, const element&)> resolve_alias_name;
+            resolve_alias_name = [&](const k::name& name, const element& scope) -> std::shared_ptr<type> {
+                if (auto alias = scope_lookup::lookup_alias(scope.shared_as<const element>(), name)) {
+                    if (!alias->is_soft()) return {};
+                    bool cycle = false;
+                    auto result = scope_lookup::materialize_alias_type(
+                        alias, _context, resolve_alias_name, cycle,
+                        [&](const std::shared_ptr<type>& target, const element& declaration_scope) {
+                            auto unresolved = std::dynamic_pointer_cast<unresolved_type>(target);
+                            if (!unresolved || unresolved->has_template_args()) return std::shared_ptr<type>{};
+                            return resolve_alias_name(unresolved->type_id(), declaration_scope);
+                        }, true);
+                    if (cycle) {
+                        throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_CYCLE),
+                                    alias->get_decl_lexeme(),
+                                    "Alias '{}' is defined in terms of itself", {alias->get_fq_name()});
+                    }
+                    return result;
+                }
+
+                // Predeclare a forward aggregate's type without resolving its
+                // body or layout out of order.
+                auto relative = name.without_root_prefix();
+                auto root = scope_lookup::root_namespace(scope);
+                if (name.has_root_prefix() && root) {
+                    auto module = root->get_name().without_root_prefix();
+                    if (!module.empty() && relative.start_with(module))
+                        relative = relative.without_front(module.size());
+                }
+                auto current = name.has_root_prefix()
+                    ? std::static_pointer_cast<const element>(root)
+                    : scope.shared_as<const element>();
+                const auto predeclare = [&](const element& from, const k::name& lookup) {
+                    auto agg = aggregate_type_resolver::resolve_struct_from(from, lookup);
+                    if (!agg) return false;
+                    if (!agg->get_struct_type() && !agg->is_template()) {
+                        auto st = std::make_shared<struct_type>(agg->get_short_name(), agg);
+                        agg->set_struct_type(st);
+                    }
+                    return true;
+                };
+                for (; current; current = current->parent<const element>()) {
+                    if (predeclare(*current, relative)) break;
+                    bool found = false;
+                    if (!name.has_root_prefix()) {
+                        if (auto holder = std::dynamic_pointer_cast<const using_holder>(current)) {
+                            for (const auto& directive : holder->get_using_directives()) {
+                                auto target_name = directive.target_name;
+                                auto lookup = name;
+                                if (directive.is_namespace()) {
+                                    if (directive.has_alias()) {
+                                        if (name.size() < 2 || name.front() != *directive.alias_name) continue;
+                                        lookup = name.without_front();
+                                    }
+                                } else {
+                                    const auto& visible = directive.has_alias()
+                                        ? *directive.alias_name : target_name.back();
+                                    if (name.front() != visible) continue;
+                                    lookup = k::name{target_name.back()};
+                                    for (size_t i = 1; i < name.size(); ++i)
+                                        lookup = lookup.with_back(name[i]);
+                                    target_name = target_name.without_back();
+                                }
+                                auto target = target_name.empty()
+                                    ? std::static_pointer_cast<const element>(root)
+                                    : resolve_using_target(target_name, _unit);
+                                if (target && predeclare(*target, lookup)) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (found || name.has_root_prefix()
+                        || scope_lookup::is_definition_namespace_boundary(*current)) break;
+                }
+                return type_resolver.resolve_type_by_name(name, scope);
+            };
+            aliased_object_type = std::dynamic_pointer_cast<struct_type>(
+                resolve_alias_name(base_name, en));
+        }
 
         // First try local scope lookup (simple name)
-        base_en = scope_lookup::lookup_enumeration(
-            en.shared_as<element>(), base_name_str);
+        if (!aliased_object_type) {
+            base_en = scope_lookup::lookup_enumeration(
+                en.shared_as<element>(), base_name_str);
+        }
 
         // If not found and name is qualified, try imported enums
-        if (!base_en && base_name_str.find("::") != std::string::npos) {
+        if (!aliased_object_type && !base_en && base_name_str.find("::") != std::string::npos) {
             // Parse the qualified name into a k::name
             std::vector<std::string> parts;
             std::size_t pos = 0;
@@ -1286,7 +1374,9 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
 
         if (!base_en) {
             // Not an enum — try to find as a struct (object-backed typed enum)
-            auto obj_agg = scope_lookup::lookup_structure(en.shared_as<element>(), base_name_str);
+            auto obj_agg = aliased_object_type
+                ? aliased_object_type->get_struct()
+                : scope_lookup::lookup_structure(en.shared_as<element>(), base_name_str);
             if (!obj_agg && base_name_str.find("::") != std::string::npos) {
                 // Also try via qualified name resolution
                 std::vector<std::string> parts;
@@ -1302,7 +1392,7 @@ void symbol_resolver::resolve_enumeration(enumeration& en) {
             }
             if (obj_agg) {
                 // Object-backed typed enum: entries are represented as unsigned indices
-                en.set_object_type(obj_agg->get_struct_type());
+                en.set_object_type(aliased_object_type ? aliased_object_type : obj_agg->get_struct_type());
                 // Object-backed enums have no base enum (derivation not supported)
                 // Fall through to entry resolution below (index assignment)
             } else {

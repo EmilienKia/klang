@@ -60,6 +60,9 @@ enum Color {
 
 When `T` is an aggregate type (`struct`/`class`), the enum is **object-backed**:
 
+- `T` may be a transparent `alias`, including a chain of aliases or an alias
+  for an imported aggregate. The aggregate target is resolved in the alias
+  declaration's scope.
 - The enum runtime value is still an integer index.
 - Each entry maps to one object in a static backing table.
 - `E -> const T&` conversion returns a reference to the corresponding table element.
