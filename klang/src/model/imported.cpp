@@ -43,6 +43,8 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/GlobalVariable.h>
+#include <deque>
+#include <stdexcept>
 #include <unordered_set>
 
 namespace k::model {
@@ -699,15 +701,25 @@ convert_template_origin_args(const kdi::kdi_template_origin& origin,
     return model_args;
 }
 
+struct imported_enum_brace_init final : k::parse::ast::brace_init_list {
+    std::deque<std::string> lexeme_storage;
+
+    imported_enum_brace_init()
+        : brace_init_list({}, true) {}
+};
+
 static std::shared_ptr<k::parse::ast::brace_init_list>
 rebuild_object_init_brace(const kdi::kdi_enum_entry& entry)
 {
     if (entry.object_init_members.empty()) return nullptr;
 
-    std::vector<std::shared_ptr<k::parse::ast::expression>> elements;
-    elements.reserve(entry.object_init_members.size());
+    auto result = std::make_shared<imported_enum_brace_init>();
+    result->elements.reserve(entry.object_init_members.size());
     for (const auto& [member_name, member_value] : entry.object_init_members) {
-        std::string lit_txt = std::to_string(member_value);
+        result->lexeme_storage.push_back(std::to_string(member_value));
+        const auto& lit_txt = result->lexeme_storage.back();
+        result->lexeme_storage.push_back(member_name);
+        const auto& name_txt = result->lexeme_storage.back();
         auto lit = std::make_shared<k::parse::ast::literal_expr>(
             lex::any_literal{lex::integer{
                 lit_txt,
@@ -718,17 +730,13 @@ rebuild_object_init_brace(const kdi::kdi_enum_entry& entry)
                 lex::LONGLONG}});
         auto designated = std::make_shared<k::parse::ast::designated_init_element>(
             lex::operator_(".", lex::operator_::DOT),
-            lex::identifier(member_name),
+            lex::identifier(name_txt),
             std::vector<lex::identifier>{},
             std::static_pointer_cast<k::parse::ast::expression>(lit));
-        elements.push_back(std::static_pointer_cast<k::parse::ast::expression>(designated));
+        result->elements.push_back(std::static_pointer_cast<k::parse::ast::expression>(designated));
     }
 
-    return std::make_shared<k::parse::ast::brace_init_list>(
-        lex::punctuator("{", lex::punctuator::BRACE_OPEN),
-        lex::punctuator("}", lex::punctuator::BRACE_CLOSE),
-        elements,
-        /*is_designated=*/true);
+    return result;
 }
 
 static std::shared_ptr<doc::doc_entity>
@@ -1366,6 +1374,12 @@ unit::get_or_create_imported_enum(const k::name& fq_name,
     if (!kdi_en) {
         return nullptr;
     }
+    if (kdi_en->object_table_kind) {
+        if (*kdi_en->object_table_kind != "runtime")
+            throw std::runtime_error("Unsupported KDI enum object_table_kind for " + lookup_key);
+        if (!kdi_en->object_type || !kdi_en->object_table_symbol || kdi_en->object_table_symbol->empty())
+            throw std::runtime_error("Invalid KDI runtime enum table metadata for " + lookup_key);
+    }
 
     // Every spelling of an imported declaration shares its nominal enum type.
     const auto canonical_name = kdi_en->fq_name.empty()
@@ -1377,6 +1391,8 @@ unit::get_or_create_imported_enum(const k::name& fq_name,
     // Create the enumeration model node
     auto root = get_root_namespace();
     auto en = enumeration::make_shared(root, kdi_en->name);
+    en->set_imported(true);
+    en->set_runtime_table(kdi_en->object_table_kind == "runtime");
     if (!kdi_en->fq_name.empty()) {
         en->assign_name(fq_to_abs_kname(kdi_en->fq_name));
     }
@@ -1405,12 +1421,23 @@ unit::get_or_create_imported_enum(const k::name& fq_name,
     }
 
     // Add all entries
+    std::unordered_set<int64_t> enum_slots;
     for (auto& kdi_entry : kdi_en->entries) {
+        const bool alias = kdi_en->object_type && !enum_slots.insert(kdi_entry.value).second;
+        const kdi::kdi_enum_entry* initializer = &kdi_entry;
+        if (kdi_en->object_type && !alias && initializer->object_init_members.empty()) {
+            for (const auto& candidate : kdi_en->entries) {
+                if (candidate.value == kdi_entry.value && !candidate.object_init_members.empty()) {
+                    initializer = &candidate;
+                    break;
+                }
+            }
+        }
         en->add_entry(
             kdi_entry.name,
             kdi_entry.value,
             kdi_entry.is_default,
-            rebuild_object_init_brace(kdi_entry));
+            rebuild_object_init_brace(*initializer), {}, false, alias);
     }
 
     // Resolve base enum (derivation)

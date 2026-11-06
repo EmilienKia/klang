@@ -1274,15 +1274,30 @@ With an explicit primitive type (`enum E : unsigned byte`), that explicit primit
   imported aggregate; each alias target resolves in its declaration scope.
 - Runtime representation is an integer index.
 - Each entry maps to one object in a static backing table.
+- Aliases share a table object and do not add reverse-lookup candidates.
 - `E -> const AggregateType&` conversion returns a reference to that table entry.
 - `AggregateType -> E` conversion performs a runtime lookup against the backing
   table and requires value equality support for the aggregate.
 - `AggregateType -> E` on non-match is fatal by default.
 - In `if` condition-variable declarations (`if (e : E = obj)`), a non-match
   follows the existing soft-fail path and branches to `else`.
-- Entry initializers support designated braces (`NAME{.f = v}`), constructor form (`NAME(args)`), and zero-init (`NAME`).
-- Implicit entries in object-backed enums derive from the previous entry value
-  (copy + increment semantics when supported by the underlying object shape).
+- Entry initializers include designated braces (`NAME{.f = v}`), explicit
+  constructor form (`NAME(args)`), and implicit entries (`NAME`).
+- Constructor forms use ordinary overload, argument adaptation, default-argument
+  and access rules. `NAME()` selects a zero-argument constructor, unlike `NAME`.
+- An object-backed entry cannot use an integer value initializer (`NAME = 1`).
+- Constant backing tables currently support trivial zero-initialization,
+  designated integer literals, and implicit increments of an integer field,
+  including trivial struct bases and trivial classes with only their implicit
+  `k::Object` base. Implicit and designated values do not invoke constructors.
+- Runtime tables construct constructor-form entries lazily with literal
+  arguments. Derived tables also support trivial designated and implicit entries
+  and copy inherited entries from the initialized base table, including imported
+  constant tables; nontrivial backing types need a const-reference copy
+  constructor. Imported runtime tables are accessed through their lazy accessor.
+  Failed construction rolls back completed entries and permits retry; module
+  finalization destroys successful entries in reverse order. Other nontrivial
+  forms are diagnosed.
 
 ### 19.3 Enum Derivation
 
