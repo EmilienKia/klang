@@ -24,6 +24,7 @@
 #include "../src/model/expressions.hpp"
 #include "../src/model/mangler.hpp"
 #include "../src/model/model_builder.hpp"
+#include "../src/model/tools/kdi_exporter.hpp"
 #include "helpers.hpp"
 
 using namespace k::parse;
@@ -1671,6 +1672,76 @@ TEST_CASE("Typed enum — synthetic imported aggregate scopes are not namespaces
     CHECK(en->get_object_type() == point->get_struct_type());
 }
 
+TEST_CASE("Typed enum — aliases prefer imported aggregates over serialized lookup scopes",
+          "[gen][enum][typed][alias][import][regression]") {
+    auto producer = compile_model(R"(
+        module enum_alias_serialized_source;
+        struct Point { x: int; }
+    )");
+    REQUIRE(producer);
+    k::model::kdi_builder builder(*producer->get_context_for_test());
+    producer->get_unit()->accept(builder);
+    auto metadata = builder.take();
+    metadata.header.dependencies.clear();
+    bool has_point_scope = false;
+    for (const auto& child : metadata.unit.root_ns.namespaces) {
+        if (child.name == "Point") has_point_scope = true;
+    }
+    if (!has_point_scope) {
+        kdi::kdi_namespace synthetic;
+        synthetic.name = "Point";
+        synthetic.fq_name = "::enum_alias_serialized_source::Point";
+        metadata.unit.root_ns.namespaces.push_back(std::move(synthetic));
+    }
+    auto path = std::filesystem::current_path() / "enum_alias_serialized_source_fixture.kdi";
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); }
+    } cleanup{path};
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, path.string()));
+
+    test_logger logger;
+    k::source source{R"(
+        module enum_alias_serialized_consumer;
+        import enum_alias_serialized_source;
+        alias Qualified : enum_alias_serialized_source::Point;
+        alias Rooted : ::enum_alias_serialized_source::Point;
+        enum First : Qualified { VALUE{.x = 17}; }
+        enum Second : Rooted { VALUE{.x = 42}; }
+        namespace client {
+            alias Backing : enum_alias_serialized_source::Point;
+            enum Third : Backing { VALUE{.x = 23}; }
+        }
+    )"};
+    k::parse::parser parser(logger, source);
+    auto ast = parser.parse_unit();
+    REQUIRE(ast);
+    auto context = k::model::context::create();
+    auto unit = k::model::unit::create(context);
+    k::model::model_builder::visit(logger, context, *ast, *unit);
+    k::path_lookup_file_resolver files;
+    files.add_explicit_path("enum_alias_serialized_source", path.string());
+    k::model::kdi_importer importer(*unit, files, logger);
+    importer.import_all();
+    importer.materialise_all(context);
+
+    auto imported_scope = unit->get_root_namespace()->get_child_namespace("enum_alias_serialized_source");
+    auto point = imported_scope->get_aggregate("Point");
+    auto synthetic_scope = imported_scope->get_child_namespace("Point");
+    REQUIRE(point);
+    REQUIRE(synthetic_scope->is_declared_namespace());
+    REQUIRE_FALSE(synthetic_scope->is_source_declared_namespace());
+
+    k::model::gen::symbol_resolver symbols(logger, context, *unit);
+    REQUIRE_NOTHROW(symbols.resolve());
+    auto root = unit->get_root_namespace();
+    for (const auto& en : {root->get_enum("First"), root->get_enum("Second"),
+                           root->get_child_namespace("client")->get_enum("Third")}) {
+        REQUIRE(en);
+        CHECK(en->get_object_type() == point->get_struct_type());
+    }
+}
+
 TEST_CASE("Typed enum — cyclic aggregate aliases retain the alias cycle diagnostic",
           "[gen][enum][typed][alias][regression]") {
     try {
@@ -1723,6 +1794,17 @@ TEST_CASE("Typed enum — imported namespaces cannot be alias targets",
             namespace enum_alias_namespace_source::Point {}
             alias Backing : enum_alias_namespace_source::Point;
             enum E : Backing { VALUE; }
+        )",
+        R"(
+            module enum_alias_namespace_consumer;
+            import enum_alias_namespace_source;
+            typedef Backing : ::enum_alias_namespace_source::values;
+        )",
+        R"(
+            module enum_alias_namespace_consumer;
+            import enum_alias_namespace_source;
+            namespace enum_alias_namespace_source::Point::Nested {}
+            alias Backing : ::enum_alias_namespace_source::Point;
         )"
     }) {
         auto compiler = k::compiler::create();

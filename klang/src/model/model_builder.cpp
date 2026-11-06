@@ -230,7 +230,10 @@ namespace k::model {
             auto curr = parent_ns;
             for (const auto& ident : ns.name->names) {
                 curr = curr->get_child_namespace(std::string{ident.content});
-                curr->mark_declared_namespace();
+                if (_building_imported_declarations)
+                    curr->mark_declared_namespace();
+                else
+                    curr->mark_source_declared_namespace();
                 ns_chain.push_back(curr);
             }
         } else {
