@@ -217,6 +217,30 @@ TEST_CASE("validate: integer-backed enum rejects object-backed-only fields", "[v
     REQUIRE(!r.is_valid());
 }
 
+TEST_CASE("validate: runtime enum table metadata", "[validate][enum]") {
+    kdi_file f;
+    f.header.module_name = "enum::runtime";
+    f.unit.name = "enum::runtime";
+    f.types.aggregates.push_back({"enum::runtime::Value", "_KS_enum_runtime_Value"});
+    kdi_enum en;
+    en.name = "E";
+    en.fq_name = "enum::runtime::E";
+    en.underlying_type = kdi_type::make_int(8, false);
+    en.object_type = kdi_type::make_aggregate("enum::runtime::Value");
+    en.object_table_symbol = "accessor";
+    en.object_table_kind = "runtime";
+    en.entries.push_back(kdi_enum_entry{"A", 0, true, {}});
+    f.unit.root_ns.enums.push_back(en);
+    REQUIRE(kdi_validate(f).is_valid());
+    f.unit.root_ns.enums[0].object_table_kind = "unknown";
+    REQUIRE_FALSE(kdi_validate(f).is_valid());
+    f.unit.root_ns.enums[0].object_table_kind = "runtime";
+    f.unit.root_ns.enums[0].object_table_symbol.reset();
+    REQUIRE_FALSE(kdi_validate(f).is_valid());
+    f.unit.root_ns.enums[0].object_type.reset();
+    REQUIRE_FALSE(kdi_validate(f).is_valid());
+}
+
 TEST_CASE("validate: generic template_def requires signature and no source", "[validate][template][generic]") {
     kdi_file f = make_valid_file();
 

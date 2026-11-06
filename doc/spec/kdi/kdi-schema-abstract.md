@@ -562,6 +562,7 @@ KdiEnum {
   underlying_type   : KdiType
   object_type       : KdiType?      -- aggregate ref for object-backed enums
   object_table_symbol : string?     -- required when object_type is set
+  object_table_kind : "runtime"?    -- absent denotes a constant table
   base_fq_name      : string?       -- enum derivation base
   entries           : [KdiEnumEntry]
   doc               : KdiDocBlock?
@@ -582,9 +583,14 @@ KdiObjectInitMember {
 
 Compatibility rules:
 
-* Integer-backed enums omit `object_type` and `object_table_symbol`.
+* Integer-backed enums omit `object_type`, `object_table_symbol`, and
+  `object_table_kind`.
 * Legacy payloads without typed-enum fields remain valid.
 * If `object_type` is present, importers must treat the enum as object-backed.
+* When `object_table_kind` is absent, `object_table_symbol` names the constant
+  array, including in older descriptors. When it is `"runtime"`, the symbol
+  names a no-argument function returning a pointer to the initialized array.
+  Importers must call it before accessing an entry. Other kinds are invalid.
 
 ---
 

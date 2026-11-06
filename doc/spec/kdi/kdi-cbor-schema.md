@@ -584,6 +584,7 @@ Enum = {
   "underlying_type"     : Type,
   ?"object_type"         : Type,     -- aggregate ref for object-backed enums
   ?"object_table_symbol" : text,
+  ?"object_table_kind"   : "runtime",
   ?"base_fq_name"        : text,
   "entries"             : array[EnumEntry],
   ?"doc"                : DocBlock
@@ -606,6 +607,10 @@ Compatibility:
 
 - Integer-backed enums omit typed metadata fields.
 - Older payloads (without typed-enum fields) remain valid and must be accepted.
+- When `object_table_kind` is absent, `object_table_symbol` names the constant
+  array, including in older descriptors. The value `"runtime"` identifies a
+  no-argument accessor returning the initialized table address. Other values
+  are invalid; integer-backed enums must not carry this field.
 
 ---
 

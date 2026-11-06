@@ -164,6 +164,10 @@ void validate_enum(const kdi_enum& en,
         result.add(path, "fq_name must not be empty");
     }
     validate_type(en.underlying_type, path + ".underlying_type", types, result);
+    if (en.object_table_kind && *en.object_table_kind != "runtime")
+        result.add(path + ".object_table_kind", "must be 'runtime' when present");
+    if (en.object_table_kind && !en.object_type)
+        result.add(path + ".object_table_kind", "must not be set when object_type is absent");
     if (en.object_type.has_value()) {
         validate_type(*en.object_type, path + ".object_type", types, result);
         if (!std::holds_alternative<kdi_aggregate_ref>(en.object_type->value)) {
