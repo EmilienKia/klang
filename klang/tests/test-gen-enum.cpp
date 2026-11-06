@@ -23,6 +23,7 @@
 #include "../src/errors.hpp"
 #include "../src/model/expressions.hpp"
 #include "../src/model/mangler.hpp"
+#include "../src/model/model_builder.hpp"
 #include "helpers.hpp"
 
 using namespace k::parse;
@@ -1549,6 +1550,193 @@ TEST_CASE("Typed enum — enum entry to const underlying reference", "[gen][enum
     )");
     REQUIRE(jit);
     CHECK(jit->lookup_symbol<int(*)()>("sum_right")() == 1);
+}
+
+TEST_CASE("Typed enum — aggregate alias chains preserve backing table references",
+          "[gen][enum][typed][alias][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_aggregate_alias;
+        namespace api {
+            alias PointAlias : values::Point;
+            alias Backing : PointAlias;
+            enum Direction : Backing {
+                FIRST{.x = 17};
+                SECOND{.x = 42};
+            }
+            namespace values {
+                struct Point { x: int; }
+            }
+        }
+        get_index() : int { return api::Direction::SECOND; }
+        get_first() : int {
+            p: const api::PointAlias& = api::Direction::FIRST;
+            return p.x;
+        }
+        get_second() : int {
+            p: const api::values::Point& = api::Direction::SECOND;
+            return p.x;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_index")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("get_first")() == 17);
+    CHECK(jit->lookup_symbol<int(*)()>("get_second")() == 42);
+}
+
+TEST_CASE("Typed enum — aliases to imported aggregates preserve backing references",
+          "[gen][enum][typed][alias][import][regression]") {
+    constexpr std::string_view producer = R"(
+        module enum_alias_source;
+        struct Point { x: int; }
+        alias ExportedPoint : Point;
+    )";
+    constexpr std::string_view consumer = R"(
+        module enum_alias_consumer;
+        import enum_alias_source;
+        alias PointAlias : enum_alias_source::Point;
+        alias Backing : PointAlias;
+        enum Direction : Backing {
+            FIRST{.x = 17};
+            SECOND{.x = 42};
+        }
+        enum Other : enum_alias_source::ExportedPoint {
+            VALUE{.x = 23};
+        }
+        main() : int {
+            first: const PointAlias& = Direction::FIRST;
+            second: const enum_alias_source::Point& = Direction::SECOND;
+            other: const enum_alias_source::Point& = Other::VALUE;
+            if (first.x != 17 || second.x != 42 || other.x != 23) return 1;
+            if (Direction::SECOND != 1) return 2;
+            return 42;
+        }
+    )";
+    auto result = build_exec_with_lib(producer, consumer);
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("Typed enum — aggregate alias target follows a using declaration",
+          "[gen][enum][typed][alias][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_alias_using;
+        using Selected = values::Point;
+        alias Backing : Selected;
+        enum E : Backing { VALUE{.x = 42}; }
+        namespace values { struct Point { x: int; } }
+        read() : int {
+            p: const values::Point& = E::VALUE;
+            return p.x;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("read")() == 42);
+}
+
+TEST_CASE("Typed enum — synthetic imported aggregate scopes are not namespaces",
+          "[gen][enum][typed][alias][import][regression]") {
+    TmpKdi lib(R"(
+        module enum_alias_fake_source;
+        struct Point { x: int; }
+    )");
+    test_logger logger;
+    k::source source{R"(
+        module enum_alias_fake_consumer;
+        import enum_alias_fake_source;
+        alias Backing : enum_alias_fake_source::Point;
+        enum E : Backing { VALUE{.x = 42}; }
+    )"};
+    k::parse::parser parser(logger, source);
+    auto ast = parser.parse_unit();
+    REQUIRE(ast);
+    auto context = k::model::context::create();
+    auto unit = k::model::unit::create(context);
+    k::model::model_builder::visit(logger, context, *ast, *unit);
+    k::path_lookup_file_resolver files;
+    files.add_explicit_path("enum_alias_fake_source", lib.kdi_path);
+    k::model::kdi_importer importer(*unit, files, logger);
+    importer.import_all();
+    importer.materialise_all(context);
+    auto imported_scope = unit->get_root_namespace()->get_child_namespace("enum_alias_fake_source");
+    REQUIRE(imported_scope);
+    auto point = imported_scope->get_aggregate("Point");
+    REQUIRE(point);
+    auto synthetic_scope = imported_scope->get_child_namespace("Point");
+    REQUIRE_FALSE(synthetic_scope->is_declared_namespace());
+
+    k::model::gen::symbol_resolver symbols(logger, context, *unit);
+    REQUIRE_NOTHROW(symbols.resolve());
+    auto en = unit->get_root_namespace()->get_enum("E");
+    REQUIRE(en);
+    CHECK(en->get_object_type() == point->get_struct_type());
+}
+
+TEST_CASE("Typed enum — cyclic aggregate aliases retain the alias cycle diagnostic",
+          "[gen][enum][typed][alias][regression]") {
+    try {
+        gen_jit_throws(R"(
+            module enum_alias_cycle;
+            alias A : B;
+            alias B : A;
+            enum E : A { VALUE; }
+        )");
+        FAIL("Expected an alias cycle error");
+    } catch (const k::log::compiler_error& error) {
+        CHECK(error.get_diagnostic().code
+              == static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_CYCLE));
+    }
+}
+
+TEST_CASE("Typed enum — namespace alias targets remain invalid",
+          "[gen][enum][typed][alias][regression]") {
+    try {
+        gen_jit_throws(R"(
+            module enum_alias_namespace;
+            namespace values { struct Point { x: int; } }
+            alias Backing : values;
+            enum E : Backing { VALUE; }
+        )");
+        FAIL("Expected a namespace alias error");
+    } catch (const k::log::compiler_error& error) {
+        CHECK(error.get_diagnostic().code
+              == static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_NAMESPACE_TARGET));
+    }
+}
+
+TEST_CASE("Typed enum — imported namespaces cannot be alias targets",
+          "[gen][enum][typed][alias][import][regression]") {
+    TmpKdi lib(R"(
+        module enum_alias_namespace_source;
+        struct Point { x: int; }
+        namespace values { struct Marker { x: int; } }
+    )");
+    for (auto source : {
+        R"(
+            module enum_alias_namespace_consumer;
+            import enum_alias_namespace_source;
+            alias Backing : enum_alias_namespace_source::values;
+            enum E : Backing { VALUE; }
+        )",
+        R"(
+            module enum_alias_namespace_consumer;
+            import enum_alias_namespace_source;
+            namespace enum_alias_namespace_source::Point {}
+            alias Backing : enum_alias_namespace_source::Point;
+            enum E : Backing { VALUE; }
+        )"
+    }) {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("enum_alias_namespace_source", lib.kdi_path);
+        compiler->set_file_resolver(resolver);
+        try {
+            compiler->parse_source("enum_alias_namespace_consumer.k", source);
+            FAIL("Expected a namespace alias error");
+        } catch (const k::log::compiler_error& error) {
+            CHECK(error.get_diagnostic().code
+                  == static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_NAMESPACE_TARGET));
+        }
+    }
 }
 
 TEST_CASE("Typed enum — object to enum conversion and soft-fail in if", "[gen][enum][typed][expected]") {

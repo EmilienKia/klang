@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 #include "resolvers_symbol.hpp"
+#include "resolvers_aggregate.hpp"
 #include "gen_helpers.hpp"
 #include "../model/imported.hpp"
 #include "../model/template.hpp"
@@ -490,22 +491,38 @@ namespace {
 bool alias_target_denotes_namespace(const element& scope, const k::name& target_name) {
     auto enclosing = scope_lookup::enclosing_namespace(scope);
     if (!enclosing) return false;
+    auto root = scope_lookup::root_namespace(scope);
 
-    auto walk = [](std::shared_ptr<const ns> from, const k::name& name) -> bool {
+    auto walk = [](std::shared_ptr<const ns> from, const k::name& name) -> std::shared_ptr<const ns> {
         std::shared_ptr<const ns> current = std::move(from);
         for (size_t i = 0; i < name.size(); ++i) {
-            if (!current) return false;
+            if (!current) return {};
             current = current->get_child_namespace(name[i]);
         }
-        return (bool) current;
+        return current;
+    };
+
+    auto resolves_to_imported_aggregate = [](std::shared_ptr<const ns> from, const k::name& name) -> bool {
+        return from && std::dynamic_pointer_cast<imported_aggregate>(
+            aggregate_type_resolver::resolve_struct_from(*from, name)) != nullptr;
     };
 
     if (target_name.has_root_prefix()) {
-        return walk(scope_lookup::root_namespace(scope), target_name.without_root_prefix());
+        auto unrooted_name = target_name.without_root_prefix();
+        auto target_ns = walk(root, unrooted_name);
+        if (target_ns && target_ns->is_declared_namespace()) return true;
+        if (resolves_to_imported_aggregate(root, unrooted_name)) return false;
+        return target_ns != nullptr;
     }
 
     for (std::shared_ptr<const ns> current = enclosing; current; ) {
-        if (walk(current, target_name)) return true;
+        // Imported aggregates may also be materialised as namespace nodes so
+        // their qualified members can be resolved. Prefer the actual type
+        // when an alias target name identifies both representations.
+        auto target_ns = walk(current, target_name);
+        if (target_ns && target_ns->is_declared_namespace()) return true;
+        if (resolves_to_imported_aggregate(current, target_name)) return false;
+        if (target_ns) return true;
         if (current->is_root()) break;
         current = current->parent<ns>();
     }
@@ -522,7 +539,8 @@ void symbol_resolver::check_alias_declarations(const alias_holder& holder, const
         visit_named_element(*al);
         const k::name& target = al->get_target_name();
         if (target.empty()) continue;
-        if (alias_target_denotes_namespace(scope, target)) {
+        auto declaration_scope = al->parent<element>();
+        if (alias_target_denotes_namespace(declaration_scope ? *declaration_scope : scope, target)) {
             throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_NAMESPACE_TARGET),
                         al->get_decl_lexeme(),
                         "'{}' names a namespace: a namespace cannot be aliased with '{}'; "

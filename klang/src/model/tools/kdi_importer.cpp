@@ -737,6 +737,7 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
     // can be attached even when no symbol is explicitly referenced yet.
     auto model_ns = imported_namespace(_unit, ns.fq_name);
     if (model_ns) {
+        model_ns->mark_declared_namespace();
         if (auto doc = to_namespace_doc(ns.doc)) {
             model_ns->set_documentation(std::move(doc));
         }

@@ -138,13 +138,16 @@ public:
      * the renamed type itself for a soft alias), or nullptr if it cannot be
      * resolved yet or if the alias does not denote a type.
      * Sets @p cycle when an alias cycle is detected.
+     * The early enum pass may accept a concrete aggregate before LLVM layout;
+     * this does not accept unresolved wrappers or other unresolved types.
      */
     static std::shared_ptr<type>
     materialize_alias_type(const std::shared_ptr<alias_definition>& alias,
                            const std::shared_ptr<context>& ctx,
                            const std::function<std::shared_ptr<type>(const k::name&, const element&)>& resolve_by_name,
                            bool& cycle,
-                           const std::function<std::shared_ptr<type>(const std::shared_ptr<type>&, const element&)>& resolve_chain = {});
+                           const std::function<std::shared_ptr<type>(const std::shared_ptr<type>&, const element&)>& resolve_chain = {},
+                           bool allow_unlaid_out_aggregate = false);
 
     /**
      * Resolve a use of a parameterised alias, e.g. 'Vec<int>' declared as
