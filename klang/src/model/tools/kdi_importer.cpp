@@ -510,17 +510,141 @@ static std::string extract_llvm_type_name(const std::string& llvm_def) {
     return llvm_def.substr(1, eq - 1); // strip leading '%'
 }
 
+struct llvm_type_identity {
+    std::string fq_name;
+    std::string conflicting_fq_name;
+    bool ambiguous = false;
+};
+
+using llvm_type_identity_map = std::unordered_map<std::string, llvm_type_identity>;
+
+static void record_llvm_type_identity(llvm_type_identity_map& identities,
+                                     const std::string& llvm_name,
+                                     const std::string& fq_name) {
+    if (llvm_name.empty() || fq_name.empty()) return;
+    const auto canonical_fq = fq_name.starts_with("::") ? fq_name.substr(2) : fq_name;
+    auto [it, inserted] = identities.emplace(llvm_name, llvm_type_identity{canonical_fq, {}, false});
+    if (!inserted && it->second.fq_name != canonical_fq) {
+        it->second.conflicting_fq_name = canonical_fq;
+        it->second.ambiguous = true;
+    }
+}
+
+static void collect_llvm_type_identities(const kdi::kdi_namespace& ns,
+                                         llvm_type_identity_map& identities) {
+    for (const auto& un : ns.unions) {
+        record_llvm_type_identity(identities, extract_llvm_type_name(un.llvm_def), un.fq_name);
+    }
+
+    std::function<void(const kdi::kdi_aggregate&)> collect_aggregate;
+    collect_aggregate = [&](const kdi::kdi_aggregate& agg) {
+        record_llvm_type_identity(identities, extract_llvm_type_name(agg.llvm_def), agg.fq_name);
+        for (const auto& nested_un : agg.nested_unions) {
+            record_llvm_type_identity(identities, extract_llvm_type_name(nested_un.llvm_def),
+                                      nested_un.fq_name);
+        }
+        for (const auto& nested : agg.nested) {
+            collect_aggregate(nested);
+        }
+    };
+    for (const auto& agg : ns.aggregates) {
+        collect_aggregate(agg);
+    }
+
+    for (const auto& child_ns : ns.namespaces) {
+        collect_llvm_type_identities(child_ns, identities);
+    }
+}
+
+using llvm_def_bundle = std::unordered_map<std::string, std::string>;
+
+struct seen_llvm_def {
+    std::string definition;
+    std::shared_ptr<const llvm_def_bundle> bundle;
+};
+
+static bool llvm_name_char(char ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+           (ch >= '0' && ch <= '9') || ch == '_' || ch == '.' ||
+           ch == '$' || ch == '-';
+}
+
+static std::string llvm_unsuffixed_name(const std::string& name) {
+    const auto dot = name.rfind('.');
+    if (dot == std::string::npos || dot + 1 == name.size() ||
+        !std::all_of(name.begin() + static_cast<std::ptrdiff_t>(dot + 1), name.end(),
+                     [](char ch) { return ch >= '0' && ch <= '9'; })) {
+        return name;
+    }
+    return name.substr(0, dot);
+}
+
+/// A suffix alone does not establish layout equivalence. Compare each renamed
+/// reference's definition from the same exported bundle, recursively.
+static bool equivalent_llvm_defs(const std::string& first, const llvm_def_bundle& first_bundle,
+                                 const std::string& second, const llvm_def_bundle& second_bundle,
+                                 const llvm_type_identity_map& identities) {
+    std::unordered_set<std::string> active;
+    std::function<bool(const std::string&, const std::string&)> compare;
+    compare = [&](const std::string& lhs, const std::string& rhs) {
+        const auto lbody = lhs.find(" = type ");
+        const auto rbody = rhs.find(" = type ");
+        if (lbody == std::string::npos || rbody == std::string::npos) return false;
+        size_t l = lbody + 8, r = rbody + 8;
+        while (l < lhs.size() && r < rhs.size()) {
+            if (lhs[l] != '%' || rhs[r] != '%') {
+                if (lhs[l++] != rhs[r++]) return false;
+                continue;
+            }
+            const auto lstart = ++l, rstart = ++r;
+            while (l < lhs.size() && llvm_name_char(lhs[l])) ++l;
+            while (r < rhs.size() && llvm_name_char(rhs[r])) ++r;
+            // Quoted names are compared literally, never normalized.
+            if (l == lstart || r == rstart) {
+                if (l != lstart || r != rstart) return false;
+                continue;
+            }
+            const auto lname = lhs.substr(lstart, l - lstart);
+            const auto rname = rhs.substr(rstart, r - rstart);
+            if (lname == rname) continue;
+
+            const auto lbase = llvm_unsuffixed_name(lname);
+            const auto rbase = llvm_unsuffixed_name(rname);
+            // One side must be the canonical name. Do not equate unrelated
+            // explicitly registered types, even if their spelling is similar.
+            const std::string& base = lname == rbase ? lname : rname;
+            if (!((lname == rbase && rname != rbase) ||
+                  (rname == lbase && lname != lbase))) return false;
+            const auto identity = identities.find(base);
+            if (identity == identities.end() || identity->second.ambiguous) return false;
+            for (const auto& name : {lname, rname}) {
+                const auto named = identities.find(name);
+                if (named != identities.end() &&
+                    (named->second.ambiguous || named->second.fq_name != identity->second.fq_name))
+                    return false;
+            }
+            const auto left = first_bundle.find(lname);
+            const auto right = second_bundle.find(rname);
+            if (left == first_bundle.end() || right == second_bundle.end()) return false;
+            const std::string key = lname + '\n' + rname;
+            if (active.insert(key).second) {
+                if (!compare(left->second, right->second)) return false;
+                active.erase(key);
+            }
+        }
+        return l == lhs.size() && r == rhs.size();
+    };
+    return compare(first, second);
+}
+
 /// Collect all LLVM struct type definition strings from @p ns (recursively) into @p out,
 /// deduplicating by type name so a type shared by several KDIs appears at most once in the
 /// combined IR blob (LLVM rejects two definitions of the same type name).
 ///
-/// Deduplication by name is only sound because every LLVM type name is unique per entity:
-/// a nested type of a template instantiation is named after its enclosing instantiation
-/// (`Expected__long__…::Storage_union`), not by its bare short name. When that invariant is
-/// broken, two structurally different types share a name and the silent skip below would
-/// collapse them onto a single (possibly too small) layout — exactly the bug that made
-/// `Expected<long,E>` reuse `Expected<int,E>`'s 4-byte payload. Any same-name/different-body
-/// pair is therefore reported as a fatal error rather than silently dropped.
+/// A same-name/different-body pair remains an error unless the named type has
+/// an unambiguous KDI identity and its referenced copies have matching layouts.
+/// Definitions attached to their own KDI declaration are collected before the
+/// dependency copies bundled with other aggregates.
 ///
 /// Nested-union defs are emitted BEFORE the containing aggregate's def so that
 /// LLVM resolves the inner type without creating an opaque forward-reference for
@@ -533,34 +657,60 @@ static std::string extract_llvm_type_name(const std::string& llvm_def) {
 static void collect_llvm_defs_from_namespace(
     const kdi::kdi_namespace& ns,
     std::string& out,
-    std::unordered_map<std::string, std::string>& seen,
+    std::unordered_map<std::string, seen_llvm_def>& seen,
+    const llvm_type_identity_map& identities,
+    bool declarations_only,
     const std::function<void(const std::string&, const std::string&, const std::string&)>& on_conflict)
 {
-    const auto emit_definition = [&](const std::string& llvm_def) {
+    const auto emit_definition = [&](const std::string& llvm_def,
+                                     const std::shared_ptr<const llvm_def_bundle>& bundle) {
         if (llvm_def.empty()) return;
         auto tname = extract_llvm_type_name(llvm_def);
         if (tname.empty()) {
             // No parsable name: emit as-is (defensive, matches the historical behaviour).
-            out += llvm_def;
-            out += '\n';
+            if (!declarations_only) {
+                out += llvm_def;
+                out += '\n';
+            }
             return;
         }
-        auto [it, inserted] = seen.emplace(tname, llvm_def);
+        auto [it, inserted] = seen.emplace(tname, seen_llvm_def{llvm_def, bundle});
         if (inserted) {
             out += llvm_def;
             out += '\n';
-        } else if (it->second != llvm_def) {
-            on_conflict(tname, it->second, llvm_def);
+        } else {
+            const auto identity = identities.find(tname);
+            if (identity != identities.end() && identity->second.ambiguous) {
+                on_conflict(tname, it->second.definition, llvm_def);
+            } else if (it->second.definition == llvm_def) {
+                return;
+            } else if (identity != identities.end() &&
+                       equivalent_llvm_defs(it->second.definition, *it->second.bundle,
+                                            llvm_def, *bundle, identities)) {
+                return;
+            } else {
+                on_conflict(tname, it->second.definition, llvm_def);
+            }
         }
     };
     const auto emit = [&](const std::string& definitions) {
         // An aggregate also carries definitions for private by-value layout
         // dependencies. Deduplicate each named definition, not the whole bundle.
+        auto bundle = std::make_shared<llvm_def_bundle>();
         size_t start = 0;
         while (start < definitions.size()) {
             auto end = definitions.find('\n', start);
-            emit_definition(definitions.substr(start, end - start));
+            auto def = definitions.substr(start, end - start);
+            auto name = extract_llvm_type_name(def);
+            if (!name.empty()) bundle->emplace(std::move(name), std::move(def));
             if (end == std::string::npos) break;
+            start = end + 1;
+        }
+        start = 0;
+        while (start < definitions.size()) {
+            auto end = definitions.find('\n', start);
+            emit_definition(definitions.substr(start, end - start), bundle);
+            if (declarations_only || end == std::string::npos) break;
             start = end + 1;
         }
     };
@@ -576,7 +726,8 @@ static void collect_llvm_defs_from_namespace(
         emit_aggregate(agg);
     }
     for (const auto& child_ns : ns.namespaces) {
-        collect_llvm_defs_from_namespace(child_ns, out, seen, on_conflict);
+        collect_llvm_defs_from_namespace(child_ns, out, seen, identities,
+                                         declarations_only, on_conflict);
     }
 }
 
@@ -625,17 +776,36 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
     // from indirect imports are available during resolution.
     //
     // A single shared `seen` map across all KDIs ensures that a type reachable through
-    // several KDIs is emitted exactly once in the combined blob. Duplicates cause LLVM IR
-    // parse errors which silently drop ALL type bodies, leaving every aggregate as an
-    // opaque (unsized) placeholder. Two *different* bodies under the same name mean the
-    // producing module violated the "one LLVM type name per entity" invariant; dropping one
-    // of them would silently give an entity the wrong layout, so it is a fatal error.
+    // several KDIs is emitted exactly once in the combined blob. Imported aggregate
+    // definitions can bundle local copies of base-class LLVM types. Prefer each
+    // declaration's own definition even if a direct importer appears before its
+    // provider. Distinct K types with colliding LLVM names remain fatal errors.
     std::string combined_ir;
     combined_ir.reserve(4096);
-    std::unordered_map<std::string, std::string> seen_type_names;
-    const auto on_conflict = [this](const std::string& tname,
-                                    const std::string& first,
-                                    const std::string& second) {
+    std::unordered_map<std::string, seen_llvm_def> seen_type_names;
+    llvm_type_identity_map type_identities;
+    for (const auto& tdep : _transitive_kdis) {
+        if (tdep) {
+            collect_llvm_type_identities(tdep->unit.root_ns, type_identities);
+        }
+    }
+    for (const auto& imp : _unit.get_imports()) {
+        if (imp.kdi) {
+            collect_llvm_type_identities(imp.kdi->unit.root_ns, type_identities);
+        }
+    }
+    const auto on_conflict = [this, &type_identities](const std::string& tname,
+                                                     const std::string& first,
+                                                     const std::string& second) {
+        auto identity = type_identities.find(tname);
+        if (identity != type_identities.end() && identity->second.ambiguous) {
+            auto diag = k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT),
+                "Imported LLVM type '{0}' is claimed by distinct KDI identities '{1}' and '{2}'",
+                {tname, identity->second.fq_name, identity->second.conflicting_fq_name});
+            _logger.report(diag);
+            throw k::log::compiler_error(std::move(diag));
+        }
         auto diag = k::log::diagnostic::make_error(
             static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT),
             "Imported LLVM type '{0}' has two different definitions: '{1}' and '{2}'; "
@@ -644,14 +814,17 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
         _logger.report(diag);
         throw k::log::compiler_error(std::move(diag));
     };
-    // Transitive deps first (bases before derived)
-    for (const auto& tdep : _transitive_kdis) {
-        if (!tdep) continue;
-        collect_llvm_defs_from_namespace(tdep->unit.root_ns, combined_ir, seen_type_names, on_conflict);
-    }
-    for (const auto& imp : _unit.get_imports()) {
-        if (!imp.kdi) continue;
-        collect_llvm_defs_from_namespace(imp.kdi->unit.root_ns, combined_ir, seen_type_names, on_conflict);
+    for (bool declarations_only : {true, false}) {
+        for (const auto& tdep : _transitive_kdis) {
+            if (!tdep) continue;
+            collect_llvm_defs_from_namespace(tdep->unit.root_ns, combined_ir, seen_type_names,
+                                             type_identities, declarations_only, on_conflict);
+        }
+        for (const auto& imp : _unit.get_imports()) {
+            if (!imp.kdi) continue;
+            collect_llvm_defs_from_namespace(imp.kdi->unit.root_ns, combined_ir, seen_type_names,
+                                             type_identities, declarations_only, on_conflict);
+        }
     }
     if (!combined_ir.empty()) {
         ctx->intern_all_llvm_struct_defs(combined_ir);
