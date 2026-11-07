@@ -1713,3 +1713,23 @@
   - serialization
   - database client
   - message-bus client
+
+#### Crypto
+
+- [ ] Secure random bytes for salts, tokens, and application-managed nonces.
+- [ ] HMAC generation and constant-time verification, including stream adapters.
+- [ ] HKDF for deriving purpose-specific symmetric keys.
+- [ ] Password-based key derivation: Argon2id, scrypt, and PBKDF2 compatibility.
+- [ ] Asymmetric key pairs: generation, public/private keys, and metadata.
+- [ ] Digital signatures and verification: Ed25519, ECDSA, and RSA-PSS.
+- [ ] Key agreement: X25519 and ECDH, with HKDF integration.
+- [ ] Key serialization: PEM/DER, SubjectPublicKeyInfo, PKCS#1, and SEC1.
+- [ ] PKCS#8 private-key import/export, including encrypted keys.
+- [ ] X.509 certificate creation, extensions, and self-signing.
+- [ ] Certificate signing requests: creation, signing, parsing, and verification.
+- [ ] CA signing and issuance of certificates from signing requests.
+- [ ] Certificate and chain validation, trust stores, and hostname checks.
+- [ ] Certificate revocation checks using CRLs and OCSP.
+- [ ] PKCS#12 import/export for keys and certificate chains.
+- [ ] PKCS#7/CMS signed and encrypted message support.
+- [ ] Provider-aware capability discovery for the new crypto operations.
