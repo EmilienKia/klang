@@ -20,6 +20,7 @@
 #define KLANG_GENERATORS_HPP
 
 #include <optional>
+#include <stack>
 
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/IR/BasicBlock.h>
