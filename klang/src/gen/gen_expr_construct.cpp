@@ -34,7 +34,7 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Intrinsics.h>
-#include <llvm/ADT/ScopeExit.h>
+#include "../common/llvm_scope_exit.hpp"
 #include <algorithm>
 #include <exception>
 #include <unordered_set>
@@ -460,7 +460,7 @@ void implementation_generator::visit_constructor_invocation_expression(construct
             "this indicates a compiler bug — the constructed symbol must be a variable");
     }
     const int uncaught = std::uncaught_exceptions();
-    auto mark_member_constructed = llvm::make_scope_exit([&]() {
+    auto mark_member_constructed = k::make_scope_exit([&]() {
         if (std::uncaught_exceptions() != uncaught) return;
         auto flag = _constructor_member_dtor_flags.find(var_def);
         if (flag == _constructor_member_dtor_flags.end()) return;

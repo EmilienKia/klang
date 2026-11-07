@@ -127,7 +127,8 @@ TEST_CASE("compiler: debug metadata contains parameters, locals and lexical bloc
     os.flush();
 
     INFO(ir);
-    REQUIRE(ir.find("llvm.dbg.declare") != std::string::npos);
+    REQUIRE((ir.find("llvm.dbg.declare") != std::string::npos ||
+             ir.find("#dbg_declare") != std::string::npos));
     REQUIRE(ir.find("!DILocalVariable(name: \"a\", arg: 1") != std::string::npos);
     REQUIRE(ir.find("!DILocalVariable(name: \"result\"") != std::string::npos);
     REQUIRE(ir.find("!DILocalVariable(name: \"inner\"") != std::string::npos);
@@ -164,7 +165,8 @@ TEST_CASE("compiler: debug metadata covers loop scopes and catch variables", "[k
     os.flush();
 
     INFO(ir);
-    REQUIRE(ir.find("llvm.dbg.declare") != std::string::npos);
+    REQUIRE((ir.find("llvm.dbg.declare") != std::string::npos ||
+             ir.find("#dbg_declare") != std::string::npos));
     REQUIRE(ir.find("!DILocalVariable(name: \"caught\"") != std::string::npos);
     REQUIRE(ir.find("!DILexicalBlock(") != std::string::npos);
 }

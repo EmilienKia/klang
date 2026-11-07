@@ -34,7 +34,7 @@
 #include "../parse/ast.hpp"
 
 #include <llvm/IR/Verifier.h>
-#include <llvm/ADT/ScopeExit.h>
+#include "../common/llvm_scope_exit.hpp"
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 
 #include <algorithm>
@@ -831,7 +831,7 @@ public:
             }
         }
         _function_stack.push_back(fn.shared_as<function>());
-        auto pop_function = llvm::make_scope_exit([this] { _function_stack.pop_back(); });
+        auto pop_function = k::make_scope_exit([this] { _function_stack.pop_back(); });
         for (auto& param : fn.parameters()) {
             if (auto expr = param->get_init_expr()) expr->accept(*this);
             if (auto expr = param->get_default_expr()) expr->accept(*this);
@@ -883,7 +883,7 @@ void type_reference_resolver::visit_function(function& fn) {
         return;
     }
     if (_resolved_functions.contains(&fn) || !_resolving_functions.insert(&fn).second) return;
-    auto finish_resolution = llvm::make_scope_exit([this, &fn] {
+    auto finish_resolution = k::make_scope_exit([this, &fn] {
         _resolving_functions.erase(&fn);
     });
     trace("[type_reference_resolver::visit_function] '{}'", {fn.get_short_name()});
@@ -1087,7 +1087,7 @@ void type_reference_resolver::visit_function(function& fn) {
         }
     } else {
         _function_stack.push_back(fn.shared_as<function>());
-        auto pop_function = llvm::make_scope_exit([this] { _function_stack.pop_back(); });
+        auto pop_function = k::make_scope_exit([this] { _function_stack.pop_back(); });
         if (fn._block) {
             visit_block(*fn._block);
         }
@@ -1517,7 +1517,7 @@ void implementation_generator::visit_function(function &function) {
     llvm::Function* func = ensure_function_declared(function);
 
     begin_function_debug_scope(function, func);
-    auto debug_scope_guard = llvm::make_scope_exit([&]() {
+    auto debug_scope_guard = k::make_scope_exit([&]() {
         end_function_debug_scope();
     });
 

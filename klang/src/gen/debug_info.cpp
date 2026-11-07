@@ -24,12 +24,21 @@
 #include <vector>
 
 #include <llvm/BinaryFormat/Dwarf.h>
+#include <llvm/Config/llvm-config.h>
 #include <llvm/IR/DebugInfo.h>
 #include <llvm/IR/Module.h>
 
 namespace k::model::gen {
 
 namespace {
+
+auto debug_insert_before(llvm::IRBuilder<>& builder) {
+#if LLVM_VERSION_MAJOR >= 20
+    return builder.GetInsertPoint()->getIterator();
+#else
+    return &*builder.GetInsertPoint();
+#endif
+}
 
 struct resolved_debug_location {
     llvm::DIFile* file = nullptr;
@@ -305,7 +314,7 @@ void debug_info_emitter::declare_parameter(llvm::IRBuilder<>& builder,
     auto* expression = _builder->createExpression();
     auto* debug_loc = llvm::DILocation::get(_context->llvm_context(), loc.line, loc.col, scope);
     if (builder.GetInsertPoint() != builder.GetInsertBlock()->end()) {
-        _builder->insertDeclare(storage, variable, expression, debug_loc, &*builder.GetInsertPoint());
+        _builder->insertDeclare(storage, variable, expression, debug_loc, debug_insert_before(builder));
     } else {
         _builder->insertDeclare(storage, variable, expression, debug_loc, builder.GetInsertBlock());
     }
@@ -332,7 +341,7 @@ void debug_info_emitter::declare_local_variable(llvm::IRBuilder<>& builder,
     auto* expression = _builder->createExpression();
     auto* debug_loc = llvm::DILocation::get(_context->llvm_context(), loc.line, loc.col, scope);
     if (builder.GetInsertPoint() != builder.GetInsertBlock()->end()) {
-        _builder->insertDeclare(storage, variable, expression, debug_loc, &*builder.GetInsertPoint());
+        _builder->insertDeclare(storage, variable, expression, debug_loc, debug_insert_before(builder));
     } else {
         _builder->insertDeclare(storage, variable, expression, debug_loc, builder.GetInsertBlock());
     }

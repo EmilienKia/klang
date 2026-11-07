@@ -93,9 +93,9 @@ void __k_application_activation_error(int status);
 static KApplicationAnchorV1 k_application_runtime_anchor = {
     .abi_version = K_APPLICATION_ABI_VERSION,
     .struct_size = sizeof(KApplicationAnchorV1),
-    .active_application = ATOMIC_VAR_INIT(NULL),
-    .frozen_stream_application = ATOMIC_VAR_INIT(NULL),
-    .active_jit_host_count = ATOMIC_VAR_INIT(0)
+    .active_application = NULL,
+    .frozen_stream_application = NULL,
+    .active_jit_host_count = 0
 };
 
 static KApplicationAnchorV1* resolve_application_anchor(

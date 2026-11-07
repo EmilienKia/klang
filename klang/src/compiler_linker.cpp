@@ -30,7 +30,7 @@
 #include <stdexcept>
 #include <unordered_set>
 #include <unistd.h>
-#include <llvm/ADT/ScopeExit.h>
+#include "common/llvm_scope_exit.hpp"
 #include <llvm/ADT/SmallString.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
@@ -105,7 +105,7 @@ bool create_static_archive(log::logger& logger,
 
     const std::filesystem::path directory(temp_dir.c_str());
     const auto archive_path = directory / destination.filename();
-    auto cleanup = llvm::make_scope_exit([&] {
+    auto cleanup = k::make_scope_exit([&] {
         for (const auto& path : {archive_path, directory}) {
             std::error_code ec;
             std::filesystem::remove(path, ec);

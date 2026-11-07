@@ -30,7 +30,7 @@
 #include "../parse/ast.hpp"
 #include "../../../libkdi/src/kdi_aggregates.hpp"
 #include "llvm/Support/raw_os_ostream.h"
-#include <llvm/ADT/ScopeExit.h>
+#include "../common/llvm_scope_exit.hpp"
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DataLayout.h>
 #include <llvm/IR/DerivedTypes.h>
@@ -1251,7 +1251,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
 
             // Virtual-base adjustment can load a vbptr, so a select after
             // adjustment is insufficient: the null path must bypass all loads.
-            auto finish_nullable_upcast = llvm::make_scope_exit([&]() {
+            auto finish_nullable_upcast = k::make_scope_exit([&]() {
                 if (!upcast_merge) return;
                 auto* adjusted = _value;
                 auto* nonnull_predecessor = _builder->GetInsertBlock();
