@@ -512,3 +512,902 @@ TEST_CASE("MessageDigest const slice update checks bounds",
     REQUIRE(test);
     CHECK(test() == 0);
 }
+
+TEST_CASE("AES-128-GCM known answer and imported key ownership",
+          "[crypto][symmetric]") {
+    auto jit = gen_jit_with_crypto(R"K(
+        module __crypto_aes_gcm_known_answer_test__;
+        import k::crypto;
+
+        hexDigit(n: unsigned int) : byte {
+            value : unsigned int = n & 0x0Fu;
+            if (value < 10u) return (byte) (((unsigned int) '0') + value);
+            return (byte) (((unsigned int) 'a') + (value - 10u));
+        }
+
+        bytesToHex(bytes: const unsigned byte[]) : String {
+            hex : unsigned byte[]! = new unsigned byte[bytes.size * 2u + 1u];
+            i : unsigned int = 0u;
+            while (i < bytes.size) {
+                value : unsigned int = (unsigned int) bytes[i];
+                hex[i * 2u] = (unsigned byte) hexDigit(value >> 4u);
+                hex[i * 2u + 1u] = (unsigned byte) hexDigit(value);
+                ++i;
+            }
+            hex[bytes.size * 2u] = (unsigned byte) 0;
+            return String(hex);
+        }
+
+        test() : int {
+            try {
+                cipher : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::AES128GCM();
+                if (!cipher) return 1;
+                rawKey : unsigned byte[]! = new unsigned byte[16u];
+                nonce : unsigned byte[]! = new unsigned byte[12u];
+                plaintext : unsigned byte[]! = new unsigned byte[16u];
+                i : unsigned int = 0u;
+                while (i < 16u) {
+                    rawKey[i] = (unsigned byte) 0;
+                    plaintext[i] = (unsigned byte) 0;
+                    ++i;
+                }
+                i = 0u;
+                while (i < 12u) {
+                    nonce[i] = (unsigned byte) 0;
+                    ++i;
+                }
+                key : k::crypto::SymmetricKey! = cipher.importKey(rawKey);
+                rawKey[0u] = (unsigned byte) 1;
+                delete rawKey;
+                enc : k::crypto::EncryptSession! = cipher.encrypt(key, nonce);
+                nonce[0u] = (unsigned byte) 1;
+                usedNonce : unsigned byte[]! = enc.nonce();
+                if (usedNonce.size != 12u || usedNonce[0u] != (unsigned byte) 0) return 7;
+                usedNonce[0u] = (unsigned byte) 2;
+                usedNonce = enc.nonce();
+                if (usedNonce[0u] != (unsigned byte) 0) return 8;
+                ciphertext : unsigned byte[]! = enc.update(plaintext, 0u, 16u);
+                tag : unsigned byte[]! = enc.finalize();
+                if (bytesToHex(ciphertext) != String("0388dace60b6a392f328c2b971b2fe78")) return 2;
+                if (bytesToHex(tag) != String("ab6e47d42cec13bdf53a67b21257bddf")) return 3;
+
+                dec : k::crypto::DecryptSession! = cipher.decrypt(
+                    key, usedNonce, k::crypto::DecryptionStaging::Memory);
+                dec.update(ciphertext, 0u, ciphertext.size);
+                dec.finalize(tag);
+                recovered : unsigned byte[]! = new unsigned byte[16u];
+                if (dec.read(recovered, 0u, 16u) != 16u) return 4;
+                i = 0u;
+                while (i < 16u) {
+                    if (recovered[i] != (unsigned byte) 0) return 5;
+                    ++i;
+                }
+                if (dec.read(recovered, 0u, 16u) != 0u) return 6;
+                return 0;
+            } catch (e: k::crypto::CryptoException&) {
+                return -1;
+            }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Symmetric cipher factories and key validation",
+          "[crypto][symmetric]") {
+    auto jit = gen_jit_with_crypto(R"K(
+        module __crypto_symmetric_factories_test__;
+        import k::crypto;
+
+        check(cipher: k::crypto::SymmetricCipher!, expectedName: const String&,
+              expectedKeySize: unsigned int) : int throws(k::crypto::CryptoException) {
+            if (!cipher) return 1;
+            if (cipher.name() != expectedName) return 2;
+            if (cipher.keySize() != expectedKeySize || cipher.nonceSize() != 12u ||
+                cipher.tagSize() != 16u) return 3;
+            key : k::crypto::SymmetricKey! = cipher.generateKey();
+            if (!key || key.keySize() != expectedKeySize) return 4;
+            nonce : unsigned byte[]! = cipher.randomNonce();
+            if (nonce.size != cipher.nonceSize()) return 5;
+            return 0;
+        }
+
+        test() : int {
+            try {
+                if (check(k::crypto::SymmetricCipher::AES128GCM(),
+                          String("AES-128-GCM"), 16u) != 0) return 1;
+                if (check(k::crypto::SymmetricCipher::AES192GCM(),
+                          String("AES-192-GCM"), 24u) != 0) return 2;
+                if (check(k::crypto::SymmetricCipher::AES256GCM(),
+                          String("AES-256-GCM"), 32u) != 0) return 3;
+                cipher : k::crypto::SymmetricCipher! =
+                    k::crypto::SymmetricCipher::fromName(String("AES-128-GCM"));
+                if (!cipher || cipher.keySize() != 16u) return 4;
+                unsupported : k::crypto::SymmetricCipher! =
+                    k::crypto::SymmetricCipher::fromName(String("KLANG-UNSUPPORTED-CIPHER"));
+                if (unsupported != null) return 5;
+                badKey : unsigned byte[]! = new unsigned byte[15u];
+                rejected : bool = false;
+                try {
+                    key : k::crypto::SymmetricKey! = cipher.importKey(badKey);
+                } catch (e: k::crypto::CryptoInvalidInputException&) {
+                    rejected = true;
+                }
+                if (!rejected) return 6;
+                return 0;
+            } catch (e: k::crypto::CryptoException&) {
+                return -1;
+            }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("AES-GCM chunked authenticated decryption stages plaintext",
+          "[crypto][symmetric]") {
+    auto jit = gen_jit_with_crypto(R"K(
+        module __crypto_aes_gcm_staging_test__;
+        import k::crypto;
+
+        check(staging: k::crypto::DecryptionStaging) : int throws(k::crypto::CryptoException) {
+            cipher : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::AES256GCM();
+            key : k::crypto::SymmetricKey! = cipher.generateKey();
+            enc : k::crypto::EncryptSession! = cipher.encrypt(key);
+            nonce : unsigned byte[]! = enc.nonce();
+            if (nonce.size != 12u) return 1;
+
+            aad : byte[]! = new byte[6u];
+            aad[0u] = (byte) 'x';
+            aad[1u] = (byte) 'a';
+            aad[2u] = (byte) 'a';
+            aad[3u] = (byte) 'd';
+            aad[4u] = (byte) '!';
+            aad[5u] = (byte) 'y';
+            plaintext : unsigned byte[]! = new unsigned byte[9u];
+            plaintext[0u] = (unsigned byte) 'x';
+            plaintext[1u] = (unsigned byte) 'm';
+            plaintext[2u] = (unsigned byte) 'e';
+            plaintext[3u] = (unsigned byte) 's';
+            plaintext[4u] = (unsigned byte) 's';
+            plaintext[5u] = (unsigned byte) 'a';
+            plaintext[6u] = (unsigned byte) 'g';
+            plaintext[7u] = (unsigned byte) 'e';
+            plaintext[8u] = (unsigned byte) 'y';
+            signedPlaintext : byte[]! = new byte[4u];
+            unsignedAad : unsigned byte[]! = new unsigned byte[4u];
+            i : unsigned int = 0u;
+            while (i < 4u) {
+                signedPlaintext[i] = (byte) plaintext[i + 4u];
+                unsignedAad[i] = (unsigned byte) aad[i + 1u];
+                ++i;
+            }
+            enc.updateAad(aad, 1u, 2u);
+            enc.updateAad(aad, 3u, 2u);
+            first : unsigned byte[]! = enc.update(plaintext, 1u, 3u);
+            second : unsigned byte[]! = enc.update(signedPlaintext, 0u, 4u);
+            tag : unsigned byte[]! = enc.finalize();
+            if (first.size != 3u || second.size != 4u || tag.size != 16u) return 2;
+
+            dec : k::crypto::DecryptSession! = cipher.decrypt(key, nonce, staging);
+            dec.updateAad(unsignedAad, 0u, 4u);
+            dec.update(first, 0u, first.size);
+            signedCiphertext : byte[]! = new byte[6u];
+            i = 0u;
+            while (i < second.size) {
+                signedCiphertext[i + 1u] = (byte) second[i];
+                ++i;
+            }
+            dec.update(signedCiphertext, 1u, 4u);
+            recovered : unsigned byte[]! = new unsigned byte[9u];
+            i = 0u;
+            while (i < recovered.size) {
+                recovered[i] = (unsigned byte) 0x5a;
+                ++i;
+            }
+            rejected : bool = false;
+            try {
+                dec.read(recovered, 1u, 7u);
+            } catch (e: k::crypto::CryptoStateException&) {
+                rejected = true;
+            }
+            if (!rejected) return 3;
+            rejected = false;
+            try {
+                dec.read(recovered, 1u, 0u);
+            } catch (e: k::crypto::CryptoStateException&) {
+                rejected = true;
+            }
+            if (!rejected) return 13;
+            i = 0u;
+            while (i < recovered.size) {
+                if (recovered[i] != (unsigned byte) 0x5a) return 4;
+                ++i;
+            }
+            dec.finalize(tag);
+            if (dec.read(recovered, 1u, 0u) != 0u) return 14;
+            if (dec.read(recovered, 1u, 3u) != 3u) return 5;
+            signedRecovered : byte[]! = new byte[6u];
+            if (dec.read(signedRecovered, 1u, 4u) != 4u) return 6;
+            if (dec.read(recovered, 0u, 1u) != 0u) return 7;
+            if (recovered[0u] != (unsigned byte) 0x5a ||
+                recovered[8u] != (unsigned byte) 0x5a) return 8;
+            i = 1u;
+            while (i < 4u) {
+                if (recovered[i] != plaintext[i]) return 9;
+                ++i;
+            }
+            i = 0u;
+            while (i < 4u) {
+                if ((unsigned byte) signedRecovered[i + 1u] != plaintext[i + 4u]) return 9;
+                ++i;
+            }
+
+            bad : k::crypto::DecryptSession! = cipher.decrypt(key, nonce, staging);
+            bad.updateAad(aad, 1u, 4u);
+            bad.update(first, 0u, first.size);
+            bad.update(second, 0u, second.size);
+            tag[0u] = (unsigned byte) (tag[0u] ^ (unsigned byte) 1);
+            rejected = false;
+            try {
+                bad.finalize(tag);
+            } catch (e: k::crypto::CryptoAuthenticationException&) {
+                rejected = true;
+            }
+            if (!rejected) return 10;
+            recovered[1u] = (unsigned byte) 0x5a;
+            rejected = false;
+            try {
+                bad.read(recovered, 1u, 7u);
+            } catch (e: k::crypto::CryptoStateException&) {
+                rejected = true;
+            }
+            if (!rejected) return 11;
+            if (recovered[1u] != (unsigned byte) 0x5a) return 12;
+            return 0;
+        }
+
+        test() : int {
+            try {
+                memory : int = check(k::crypto::DecryptionStaging::Memory);
+                if (memory != 0) return 100 + memory;
+                file : int = check(k::crypto::DecryptionStaging::TemporaryFile);
+                if (file != 0) return 200 + file;
+                return 0;
+            } catch (e: k::crypto::CryptoException&) {
+                return -1;
+            }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("AES-GCM sessions reject reuse after finalization",
+          "[crypto][symmetric][state]") {
+    auto jit = gen_jit_with_crypto(R"K(
+        module __crypto_aes_gcm_state_test__;
+        import k::crypto;
+
+        test() : int {
+            try {
+                cipher : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::AES128GCM();
+                key : k::crypto::SymmetricKey! = cipher.generateKey();
+                nonce : unsigned byte[]! = cipher.randomNonce();
+                input : unsigned byte[]! = new unsigned byte[1u];
+                input[0u] = (unsigned byte) 42;
+                enc : k::crypto::EncryptSession! = cipher.encrypt(key, nonce);
+                if (enc.tagSize() != 16u) return 5;
+                ciphertext : unsigned byte[]! = enc.update(input, 0u, 1u);
+                tag : byte[]! = new byte[18u];
+                tag[0u] = (byte) 42;
+                tag[17u] = (byte) 42;
+                enc.finalizeTo(tag, 1u);
+                if (tag[0u] != (byte) 42 || tag[17u] != (byte) 42) return 6;
+                rejected : bool = false;
+                try {
+                    extra : unsigned byte[]! = enc.update(input, 0u, 1u);
+                } catch (e: k::crypto::CryptoStateException&) {
+                    rejected = true;
+                }
+                if (!rejected) return 1;
+                rejected = false;
+                try {
+                    extraTag : unsigned byte[]! = enc.finalize();
+                } catch (e: k::crypto::CryptoStateException&) {
+                    rejected = true;
+                }
+                if (!rejected) return 2;
+                dec : k::crypto::DecryptSession! = cipher.decrypt(
+                    key, nonce, k::crypto::DecryptionStaging::Memory);
+                if (dec.tagSize() != 16u) return 7;
+                decNonce : unsigned byte[]! = dec.nonce();
+                if (decNonce.size != nonce.size) return 8;
+                i : unsigned int = 0u;
+                while (i < nonce.size) {
+                    if (decNonce[i] != nonce[i]) return 8;
+                    ++i;
+                }
+                dec.update(ciphertext, 0u, 1u);
+                dec.finalize(tag, 1u, 16u);
+                rejected = false;
+                try {
+                    dec.update(ciphertext, 0u, 1u);
+                } catch (e: k::crypto::CryptoStateException&) {
+                    rejected = true;
+                }
+                if (!rejected) return 3;
+                rejected = false;
+                try {
+                    dec.finalize(tag, 1u, 16u);
+                } catch (e: k::crypto::CryptoStateException&) {
+                    rejected = true;
+                }
+                if (!rejected) return 4;
+                enc.close();
+                enc.close();
+                dec.close();
+                dec.close();
+                if (enc.tagSize() != 16u || dec.tagSize() != 16u) return 9;
+                encNonce : unsigned byte[]! = enc.nonce();
+                decNonce = dec.nonce();
+                if (encNonce.size != nonce.size || decNonce.size != nonce.size) return 10;
+                i = 0u;
+                while (i < nonce.size) {
+                    if (encNonce[i] != nonce[i] || decNonce[i] != nonce[i]) return 10;
+                    ++i;
+                }
+                rejected = false;
+                try {
+                    dec.read(input, 0u, 1u);
+                } catch (e: k::crypto::CryptoStateException&) {
+                    rejected = true;
+                }
+                if (!rejected) return 11;
+                return 0;
+            } catch (e: k::crypto::CryptoException&) {
+                return -1;
+            }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Cipher output encryption and authenticated input decryption",
+          "[crypto][symmetric][cipher-stream]") {
+    auto jit = gen_jit_with_crypto(R"K(
+        module __crypto_cipher_output_to_input_test__;
+        import k::io::crypto;
+
+        test() : int {
+            try {
+                cipher : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::AES128GCM();
+                key : k::crypto::SymmetricKey! = cipher.generateKey();
+                nonce : unsigned byte[]! = cipher.randomNonce();
+                aad : byte[]! = new byte[2u];
+                aad[0u] = (byte) 'a';
+                aad[1u] = (byte) 'd';
+                enc : k::crypto::EncryptSession! = cipher.encrypt(key, nonce);
+                enc.updateAad(aad, 0u, 2u);
+                sink : k::io::ArrayOutputStream<byte>;
+                output : k::io::crypto::EncryptCipherOutputStream! =
+                    new k::io::crypto::EncryptCipherOutputStream(sink, enc);
+                if (enc != null || output.isComplete()) return 1;
+                output.write((byte) 'A');
+                chunk : byte[]! = new byte[5u];
+                chunk[0u] = (byte) 'x';
+                chunk[1u] = (byte) 'B';
+                chunk[2u] = (byte) 'C';
+                chunk[3u] = (byte) 'D';
+                chunk[4u] = (byte) 'y';
+                output.write(chunk, 1u, 3u);
+                output.flush();
+                if (output.isComplete() || sink.size() != 4) return 2;
+                output.close();
+                if (!output.isComplete() || sink.size() != 20) return 3;
+                output.close();
+                if (sink.size() != 20) return 4;
+                delete output;
+                encrypted : byte[]! = sink.toArray();
+                source : k::io::ArrayInputStream<byte>(encrypted, 20);
+                dec : k::crypto::DecryptSession! = cipher.decrypt(
+                    key, nonce, k::crypto::DecryptionStaging::Memory);
+                dec.updateAad(aad, 0u, 2u);
+                input : k::io::crypto::DecryptCipherInputStream! =
+                    new k::io::crypto::DecryptCipherInputStream(source, dec);
+                if (dec != null || input.isVerified() || input.isComplete()) return 5;
+                first : Optional<byte> = input.read();
+                if (!first.hasValue() || first.getOr((byte) 0) != (byte) 'A') return 6;
+                if (!input.isVerified() || input.isComplete()) return 7;
+                recovered : byte[]! = new byte[5u];
+                recovered[0u] = (byte) 'x';
+                recovered[4u] = (byte) 'y';
+                count : Expected<unsigned int, k::io::StreamOutOfData> =
+                    input.read(recovered, 1u, 3u);
+                if (count.hasError() || count.getResultOr(0u) != 3u) return 8;
+                if (recovered[0u] != (byte) 'x' || recovered[1u] != (byte) 'B' ||
+                    recovered[2u] != (byte) 'C' || recovered[3u] != (byte) 'D' ||
+                    recovered[4u] != (byte) 'y') return 9;
+                if (input.isComplete() || input.read().hasValue()) return 10;
+                if (!input.isComplete() || input.read().hasValue()) return 11;
+                input.close();
+                input.close();
+                delete input;
+                if (source.available().getResultOr(1u) != 0u) return 12;
+                return 0;
+            } catch (e: Throwable&) {
+                return -1;
+            }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Cipher input encryption and authenticated output decryption",
+          "[crypto][symmetric][cipher-stream]") {
+    auto jit = gen_jit_with_crypto(R"K(
+        module __crypto_cipher_input_to_output_test__;
+        import k::io::crypto;
+
+        check(length: unsigned int) : int throws(Throwable) {
+            cipher : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::AES128GCM();
+            key : k::crypto::SymmetricKey! = cipher.generateKey();
+            nonce : unsigned byte[]! = cipher.randomNonce();
+            plain : byte[]! = new byte[length];
+            i : unsigned int = 0u;
+            while (i < length) {
+                plain[i] = (byte) (i + 33u);
+                ++i;
+            }
+            source : k::io::ArrayInputStream<byte>(plain, (int) length);
+            enc : k::crypto::EncryptSession! = cipher.encrypt(key, nonce);
+            input : k::io::crypto::EncryptCipherInputStream! =
+                new k::io::crypto::EncryptCipherInputStream(source, enc);
+            if (enc != null || input.isComplete()) return 1;
+            encryptedSink : k::io::ArrayOutputStream<byte>;
+            first : Optional<byte> = input.read();
+            if (!first.hasValue()) return 2;
+            encryptedSink.write(first.getOr((byte) 0));
+            buffer : byte[]! = new byte[5u];
+            while (true) {
+                result : Expected<unsigned int, k::io::StreamOutOfData> =
+                    input.read(buffer, 1u, 3u);
+                if (result.hasError()) return 3;
+                count : unsigned int = result.getResultOr(0u);
+                if (count == 0u) break;
+                encryptedSink.write(buffer, 1u, count);
+            }
+            if (!input.isComplete() || encryptedSink.size() != (int) length + 16) return 4;
+            if (input.read().hasValue()) return 5;
+            input.close();
+            input.close();
+            delete input;
+
+            encrypted : byte[]! = encryptedSink.toArray();
+            dec : k::crypto::DecryptSession! = cipher.decrypt(
+                key, nonce, k::crypto::DecryptionStaging::TemporaryFile);
+            plainSink : k::io::ArrayOutputStream<byte>;
+            output : k::io::crypto::DecryptCipherOutputStream! =
+                new k::io::crypto::DecryptCipherOutputStream(plainSink, dec);
+            if (dec != null || output.isVerified() || output.isComplete()) return 6;
+            output.write(encrypted[0u]);
+            i = 1u;
+            while (i < encrypted.size) {
+                count : unsigned int = encrypted.size - i;
+                if (count > 3u) count = 3u;
+                output.write(encrypted, i, count);
+                i += count;
+            }
+            output.flush();
+            if (plainSink.size() != 0 || output.isVerified() || output.isComplete()) return 7;
+            output.close();
+            if (!output.isVerified() || !output.isComplete() ||
+                plainSink.size() != (int) length) return 8;
+            output.close();
+            if (plainSink.size() != (int) length) return 9;
+            delete output;
+            recovered : byte[]! = plainSink.toArray();
+            i = 0u;
+            while (i < length) {
+                if (recovered[i] != plain[i]) return 10;
+                ++i;
+            }
+            return 0;
+        }
+
+        test() : int {
+            try {
+                empty : int = check(0u);
+                if (empty != 0) return 100 + empty;
+                chunked : int = check(7u);
+                if (chunked != 0) return 200 + chunked;
+                return 0;
+            } catch (e: Throwable&) {
+                return -1;
+            }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Cipher streams reject invalid tags and early input close",
+          "[crypto][symmetric][cipher-stream]") {
+    auto jit = gen_jit_with_crypto(R"K(
+        module __crypto_cipher_stream_auth_test__;
+        import k::io::crypto;
+
+        check(cipher: k::crypto::SymmetricCipher&, key: const k::crypto::SymmetricKey&,
+              nonce: const unsigned byte[], data: byte[], length: int)
+                : int throws(Throwable) {
+            source : k::io::ArrayInputStream<byte>(&data, length);
+            dec : k::crypto::DecryptSession! = cipher.decrypt(
+                key, nonce, k::crypto::DecryptionStaging::Memory);
+            input : k::io::crypto::DecryptCipherInputStream! =
+                new k::io::crypto::DecryptCipherInputStream(source, dec);
+            buf : byte[]! = new byte[3u];
+            buf[1u] = (byte) 77;
+            rejected : bool = false;
+            try {
+                input.read(buf, 1u, 1u);
+            } catch (e: k::crypto::CryptoAuthenticationException&) {
+                rejected = true;
+            }
+            if (!rejected || buf[1u] != (byte) 77 ||
+                input.isVerified() || input.isComplete()) return 1;
+            input.close();
+            input.close();
+
+            sink : k::io::ArrayOutputStream<byte>;
+            dec2 : k::crypto::DecryptSession! = cipher.decrypt(
+                key, nonce, k::crypto::DecryptionStaging::Memory);
+            output : k::io::crypto::DecryptCipherOutputStream! =
+                new k::io::crypto::DecryptCipherOutputStream(sink, dec2);
+            output.write(data, 0u, (unsigned int) length);
+            output.flush();
+            if (sink.size() != 0 || output.isVerified() || output.isComplete()) return 2;
+            rejected = false;
+            try {
+                output.close();
+            } catch (e: k::crypto::CryptoAuthenticationException&) {
+                rejected = true;
+            }
+            if (!rejected || sink.size() != 0 ||
+                output.isVerified() || output.isComplete()) return 3;
+            return 0;
+        }
+
+        test() : int {
+            try {
+                cipher : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::AES128GCM();
+                key : k::crypto::SymmetricKey! = cipher.generateKey();
+                nonce : unsigned byte[]! = cipher.randomNonce();
+                sink : k::io::ArrayOutputStream<byte>;
+                enc : k::crypto::EncryptSession! = cipher.encrypt(key, nonce);
+                output : k::io::crypto::EncryptCipherOutputStream! =
+                    new k::io::crypto::EncryptCipherOutputStream(sink, enc);
+                output.write((byte) 42);
+                output.close();
+                encrypted : byte[]! = sink.toArray();
+
+                source : k::io::ArrayInputStream<byte>(encrypted, 17);
+                dec : k::crypto::DecryptSession! = cipher.decrypt(
+                    key, nonce, k::crypto::DecryptionStaging::Memory);
+                input : k::io::crypto::DecryptCipherInputStream! =
+                    new k::io::crypto::DecryptCipherInputStream(source, dec);
+                input.close();
+                input.close();
+                if (input.isVerified() || input.isComplete() ||
+                    source.available().getResultOr(0u) != 17u) return 1;
+                buf : byte[]! = new byte[1u];
+                if (!input.read(buf, 0u, 1u).hasError()) return 2;
+                earlySource : k::io::ArrayInputStream<byte>(encrypted, 17);
+                earlyEnc : k::crypto::EncryptSession! = cipher.encrypt(key);
+                earlyInput : k::io::crypto::EncryptCipherInputStream! =
+                    new k::io::crypto::EncryptCipherInputStream(earlySource, earlyEnc);
+                earlyInput.close();
+                earlyInput.close();
+                if (earlyInput.isComplete() ||
+                    earlySource.available().getResultOr(0u) != 17u) return 3;
+
+                encrypted[16u] = (byte) ((unsigned byte) encrypted[16u] ^ 1u);
+                wrong : int = check(cipher, key, nonce, encrypted, 17);
+                if (wrong != 0) return 10 + wrong;
+                shortTag : int = check(cipher, key, nonce, encrypted, 7);
+                if (shortTag != 0) return 20 + shortTag;
+                return 0;
+            } catch (e: Throwable&) {
+                return -1;
+            }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Cipher streams propagate underlying failures",
+          "[crypto][symmetric][cipher-stream]") {
+    auto jit = gen_jit_with_crypto(R"K(
+        module __crypto_cipher_stream_failure_test__;
+        import k::io::crypto;
+
+        failureMode : int = 0;
+        outputCloses : int = 0;
+        inputCloses : int = 0;
+
+        class FailingOutput : public k::io::FilterOutputStream<byte> {
+            public FailingOutput(output: k::io::OutputStream<byte>*)
+                : FilterOutputStream(output) {}
+
+            public override write(data: const byte[], off: unsigned int, len: unsigned int)
+                    : k::io::OutputStream<byte>& throws(k::crypto::CryptoException) {
+                if (failureMode == 1 || failureMode == 4) {
+                    throw k::crypto::CryptoOperationException();
+                }
+                return _out->write(data, off, len);
+            }
+
+            public override flush() : k::io::OutputStream<byte>&
+                    throws(k::crypto::CryptoException) {
+                if (failureMode == 3) throw k::crypto::CryptoOperationException();
+                return _out->flush();
+            }
+
+            public override close() : k::io::OutputStream<byte>&
+                    throws(k::crypto::CryptoException) {
+                ++outputCloses;
+                if (failureMode == 2) throw k::crypto::CryptoOperationException();
+                if (failureMode == 4) throw k::crypto::CryptoStateException();
+                return _out->close();
+            }
+        }
+
+        class FailingInput : public k::io::FilterInputStream<byte> {
+            public FailingInput(input: k::io::InputStream<byte>*)
+                : FilterInputStream(input) {}
+
+            public override read(data: byte[], off: unsigned int, len: unsigned int)
+                    : Expected<unsigned int, k::io::StreamOutOfData> {
+                err : k::io::StreamOutOfData = k::io::StreamOutOfData::Closed;
+                return Expected<unsigned int, k::io::StreamOutOfData>::error(err);
+            }
+
+            public override close() {
+                ++inputCloses;
+                _in->close();
+            }
+        }
+
+        test() : int {
+            stage : int = 1;
+            try {
+                cipher : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::AES128GCM();
+                key : k::crypto::SymmetricKey! = cipher.generateKey();
+                nonce : unsigned byte[]! = cipher.randomNonce();
+                stage = 2;
+                byteSink : k::io::ArrayOutputStream<byte>;
+                failingSink : FailingOutput(&byteSink);
+                enc : k::crypto::EncryptSession! = cipher.encrypt(key, nonce);
+                output : k::io::crypto::EncryptCipherOutputStream! =
+                    new k::io::crypto::EncryptCipherOutputStream(failingSink, enc);
+                failureMode = 1;
+                outputCloses = 0;
+                rejected : bool = false;
+                stage = 3;
+                try {
+                    output.write((byte) 42);
+                } catch (e: k::crypto::CryptoOperationException&) {
+                    rejected = true;
+                }
+                if (!rejected || output.isComplete() || byteSink.size() != 0) return 1;
+                rejected = false;
+                stage = 4;
+                try {
+                    output.flush();
+                } catch (e: k::crypto::CryptoStateException&) {
+                    rejected = true;
+                }
+                if (!rejected) return 2;
+                rejected = false;
+                stage = 5;
+                try {
+                    output.close();
+                } catch (e: k::crypto::CryptoStateException&) {
+                    rejected = true;
+                }
+                if (!rejected || outputCloses != 1 || output.isComplete()) return 3;
+                rejected = false;
+                stage = 6;
+                try {
+                    output.close();
+                } catch (e: k::crypto::CryptoStateException&) {
+                    rejected = true;
+                }
+                if (!rejected || outputCloses != 1) return 4;
+
+                failureMode = 0;
+                stage = 7;
+                encryptedSink : k::io::ArrayOutputStream<byte>;
+                nonce2 : unsigned byte[]! = cipher.randomNonce();
+                enc2 : k::crypto::EncryptSession! = cipher.encrypt(key, nonce2);
+                producer : k::io::crypto::EncryptCipherOutputStream! =
+                    new k::io::crypto::EncryptCipherOutputStream(encryptedSink, enc2);
+                stage = 8;
+                producer.write((byte) 42);
+                stage = 9;
+                producer.close();
+                encrypted : byte[]! = encryptedSink.toArray();
+                stage = 10;
+                plainSink : k::io::ArrayOutputStream<byte>;
+                failingPlainSink : FailingOutput(&plainSink);
+                dec : k::crypto::DecryptSession! = cipher.decrypt(
+                    key, nonce2, k::crypto::DecryptionStaging::Memory);
+                consumer : k::io::crypto::DecryptCipherOutputStream! =
+                    new k::io::crypto::DecryptCipherOutputStream(failingPlainSink, dec);
+                consumer.write(encrypted);
+                failureMode = 2;
+                outputCloses = 0;
+                rejected = false;
+                stage = 11;
+                try {
+                    consumer.close();
+                } catch (e: k::crypto::CryptoOperationException&) {
+                    rejected = true;
+                }
+                if (!rejected || outputCloses != 1 || !consumer.isVerified() ||
+                    consumer.isComplete() || plainSink.size() != 1) return 5;
+
+                failureMode = 0;
+                stage = 12;
+                empty : k::io::ArrayInputStream<byte>;
+                failingSource : FailingInput(&empty);
+                enc3 : k::crypto::EncryptSession! = cipher.encrypt(key);
+                encryptInput : k::io::crypto::EncryptCipherInputStream! =
+                    new k::io::crypto::EncryptCipherInputStream(failingSource, enc3);
+                inputCloses = 0;
+                buf : byte[]! = new byte[1u];
+                buf[0u] = (byte) 77;
+                if (!encryptInput.read(buf, 0u, 1u).hasError() ||
+                    encryptInput.isComplete() || buf[0u] != (byte) 77) return 6;
+                stage = 13;
+                encryptInput.close();
+                encryptInput.close();
+                if (inputCloses != 1) return 7;
+
+                stage = 14;
+                empty2 : k::io::ArrayInputStream<byte>;
+                failingSource2 : FailingInput(&empty2);
+                dec2 : k::crypto::DecryptSession! = cipher.decrypt(
+                    key, nonce, k::crypto::DecryptionStaging::Memory);
+                decryptInput : k::io::crypto::DecryptCipherInputStream! =
+                    new k::io::crypto::DecryptCipherInputStream(failingSource2, dec2);
+                if (!decryptInput.read(buf, 0u, 1u).hasError() ||
+                    decryptInput.isVerified() || decryptInput.isComplete() ||
+                    buf[0u] != (byte) 77) return 8;
+                stage = 15;
+                decryptInput.close();
+                decryptInput.close();
+                if (inputCloses != 2) return 9;
+
+                stage = 16;
+                writeSink : k::io::ArrayOutputStream<byte>;
+                writeFailure : FailingOutput(&writeSink);
+                enc4 : k::crypto::EncryptSession! = cipher.encrypt(key);
+                failedWriter : k::io::crypto::EncryptCipherOutputStream! =
+                    new k::io::crypto::EncryptCipherOutputStream(writeFailure, enc4);
+                failureMode = 1;
+                rejected = false;
+                try {
+                    failedWriter.write((byte) 42);
+                } catch (e: k::crypto::CryptoOperationException&) {
+                    rejected = true;
+                }
+                if (!rejected) return 10;
+                failureMode = 2;
+                outputCloses = 0;
+                rejected = false;
+                stage = 17;
+                try {
+                    failedWriter.close();
+                } catch (e: k::crypto::CryptoOperationException&) {
+                    rejected = true;
+                }
+                if (!rejected || outputCloses != 1 || failedWriter.isComplete() ||
+                    writeSink.size() != 0) return 11;
+
+                stage = 18;
+                flushSink : k::io::ArrayOutputStream<byte>;
+                flushFailure : FailingOutput(&flushSink);
+                dec3 : k::crypto::DecryptSession! = cipher.decrypt(
+                    key, nonce2, k::crypto::DecryptionStaging::Memory);
+                failedFlusher : k::io::crypto::DecryptCipherOutputStream! =
+                    new k::io::crypto::DecryptCipherOutputStream(flushFailure, dec3);
+                failedFlusher.write(encrypted);
+                failureMode = 3;
+                rejected = false;
+                stage = 19;
+                try {
+                    failedFlusher.flush();
+                } catch (e: k::crypto::CryptoOperationException&) {
+                    rejected = true;
+                }
+                if (!rejected || flushSink.size() != 0) return 12;
+                failureMode = 2;
+                outputCloses = 0;
+                rejected = false;
+                stage = 20;
+                try {
+                    failedFlusher.close();
+                } catch (e: k::crypto::CryptoOperationException&) {
+                    rejected = true;
+                }
+                if (!rejected || outputCloses != 1 || failedFlusher.isVerified() ||
+                    failedFlusher.isComplete() || flushSink.size() != 0) return 13;
+
+                stage = 21;
+                badSink : k::io::ArrayOutputStream<byte>;
+                badClose : FailingOutput(&badSink);
+                dec4 : k::crypto::DecryptSession! = cipher.decrypt(
+                    key, nonce2, k::crypto::DecryptionStaging::Memory);
+                badOutput : k::io::crypto::DecryptCipherOutputStream! =
+                    new k::io::crypto::DecryptCipherOutputStream(badClose, dec4);
+                encrypted[encrypted.size - 1u] =
+                    (byte) ((unsigned byte) encrypted[encrypted.size - 1u] ^ 1u);
+                badOutput.write(encrypted);
+                failureMode = 2;
+                outputCloses = 0;
+                rejected = false;
+                stage = 22;
+                try {
+                    badOutput.close();
+                } catch (e: k::crypto::CryptoAuthenticationException&) {
+                    rejected = true;
+                }
+                if (!rejected || outputCloses != 1 || badOutput.isVerified() ||
+                    badOutput.isComplete() || badSink.size() != 0) return 14;
+
+                stage = 23;
+                tagSink : k::io::ArrayOutputStream<byte>;
+                tagFailure : FailingOutput(&tagSink);
+                enc5 : k::crypto::EncryptSession! = cipher.encrypt(key);
+                failedTag : k::io::crypto::EncryptCipherOutputStream! =
+                    new k::io::crypto::EncryptCipherOutputStream(tagFailure, enc5);
+                failureMode = 4;
+                outputCloses = 0;
+                rejected = false;
+                stage = 24;
+                try {
+                    failedTag.close();
+                } catch (e: k::crypto::CryptoOperationException&) {
+                    rejected = true;
+                }
+                if (!rejected || outputCloses != 1 || failedTag.isComplete() ||
+                    tagSink.size() != 0) return 15;
+                stage = 25;
+                return 0;
+            } catch (e: Throwable&) {
+                return -(stage * 100000 + e.getCode());
+            }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}

@@ -41,15 +41,20 @@ set(LIBK_CRYPTO_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/crypto.k
     ${LIBK_CRYPTO_DIGEST_CORE_SOURCE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/keys.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/symmetric.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/libcrypto_ffi.k
 )
 set(LIBK_CRYPTO_IO_SOURCES
     ${LIBK_CRYPTO_IO_DIGEST_SOURCE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/cipher_stream.k
 )
 
 set(LIBK_CRYPTO_OPENSSL_FFI_C ${CMAKE_CURRENT_SOURCE_DIR}/src/openssl_ffi.c)
 set(LIBK_CRYPTO_OPENSSL_FFI_OBJ ${CMAKE_CURRENT_BINARY_DIR}/openssl_ffi.o)
-set(LIBK_CRYPTO_C_FLAGS -c -fPIC -fexceptions -fasynchronous-unwind-tables)
+set(LIBK_CRYPTO_SYMMETRIC_FFI_C ${CMAKE_CURRENT_SOURCE_DIR}/src/symmetric_ffi.c)
+set(LIBK_CRYPTO_SYMMETRIC_FFI_OBJ ${CMAKE_CURRENT_BINARY_DIR}/symmetric_ffi.o)
+set(LIBK_CRYPTO_C_FLAGS -c -fPIC -fexceptions -fasynchronous-unwind-tables
+    -I${OPENSSL_INCLUDE_DIR})
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     list(APPEND LIBK_CRYPTO_C_FLAGS -DNDEBUG)
 endif()
@@ -60,6 +65,15 @@ add_custom_command(
             -o ${LIBK_CRYPTO_OPENSSL_FFI_OBJ} ${LIBK_CRYPTO_OPENSSL_FFI_C}
     DEPENDS ${LIBK_CRYPTO_OPENSSL_FFI_C}
     COMMENT "Compiling libk-crypto OpenSSL FFI wrappers (openssl_ffi.c)"
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${LIBK_CRYPTO_SYMMETRIC_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${LIBK_CRYPTO_C_FLAGS}
+            -o ${LIBK_CRYPTO_SYMMETRIC_FFI_OBJ} ${LIBK_CRYPTO_SYMMETRIC_FFI_C}
+    DEPENDS ${LIBK_CRYPTO_SYMMETRIC_FFI_C}
+    COMMENT "Compiling libk-crypto symmetric OpenSSL bridge"
     VERBATIM
 )
 
@@ -90,8 +104,10 @@ add_custom_command(
         --lib ${OPENSSL_CRYPTO_LIBRARY}
         ${LIBK_CRYPTO_SOURCES}
         ${LIBK_CRYPTO_OPENSSL_FFI_OBJ}
+        ${LIBK_CRYPTO_SYMMETRIC_FFI_OBJ}
     DEPENDS klangc libk_stdlib ${LIBK_CRYPTO_SOURCES}
-            ${LIBK_CRYPTO_OPENSSL_FFI_OBJ} ${OPENSSL_CRYPTO_LIBRARY}
+            ${LIBK_CRYPTO_OPENSSL_FFI_OBJ} ${LIBK_CRYPTO_SYMMETRIC_FFI_OBJ}
+            ${OPENSSL_CRYPTO_LIBRARY}
     WORKING_DIRECTORY ${LIBK_CRYPTO_OUTPUT_DIR}
     COMMENT "Compiling K crypto standard library (module k::crypto)"
     VERBATIM

@@ -24,12 +24,6 @@ interface Key : CryptoObject {
 }
 
 /**
- * Interface representing a secret symmetric key in cryptography.
- */
-interface SecretKey : Key {
-}
-
-/**
  * Interface representing a public key in asymmetric cryptography.
  */
 interface PublicKey : Key {
