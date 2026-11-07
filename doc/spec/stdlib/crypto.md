@@ -1,7 +1,7 @@
 # `k::crypto`
 
 The separately built `libk-crypto` library provides incremental message
-digests and symmetric encryption. Programs using it must import `k::crypto`
+digests, HMAC, and symmetric encryption. Programs using it must import `k::crypto`
 and link the crypto library.
 
 ## `MessageDigest`
@@ -68,6 +68,60 @@ close-time finalization, or null before then. Digest failures remain
 The digest covers bytes that pass through the stream's position in a decorator
 chain. Place it next to the sink, downstream of encoders or other transforms,
 when the desired digest is over the final bytes written to that sink.
+
+## HMAC
+
+`HmacKey::fromBytes` copies the supplied unsigned bytes into an owned,
+non-copyable key. `keySize()` returns its length in bytes. Internal key storage
+is cleared on destruction; the caller remains responsible for its input buffer.
+The key is independent of symmetric cipher keys and is not tied to a digest.
+An empty key may be imported but does not provide authentication security.
+There is no HMAC key-generation API.
+
+`Hmac::create(algorithm, key)` initializes a one-message HMAC using a
+`MessageDigestAlgorithm`. The string alias accepts standard enum values and
+provider-supported extensions. `SHA256(key)` and `SHA512(key)` are convenience
+factories. A factory returns null when the requested combination is
+unavailable; invalid keys and operation failures throw crypto exceptions. The
+initialized HMAC owns its state independently of the supplied key.
+
+`algorithm()` returns the selected digest name and `tagSize()` the full tag
+length in bytes. `update` accepts whole `byte[]` or `unsigned byte[]` arrays,
+or a slice given by offset and length. An empty message is valid. `finalize()`
+returns an owned full tag; `verify(expected)` finalizes and compares the full
+tag, returning false for a mismatch or wrong length. Equal-length comparisons
+are constant-time. A successful or failed verification consumes the HMAC;
+subsequent updates and finalization throw `CryptoStateException`.
+
+`finalizeTruncated(size)` and `verifyTruncated(expected, size)` use exactly
+the specified prefix of the full tag. The size must be from one byte through
+`tagSize()`; a different expected-tag length fails verification. The size must
+come from trusted protocol configuration, not from a received tag. Full tags
+are preferred; for new protocols use at least 128 bits if truncation is needed.
+`Hmac::constantTimeEquals` compares equal-length byte arrays without
+data-dependent early exit; it does not enforce a protocol's expected tag size.
+
+### HMAC stream adapters
+
+`k::io::crypto::HmacOutputStream` and `HmacInputStream` each borrow an
+underlying byte stream and consume an `Hmac` owner. They close the wrapped
+stream and expose `getTag()` as a read-only view owned by the adapter.
+`isComplete()` identifies a successfully completed message. `verify(expected)`
+and `verifyTruncated(expected, size)` require completion and compare the cached
+tag in constant time; an incorrect expected length returns false.
+Bytes supplied to the HMAC before constructing the adapter are included as
+the message prefix. Use a fresh HMAC to authenticate only the stream's bytes.
+
+The output adapter forwards each write before updating the HMAC. It completes
+only after successful flush, close, and finalization. A failure during any of
+these operations leaves it incomplete, including when a destination accepted
+only part of a write.
+
+The input adapter authenticates bytes read or skipped through it and finalizes
+only at successful EOF. A read failure or early close leaves it incomplete.
+It releases bytes before verification: applications must not act on untrusted
+data until its tag has been verified. Neither adapter adds a tag or frames
+messages; protocols must carry the tag and delimit messages separately.
 
 ## Symmetric encryption
 
@@ -249,11 +303,13 @@ authentication, `CryptoOperationException` reports operation failures, and
 
 ## Capability discovery
 
-`CryptoCapabilities::snapshot()` discovers available digests and symmetric
-ciphers and returns an owned snapshot. Its `digestAlgorithms()`,
+`CryptoCapabilities::snapshot()` discovers available digests, HMAC digests, and
+symmetric ciphers and returns an owned snapshot. Its `digestAlgorithms()`,
 `symmetricAlgorithms()`, `symmetricModes()` and `symmetricPaddings()` methods
 return owned `Sequence` values containing the corresponding string aliases.
 Names may include supported extensions that have no entry in the standard enums.
+`hmacDigestAlgorithms()` returns digest names actually witnessed with HMAC and
+a fixed 32-byte probe key. Other keys can be subject to provider restrictions.
 
 The global symmetric mode and padding sequences are unions, not a Cartesian
 product. `symmetricModes(algorithm, keyBits)` and

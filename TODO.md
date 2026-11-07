@@ -91,6 +91,26 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **Investigate foreach cleanup during exception unwinding.** Static review
+      found that `visit_foreach_statement` in `klang/src/gen/gen_statements.cpp`
+      registers the iterator and loop variable on `_cleanup_vars_stack`, but
+      not on `_cleanup_lpad_stack`. Check a foreach with destructible values
+      when an inner `try/finally` throws to an outer catch: the unwind route may
+      skip their destructors. Cover iterator construction, `next()`, and
+      normal, break, continue, and exceptional exits.
+- [ ] **Investigate throwing destructors during cleanup.** `visit_block` in
+      `klang/src/gen/gen_statements.cpp` removes its cleanup landing context
+      before emitting local destructors. If the last of two local destructors
+      throws during an unwind, earlier locals may be skipped. Define whether
+      the new exception replaces the pending exception or terminates, then
+      test and preserve exactly-once cleanup for locals, members, and arrays.
+- [ ] **Investigate unmatched typed catches across function boundaries.**
+      `visit_try_catch_statement` in `klang/src/gen/gen_statements.cpp` uses a
+      catch-all landing-pad clause for typed catches, then resumes if none
+      matches. Existing unmatched-catch tests use an enclosing catch in the same
+      function; check a callee with only a nonmatching catch and a matching
+      caller catch for correct propagation and cleanup.
+
 - [ ] **Exception metadata and catch cleanup outside bare rethrow remain incomplete.**
       The bare-rethrow repair snapshots the caught chain and restores it only
       when its type matches `__cxa_current_exception_type()`. It does not repair
@@ -1717,7 +1737,7 @@
 #### Crypto
 
 - [ ] Secure random bytes for salts, tokens, and application-managed nonces.
-- [ ] HMAC generation and constant-time verification, including stream adapters.
+- [x] HMAC generation and constant-time verification, including stream adapters.
 - [ ] HKDF for deriving purpose-specific symmetric keys.
 - [ ] Password-based key derivation: Argon2id, scrypt, and PBKDF2 compatibility.
 - [ ] Asymmetric key pairs: generation, public/private keys, and metadata.

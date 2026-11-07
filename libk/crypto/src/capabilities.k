@@ -14,6 +14,7 @@ private struct NativeDigestCapabilities {}
 private struct NativeSymmetricCapabilities {}
 
 @ffi::Extern("C") private __k_cap_digest_new(status: int*) : NativeDigestCapabilities*;
+@ffi::Extern("C") private __k_cap_hmac_digest_new(status: int*) : NativeDigestCapabilities*;
 @ffi::Extern("C") private __k_cap_digest_count(catalog: const NativeDigestCapabilities*) : unsigned int;
 @ffi::Extern("C") private __k_cap_digest_size(catalog: const NativeDigestCapabilities*,
     index: unsigned int) : unsigned int;
@@ -153,6 +154,7 @@ public:
 public final class CryptoCapabilities {
 private:
     _digests: Vector<String>;
+    _hmacDigests: Vector<String>;
     _configurations: CapabilityConfigurationSequence;
 
     CryptoCapabilities() -> default;
@@ -163,11 +165,15 @@ public:
     static snapshot() : CryptoCapabilities! throws(CryptoException) {
         result: CryptoCapabilities! = new CryptoCapabilities();
         digests: NativeDigestCapabilities* = null;
+        hmacDigests: NativeDigestCapabilities* = null;
         symmetric: NativeSymmetricCapabilities* = null;
         try {
             status: int = 0;
             digests = __k_cap_digest_new(&status);
             if (status != 0 || digests == null) throw CryptoOperationException();
+            status = 0;
+            hmacDigests = __k_cap_hmac_digest_new(&status);
+            if (status != 0 || hmacDigests == null) throw CryptoOperationException();
             status = 0;
             symmetric = __k_cap_symmetric_new(&status);
             if (status != 0 || symmetric == null) throw CryptoOperationException();
@@ -177,6 +183,14 @@ public:
             while (i < count) {
                 name: String = capabilityDigestName(digests, i);
                 capabilityAppendUnique(result._digests, name);
+                ++i;
+            }
+
+            count = __k_cap_digest_count(hmacDigests);
+            i = 0u;
+            while (i < count) {
+                name: String = capabilityDigestName(hmacDigests, i);
+                capabilityAppendUnique(result._hmacDigests, name);
                 ++i;
             }
 
@@ -197,6 +211,7 @@ public:
             return result;
         } finally {
             if (symmetric != null) __k_cap_symmetric_free(symmetric);
+            if (hmacDigests != null) __k_cap_digest_free(hmacDigests);
             if (digests != null) __k_cap_digest_free(digests);
         }
     }
@@ -206,6 +221,21 @@ public:
         i: unsigned int = 0u;
         while (i < _digests.size()) {
             result.append(_digests[i]);
+            ++i;
+        }
+        return result;
+    }
+
+    /**
+     * Digest names witnessed with HMAC and a fixed 32-byte non-secret key.
+     * Provider settings can change, and other keys may have different limits.
+     * The returned sequence owns its values independently of this snapshot.
+     */
+    const hmacDigestAlgorithms() : Sequence<MessageDigestAlgorithm>! {
+        result: Vector<String>! = new Vector<String>();
+        i: unsigned int = 0u;
+        while (i < _hmacDigests.size()) {
+            result.append(_hmacDigests[i]);
             ++i;
         }
         return result;

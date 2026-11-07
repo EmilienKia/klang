@@ -1,9 +1,9 @@
 # Cryptography with libk
 
 This guide covers the current `k::crypto` and `k::io::crypto` APIs: message
-digests, capability discovery, symmetric keys and ciphers, encryption sessions,
-and stream adapters. See the [crypto reference](spec/stdlib/crypto.md) for the
-complete API and parameter rules.
+digests, HMAC, capability discovery, symmetric keys and ciphers, encryption
+sessions, and stream adapters. See the [crypto reference](../spec/stdlib/crypto.md)
+for the complete API and parameter rules.
 
 The examples are module-level functions. Place them in a K module with this
 import; `k` itself is imported automatically:
@@ -24,7 +24,7 @@ descriptors discoverable to the compiler, and link `libk.crypto` and
 `libk.crypto.pc` package describing those libraries; static consumers also
 need the dependencies reported by `pkg-config --static`. Make the shared
 libraries available to the runtime loader when using dynamic linking. See the
-[CMake integration guide](howtos/cmake-integration-k-projects.md) for general
+[CMake integration guide](../howtos/cmake-integration-k-projects.md) for general
 KDI and library search-path setup.
 
 ## 1. Choosing a cryptographic operation
@@ -32,6 +32,8 @@ KDI and library search-path setup.
 - Use a **digest** such as SHA-256 to calculate a checksum. A digest alone does
   not authenticate data: an attacker who can replace the data can also replace
   its digest. It is not a password-hashing scheme.
+- Use **HMAC** to authenticate data shared between parties that hold a secret
+  key. HMAC does not encrypt data or provide replay protection.
 - Prefer an **authenticated encryption** mode such as AES-GCM or
   ChaCha20-Poly1305 when confidentiality and integrity are both needed.
   Supply relevant unencrypted metadata as additional authenticated data (AAD).
@@ -79,7 +81,7 @@ namedDigest() : k::crypto::MessageDigest! {
 Named factories and enum entries include `SHA224`, `SHA256`, `SHA384`,
 `SHA512`, `SHA512_224`, `SHA512_256`, `SHA3_224`, `SHA3_256`, `SHA3_384`,
 and `SHA3_512`, as well as the compatibility algorithms `MD5` and `SHA1`.
-Check the [reference](spec/stdlib/crypto.md#messagedigest) for canonical names.
+Check the [reference](../spec/stdlib/crypto.md#messagedigest) for canonical names.
 For new designs, choose a collision-resistant digest such as SHA-256 or SHA-3.
 MD5 and SHA-1 are present for compatibility, not collision-resistant security.
 Do not use a fast digest directly for passwords; use a suitable password
@@ -115,11 +117,87 @@ Place the decorator at the point in a pipeline whose bytes you want to hash:
 before encoding to hash the original bytes, or after encoding to hash the
 encoded bytes.
 
+## HMAC: authenticating messages
+
+HMAC combines a secret key and a digest. Obtain a sufficiently strong random
+key through an appropriate key-management system; do not use a password
+directly. `HmacKey::fromBytes` copies the key, and its internal copy is cleared
+on destruction. Protect and eventually clear any caller-owned copies too.
+This API does not generate keys.
+
+Create a separate HMAC for each message. The receiver must use the same key,
+digest, and message bytes, and must verify the tag before trusting the message:
+
+```k
+verifyHmacSha256(keyBytes: const unsigned byte[], message: const unsigned byte[],
+                 tag: const unsigned byte[]) : bool throws(k::crypto::CryptoException) {
+    key: k::crypto::HmacKey! = k::crypto::HmacKey::fromBytes(keyBytes);
+    mac: k::crypto::Hmac! = k::crypto::Hmac::SHA256(key);
+    if (mac == null) return false;
+    mac.update(message);
+    return mac.verify(tag);
+}
+```
+
+For a sender, call `finalize()` instead of `verify()` to obtain an owned full
+tag. For several chunks, update in order before finalizing. Use `create` with a
+`MessageDigestAlgorithm` to select another available digest. Verification uses
+constant-time comparison for equal-length tags; do not replace it with an
+ordinary byte-by-byte comparison. A mismatch returns false, whereas operation
+failures throw exceptions.
+
+Full tags are recommended. If a protocol requires truncation, use
+`finalizeTruncated(size)` and `verifyTruncated(tag, size)` with the size fixed
+by trusted protocol configuration. Do not select the size from the received
+tag; use at least 128 bits for new protocols when truncation is necessary.
+
+`HmacOutputStream` computes a tag over bytes written to a borrowed sink and
+exposes it after a successful close. `HmacInputStream` computes it over bytes
+read or skipped and completes only at EOF. Both consume an `Hmac` owner and
+provide `getTag()`, `isComplete()`, and constant-time `verify` methods. They
+neither transmit tags nor delimit messages. Input bytes are available before
+verification: stage untrusted data and do not use it until verification
+succeeds. The adapter owns the tag view, which must not outlive it. Any bytes
+already supplied to the HMAC form a prefix; pass a fresh HMAC to authenticate
+only the stream bytes.
+
+For example, this function verifies and discards a single input message:
+
+```k
+verifyHmacInput(source: k::io::InputStream<byte>&,
+                keyBytes: const unsigned byte[], tag: const unsigned byte[]) : bool
+        throws(Throwable) {
+    key: k::crypto::HmacKey! = k::crypto::HmacKey::fromBytes(keyBytes);
+    mac: k::crypto::Hmac! = k::crypto::Hmac::SHA256(key);
+    if (mac == null) return false;
+    stream: k::io::crypto::HmacInputStream! =
+        new k::io::crypto::HmacInputStream(source, mac);
+    buffer: byte[4096];
+    while (true) {
+        result: Expected<unsigned int, k::io::StreamOutOfData> =
+            stream.read(buffer, 0u, 4096u);
+        if (result.hasError()) {
+            stream.close();
+            return false;
+        }
+        if (result.getResult() == 0u) break;
+    }
+    verified: bool = stream.verify(tag);
+    stream.close();
+    return verified;
+}
+```
+
+In an application that needs the message, stage the bytes instead of discarding
+them, and release them only after verification. Arrange cleanup if an
+exception interrupts the example before its close call.
+
 ## 4. Discovering supported algorithms
 
 `CryptoCapabilities::snapshot()` produces an eager snapshot. The four global
-sequences are `digestAlgorithms()`, `symmetricAlgorithms()`,
-`symmetricModes()`, and `symmetricPaddings()`. Their values are string aliases:
+sequences are `digestAlgorithms()`, `hmacDigestAlgorithms()`,
+`symmetricAlgorithms()`, `symmetricModes()`, and `symmetricPaddings()`.
+Their values are string aliases:
 they can include supported extensions absent from the standard enums, and
 standard enum entries need not be available on every installation.
 
@@ -159,7 +237,8 @@ element references borrow the sequence and must not outlive it. An empty
 filtered sequence is a valid result. A snapshot is stable but is not a promise
 that a later factory call will succeed after provider settings change. Digest
 and cipher candidates come from the provider; padding choices are libk
-policies validated with ciphers.
+policies validated with ciphers. HMAC digest names are separately probed with
+a fixed test key; a provider may impose different restrictions on other keys.
 
 ## 5. Selecting a symmetric cipher
 

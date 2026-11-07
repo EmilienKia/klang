@@ -24,8 +24,11 @@
 #include <string.h>
 
 #include <openssl/err.h>
+#include <openssl/core_names.h>
 #include <openssl/evp.h>
 #include <openssl/evperr.h>
+#include <openssl/params.h>
+#include <openssl/proverr.h>
 
 EVP_MD* __k_EVP_MD_fetch(const unsigned char* name) {
     return EVP_MD_fetch(NULL, (const char*)name, NULL);
@@ -487,9 +490,188 @@ fail:
     return NULL;
 }
 
+/*
+ * Use the same representative names as digest discovery, but independently
+ * witness each HMAC operation. This fixed key is not secret and is also used
+ * by the capability integration tests.
+ */
+static const unsigned char cap_hmac_probe_key[32] = {
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
+};
+
+/*
+ * Only recognized digest/key-policy rejections make a combination
+ * unavailable. Unknown errors, including a failure with no error, are
+ * snapshot failures; all errors are consumed on this isolated queue.
+ */
+static int cap_hmac_probe_errors(int failed) {
+    unsigned long error;
+    int rejected = 0;
+    int other = 0;
+
+    while ((error = ERR_get_error()) != 0) {
+        int lib = ERR_GET_LIB(error);
+        int reason = ERR_GET_REASON(error);
+        if (!ERR_SYSTEM_ERROR(error) && reason == ERR_R_DISABLED) {
+            rejected = 1;
+        } else if (!ERR_SYSTEM_ERROR(error) && !ERR_FATAL_ERROR(error) &&
+                   (reason == ERR_R_UNSUPPORTED ||
+                    (lib == ERR_LIB_EVP &&
+                     (reason == EVP_R_UNSUPPORTED_ALGORITHM ||
+                      reason == EVP_R_INVALID_DIGEST ||
+                      reason == EVP_R_INVALID_KEY_LENGTH)) ||
+                    (lib == ERR_LIB_PROV &&
+                     (reason == PROV_R_INVALID_DIGEST ||
+                      reason == PROV_R_DIGEST_NOT_ALLOWED ||
+                      reason == PROV_R_XOF_DIGESTS_NOT_ALLOWED ||
+                      reason == PROV_R_NOT_SUPPORTED ||
+                      reason == PROV_R_INVALID_KEY ||
+                      reason == PROV_R_INVALID_KEY_LENGTH ||
+                      reason == PROV_R_KEY_SIZE_TOO_SMALL ||
+                      reason == PROV_R_UNSUPPORTED_KEY_SIZE)))) {
+            rejected = 1;
+        } else {
+            other = 1;
+        }
+    }
+    if (other || (failed && !rejected) || (!failed && rejected)) {
+        return -1;
+    }
+    return failed ? 0 : 1;
+}
+
+static int cap_hmac_probe(EVP_MAC *mac, const char *name, int digest_size, int update) {
+    EVP_MAC_CTX *ctx = NULL;
+    unsigned char *output = NULL;
+    unsigned char byte = 0;
+    size_t size, written = 0;
+    OSSL_PARAM params[2];
+    int ok = -1;
+
+    ctx = EVP_MAC_CTX_new(mac);
+    if (cap_digest_errors(0, ctx == NULL) != 0 || ctx == NULL) {
+        goto done;
+    }
+    params[0] = OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST, (char *)name, 0);
+    params[1] = OSSL_PARAM_construct_end();
+    if (EVP_MAC_init(ctx, cap_hmac_probe_key, sizeof(cap_hmac_probe_key), params) != 1) {
+        ok = cap_hmac_probe_errors(1);
+        goto done;
+    }
+    if (cap_hmac_probe_errors(0) < 0) {
+        goto done;
+    }
+    size = EVP_MAC_CTX_get_mac_size(ctx);
+    if (cap_hmac_probe_errors(0) < 0) {
+        goto done;
+    }
+    if (size == 0 || size != (size_t)digest_size) {
+        goto done;
+    }
+    output = malloc(size);
+    if (output == NULL) {
+        goto done;
+    }
+    if (update) {
+        if (EVP_MAC_update(ctx, &byte, 1) != 1) {
+            ok = cap_hmac_probe_errors(1);
+            goto done;
+        }
+        if (cap_hmac_probe_errors(0) < 0) {
+            goto done;
+        }
+    }
+    if (EVP_MAC_final(ctx, output, &written, size) != 1) {
+        ok = cap_hmac_probe_errors(1);
+        goto done;
+    }
+    if (cap_hmac_probe_errors(0) < 0) {
+        goto done;
+    }
+    ok = written == size ? 1 : -1;
+done:
+    free(output);
+    EVP_MAC_CTX_free(ctx);
+    return ok;
+}
+
+static void *cap_hmac_discover(int *status) {
+    cap_digest_snapshot *snapshot;
+    EVP_MAC *mac = NULL;
+    size_t i, kept = 0;
+    int errors;
+
+    snapshot = cap_digest_discover(status);
+    if (snapshot == NULL) {
+        return NULL;
+    }
+    *status = -3;
+    mac = EVP_MAC_fetch(NULL, "HMAC", NULL);
+    errors = cap_digest_errors(0, mac == NULL);
+    if (mac == NULL && errors == 1) {
+        for (i = 0; i < snapshot->count; ++i) {
+            free(snapshot->entries[i].name);
+        }
+        snapshot->count = 0;
+        *status = 0;
+        return snapshot;
+    }
+    if (mac == NULL || errors != 0) {
+        goto fail;
+    }
+    for (i = 0; i < snapshot->count; ++i) {
+        cap_digest_entry *entry = &snapshot->entries[i];
+        EVP_MD *md = NULL;
+        int fetched = cap_digest_fetch(entry->name, &md);
+        int usable = 0;
+
+        if (fetched < 0) {
+            goto fail;
+        }
+        if (fetched > 0) {
+            int size = EVP_MD_get_size(md);
+            unsigned long flags = EVP_MD_get_flags(md);
+            if (cap_digest_errors(0, 0) != 0) {
+                EVP_MD_free(md);
+                goto fail;
+            }
+            if (size > 0 && (flags & EVP_MD_FLAG_XOF) == 0) {
+                usable = cap_hmac_probe(mac, entry->name, size, 0);
+                if (usable == 1) {
+                    usable = cap_hmac_probe(mac, entry->name, size, 1);
+                }
+            }
+            EVP_MD_free(md);
+        }
+        if (usable < 0) {
+            goto fail;
+        }
+        if (usable) {
+            if (kept != i) {
+                snapshot->entries[kept] = *entry;
+                entry->name = NULL;
+            }
+            ++kept;
+        } else {
+            free(entry->name);
+            entry->name = NULL;
+        }
+    }
+    snapshot->count = kept;
+    EVP_MAC_free(mac);
+    *status = 0;
+    return snapshot;
+fail:
+    EVP_MAC_free(mac);
+    __k_cap_digest_free(snapshot);
+    return NULL;
+}
+
 typedef struct {
     OSSL_LIB_CTX *libctx;
     cap_digest_snapshot *snapshot;
+    int hmac;
     int status;
     atomic_uint references;
     atomic_int done;
@@ -509,7 +691,8 @@ static void *cap_digest_worker(void *arg) {
     if (previous != NULL) {
         int selected = OSSL_LIB_CTX_set0_default(NULL) == job->libctx;
         if (cap_digest_errors(0, 0) == 0 && selected) {
-            job->snapshot = cap_digest_discover(&job->status);
+            job->snapshot = job->hmac ? cap_hmac_discover(&job->status)
+                                      : cap_digest_discover(&job->status);
         }
         if (OSSL_LIB_CTX_set0_default(previous) != job->libctx) {
             __k_cap_digest_free(job->snapshot);
@@ -524,7 +707,7 @@ static void *cap_digest_worker(void *arg) {
     return NULL;
 }
 
-void *__k_cap_digest_new(int *status) {
+static void *cap_digest_new(int *status, int hmac) {
     cap_digest_job *job;
     cap_digest_snapshot *snapshot;
     pthread_t thread;
@@ -534,7 +717,7 @@ void *__k_cap_digest_new(int *status) {
     }
     *status = -3;
     if (ERR_peek_last_error() == 0) {
-        return cap_digest_discover(status);
+        return hmac ? cap_hmac_discover(status) : cap_digest_discover(status);
     }
 
     /*
@@ -552,6 +735,7 @@ void *__k_cap_digest_new(int *status) {
         return NULL;
     }
     job->status = -3;
+    job->hmac = hmac;
     atomic_init(&job->references, 2);
     atomic_init(&job->done, 0);
     if (pthread_create(&thread, NULL, cap_digest_worker, job) != 0) {
@@ -571,6 +755,14 @@ void *__k_cap_digest_new(int *status) {
     *status = job->status;
     cap_digest_job_release(job);
     return snapshot;
+}
+
+void *__k_cap_digest_new(int *status) {
+    return cap_digest_new(status, 0);
+}
+
+void *__k_cap_hmac_digest_new(int *status) {
+    return cap_digest_new(status, 1);
 }
 
 unsigned int __k_cap_digest_count(const void *handle) {
