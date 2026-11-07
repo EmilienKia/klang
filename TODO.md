@@ -416,6 +416,13 @@
       not block runtime FFI. Add a sequential-collection regression before
       fixing the general Vector assignment operator.
 
+- [ ] **Vector membership always returns false.**
+      `Vector<T>::contains` in `libk/libk/src/vector.k` unconditionally returns
+      `false`. For example, `a: int[1] = {7}; values: Vector<int> =
+      Vector<int>(a); values.contains(7)` should be true but is false. This was
+      found during crypto capability discovery, which explicitly checks values
+      instead. Add a sequential-collection regression when fixing membership.
+
 - [x] **Application singleton test now handles the checked `Thread.join()` interruption.**
       Direct reproduction: run `libk-tests-types --reporter compact [singleton]`.
       The test case `Application singleton — activation, inheritance casts,

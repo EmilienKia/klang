@@ -27,12 +27,15 @@ private struct NativeSymmetricCipher {}
 private struct NativeSymmetricKey {}
 private struct NativeSymmetricSession {}
 
-@ffi::Extern("C") private __k_symmetric_cipher_new(algorithm: int, bits: unsigned int,
-    mode: int, nonceSize: unsigned int, tagSize: unsigned int, padding: int) : NativeSymmetricCipher*;
+@ffi::Extern("C") private __k_symmetric_cipher_create(algorithm: const unsigned byte*, bits: unsigned int,
+    mode: const unsigned byte*, nonceSize: unsigned int, tagSize: unsigned int,
+    padding: const unsigned byte*, defaults: int) : NativeSymmetricCipher*;
 @ffi::Extern("C") private __k_symmetric_cipher_from_name(name: const unsigned byte*) : NativeSymmetricCipher*;
 @ffi::Extern("C") private __k_symmetric_cipher_free(cipher: NativeSymmetricCipher*);
 @ffi::Extern("C") private __k_symmetric_cipher_info(cipher: const NativeSymmetricCipher*, field: int) : unsigned long;
 @ffi::Extern("C") private __k_symmetric_cipher_name(cipher: const NativeSymmetricCipher*, out: unsigned byte*);
+@ffi::Extern("C") private __k_symmetric_cipher_field_size(cipher: const NativeSymmetricCipher*, field: int) : unsigned int;
+@ffi::Extern("C") private __k_symmetric_cipher_field_copy(cipher: const NativeSymmetricCipher*, field: int, out: unsigned byte*);
 @ffi::Extern("C") private __k_symmetric_random(out: unsigned byte*, length: unsigned int) : int;
 @ffi::Extern("C") private __k_symmetric_key_new(cipher: const NativeSymmetricCipher*, data: const unsigned byte*,
     generate: int, status: int*) : NativeSymmetricKey*;
@@ -112,45 +115,13 @@ public enum SymmetricPaddings : SymmetricPadding {
     PKCS7("PKCS7");
 }
 
-// Bind enum entries as backing strings before comparing, avoiding reverse lookup.
-private symmetricNameEquals(name: const String&, candidate: const String&) : bool {
-    return name == candidate;
-}
-
-private symmetricNameCopy(name: const String&) : String {
-    return String(name);
-}
-
-private symmetricAlgorithmId(algorithm: const SymmetricAlgorithm&) : int {
-    if (symmetricNameEquals(algorithm, SymmetricAlgorithms::AES)) return 1;
-    if (symmetricNameEquals(algorithm, SymmetricAlgorithms::ARIA)) return 2;
-    if (symmetricNameEquals(algorithm, SymmetricAlgorithms::Camellia)) return 3;
-    if (symmetricNameEquals(algorithm, SymmetricAlgorithms::SM4)) return 4;
-    if (symmetricNameEquals(algorithm, SymmetricAlgorithms::ChaCha20)) return 5;
-    if (symmetricNameEquals(algorithm, SymmetricAlgorithms::AsconAead128)) return 6;
-    return -1;
-}
-
-private symmetricModeId(mode: const SymmetricMode&) : int {
-    if (symmetricNameEquals(mode, SymmetricModes::GCM)) return 1;
-    if (symmetricNameEquals(mode, SymmetricModes::CCM)) return 2;
-    if (symmetricNameEquals(mode, SymmetricModes::OCB)) return 3;
-    if (symmetricNameEquals(mode, SymmetricModes::CBC)) return 4;
-    if (symmetricNameEquals(mode, SymmetricModes::CTR)) return 5;
-    if (symmetricNameEquals(mode, SymmetricModes::XTS)) return 6;
-    if (symmetricNameEquals(mode, SymmetricModes::Poly1305)) return 7;
-    if (symmetricNameEquals(mode, SymmetricModes::Ascon)) return 8;
-    if (symmetricNameEquals(mode, SymmetricModes::CFB)) return 9;
-    if (symmetricNameEquals(mode, SymmetricModes::OFB)) return 10;
-    if (symmetricNameEquals(mode, SymmetricModes::CFB1)) return 11;
-    if (symmetricNameEquals(mode, SymmetricModes::CFB8)) return 12;
-    return -1;
-}
-
-private symmetricPaddingId(padding: const SymmetricPadding&) : int {
-    if (symmetricNameEquals(padding, SymmetricPaddings::None)) return 0;
-    if (symmetricNameEquals(padding, SymmetricPaddings::PKCS7)) return 1;
-    return -1;
+private symmetricValidName(encoded: const unsigned byte[]) : bool {
+    i: unsigned int = 0u;
+    while (i + 1u < encoded.size) {
+        if (encoded[i] == 0) return false;
+        ++i;
+    }
+    return true;
 }
 
 private symmetricStaging(staging: DecryptionStaging) : int throws(CryptoException) {
@@ -196,6 +167,10 @@ public:
  * CBC needs an unpredictable IV; CTR counter ranges and XTS data-unit tweaks
  * must not be reused with the same key. CBC, CTR, XTS, CFB and OFB do not
  * authenticate their output.
+ * Raw CHACHA20/STREAM is unauthenticated. Its 16-byte IV is an eight-byte
+ * little-endian initial block counter followed by an eight-byte nonce, not
+ * the IETF 96-bit-nonce format. Counter ranges must never overlap for a key.
+ * Use separate keys for raw ChaCha20 and ChaCha20-Poly1305.
  * CCM uses a private streaming composition and is not provider-validated or
  * FIPS-validated merely because its underlying block cipher is.
  */
@@ -216,31 +191,38 @@ public:
                   mode: const SymmetricMode&, nonceSize: unsigned int, tagSize: unsigned int,
                   padding: const SymmetricPadding&)
             : SymmetricCipher! {
-        algorithmId: int = symmetricAlgorithmId(algorithm);
-        modeId: int = symmetricModeId(mode);
-        paddingId: int = symmetricPaddingId(padding);
-        if (algorithmId < 0 || modeId < 0 || paddingId < 0) return null;
-        native: NativeSymmetricCipher* = __k_symmetric_cipher_new(
-            algorithmId, keyBits, modeId, nonceSize, tagSize, paddingId);
-        if (native == null) return null;
-        return new SymmetricCipher(native);
+        a: unsigned byte[]! = algorithm.toUtf8();
+        m: unsigned byte[]! = mode.toUtf8();
+        p: unsigned byte[]! = padding.toUtf8();
+        try {
+            if (!symmetricValidName(a) || !symmetricValidName(m) || !symmetricValidName(p))
+                return null;
+            native: NativeSymmetricCipher* = __k_symmetric_cipher_create(
+                &a[0u], keyBits, &m[0u], nonceSize, tagSize, &p[0u], 0);
+            if (native == null) return null;
+            return new SymmetricCipher(native);
+        } finally {
+            delete p;
+            delete m;
+            delete a;
+        }
     }
 
     static create(algorithm: const SymmetricAlgorithm&, keyBits: unsigned int,
                   mode: const SymmetricMode&)
             : SymmetricCipher! {
-        modeId: int = symmetricModeId(mode);
-        if (modeId < 0) return null;
-        if (modeId == 1 || modeId == 2 || modeId == 3 || modeId == 7) {
-            return create(algorithm, keyBits, mode, 12u, 16u, SymmetricPaddings::None);
+        a: unsigned byte[]! = algorithm.toUtf8();
+        m: unsigned byte[]! = mode.toUtf8();
+        try {
+            if (!symmetricValidName(a) || !symmetricValidName(m)) return null;
+            native: NativeSymmetricCipher* = __k_symmetric_cipher_create(
+                &a[0u], keyBits, &m[0u], 0u, 0u, null, 1);
+            if (native == null) return null;
+            return new SymmetricCipher(native);
+        } finally {
+            delete m;
+            delete a;
         }
-        if (modeId == 8) {
-            return create(algorithm, keyBits, mode, 16u, 16u, SymmetricPaddings::None);
-        }
-        if (modeId == 4) {
-            return create(algorithm, keyBits, mode, 16u, 0u, SymmetricPaddings::PKCS7);
-        }
-        return create(algorithm, keyBits, mode, 16u, 0u, SymmetricPaddings::None);
     }
 
     static AES128GCM() : SymmetricCipher! {
@@ -277,42 +259,16 @@ public:
     const authenticated() : bool { return __k_symmetric_cipher_info(_native, 3) != 0uL; }
     const maxDataSize() : unsigned long { return __k_symmetric_cipher_info(_native, 4); }
     const maxAadSize() : unsigned long { return __k_symmetric_cipher_info(_native, 5); }
-    /** An unrecognized native descriptor ID is an unrecoverable backend error. */
-    const algorithm() : SymmetricAlgorithm {
-        id: unsigned long = __k_symmetric_cipher_info(_native, 6);
-        if (id == 1uL) return symmetricNameCopy(SymmetricAlgorithms::AES);
-        if (id == 2uL) return symmetricNameCopy(SymmetricAlgorithms::ARIA);
-        if (id == 3uL) return symmetricNameCopy(SymmetricAlgorithms::Camellia);
-        if (id == 4uL) return symmetricNameCopy(SymmetricAlgorithms::SM4);
-        if (id == 5uL) return symmetricNameCopy(SymmetricAlgorithms::ChaCha20);
-        if (id == 6uL) return symmetricNameCopy(SymmetricAlgorithms::AsconAead128);
-        throw FatalError(604);
+    private const descriptorField(field: int) : String {
+        size: unsigned int = __k_symmetric_cipher_field_size(_native, field);
+        bytes: unsigned byte[]! = new unsigned byte[size + 1u];
+        __k_symmetric_cipher_field_copy(_native, field, &bytes[0u]);
+        return String(bytes);
     }
-    /** An unrecognized native descriptor ID is an unrecoverable backend error. */
-    const mode() : SymmetricMode {
-        id: unsigned long = __k_symmetric_cipher_info(_native, 7);
-        if (id == 1uL) return symmetricNameCopy(SymmetricModes::GCM);
-        if (id == 2uL) return symmetricNameCopy(SymmetricModes::CCM);
-        if (id == 3uL) return symmetricNameCopy(SymmetricModes::OCB);
-        if (id == 4uL) return symmetricNameCopy(SymmetricModes::CBC);
-        if (id == 5uL) return symmetricNameCopy(SymmetricModes::CTR);
-        if (id == 6uL) return symmetricNameCopy(SymmetricModes::XTS);
-        if (id == 7uL) return symmetricNameCopy(SymmetricModes::Poly1305);
-        if (id == 8uL) return symmetricNameCopy(SymmetricModes::Ascon);
-        if (id == 9uL) return symmetricNameCopy(SymmetricModes::CFB);
-        if (id == 10uL) return symmetricNameCopy(SymmetricModes::OFB);
-        if (id == 11uL) return symmetricNameCopy(SymmetricModes::CFB1);
-        if (id == 12uL) return symmetricNameCopy(SymmetricModes::CFB8);
-        throw FatalError(604);
-    }
+    const algorithm() : SymmetricAlgorithm { return descriptorField(0); }
+    const mode() : SymmetricMode { return descriptorField(1); }
     const keyBits() : unsigned int { return (unsigned int) __k_symmetric_cipher_info(_native, 8); }
-    /** An unrecognized native descriptor ID is an unrecoverable backend error. */
-    const padding() : SymmetricPadding {
-        id: unsigned long = __k_symmetric_cipher_info(_native, 9);
-        if (id == 0uL) return symmetricNameCopy(SymmetricPaddings::None);
-        if (id == 1uL) return symmetricNameCopy(SymmetricPaddings::PKCS7);
-        throw FatalError(604);
-    }
+    const padding() : SymmetricPadding { return descriptorField(2); }
 
     const generateKey() : SymmetricKey! throws(CryptoException) {
         return new SymmetricKey(_native, keySize(), null, 1);

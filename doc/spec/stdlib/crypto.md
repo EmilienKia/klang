@@ -246,3 +246,37 @@ Crypto API errors derive from `CryptoException`. `CryptoInvalidInputException`
 reports invalid inputs, `CryptoAuthenticationException` reports failed
 authentication, `CryptoOperationException` reports operation failures, and
 `CryptoStateException` reports use in an invalid state.
+
+## Capability discovery
+
+`CryptoCapabilities::snapshot()` discovers available digests and symmetric
+ciphers and returns an owned snapshot. Its `digestAlgorithms()`,
+`symmetricAlgorithms()`, `symmetricModes()` and `symmetricPaddings()` methods
+return owned `Sequence` values containing the corresponding string aliases.
+Names may include supported extensions that have no entry in the standard enums.
+
+The global symmetric mode and padding sequences are unions, not a Cartesian
+product. `symmetricModes(algorithm, keyBits)` and
+`symmetricPaddings(algorithm, keyBits, mode)` restrict the results to matching
+configurations. `symmetricConfigurations()` returns representative
+`SymmetricCipherConfiguration` values with `algorithm()`, `keyBits()`, `mode()`,
+`padding()`, `nonceSize()` and `tagSize()` accessors. Each tuple is validated
+with the cipher implementation; it is not an exhaustive list of every permitted
+nonce and tag length. For XTS, `keyBits()` is the component-key size.
+
+Discovery uses the active provider configuration and the same selection policy
+as the factories; provider candidates unsupported by the library are not
+advertised. OpenSSL enumerates digest and cipher candidates; padding names are
+libk policies validated with each cipher, not a provider enumeration. A snapshot
+and its returned sequences own their data and remain unchanged if providers are
+subsequently reconfigured. An iterator borrows its sequence. Availability may
+change between discovery and use, so a later factory call can still return
+null. Discovery failures are reported as crypto errors.
+
+When available, the `CHACHA20` / `STREAM` extension is unauthenticated. Its
+16-byte IV consists of a 64-bit little-endian initial block counter followed by
+an 8-byte nonce; this is not the 96-bit nonce format of ChaCha20-Poly1305.
+Counter ranges must not overlap, and a session rejects counter wrap. Use a
+separate key from ChaCha20-Poly1305, and provide independent authentication
+when integrity is required. A session's `maxDataSize()` accounts for its
+initial counter and is capped at the largest `unsigned long` value.

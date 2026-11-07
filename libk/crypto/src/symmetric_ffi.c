@@ -14,10 +14,13 @@
 #include <openssl/crypto.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
+#include <openssl/evperr.h>
+#include <openssl/proverr.h>
 #include <openssl/rand.h>
 
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -29,7 +32,7 @@
 
 enum { OK = 0, INVALID = -1, AUTH = -2, OPERATION = -3, STATE = -4 };
 enum { AES = 1, ARIA, CAMELLIA, SM4, CHACHA20, ASCON_AEAD128 };
-enum { GCM = 1, CCM, OCB, CBC, CTR, XTS, POLY1305, ASCON, CFB, OFB, CFB1, CFB8 };
+enum { GCM = 1, CCM, OCB, CBC, CTR, XTS, POLY1305, ASCON, CFB, OFB, CFB1, CFB8, STREAM };
 enum { NO_PADDING = 0, PKCS7 = 1 };
 enum { CHUNK = 65536, BLOCK = 16, MAX_KEY = 64 };
 #define GCM_MAX_DATA ((UINT64_C(1) << 36) - 32)
@@ -38,8 +41,43 @@ enum { CHUNK = 65536, BLOCK = 16, MAX_KEY = 64 };
 #define XTS_MAX_DATA ((UINT64_C(1) << 20) * 16)
 
 typedef struct {
+    int algorithm, mode;
+    const char *algorithm_name, *mode_name, *cipher_family;
+    unsigned int bits_mask;
+    unsigned int default_iv, default_tag;
+    int default_padding;
+} cipher_adapter;
+
+#define B128 1u
+#define B192 2u
+#define B256 4u
+#define FAMILY_MODES(id, family, mask, xts_mask) \
+    {id,GCM,family,"GCM",family,mask,12,16,NO_PADDING}, \
+    {id,CCM,family,"CCM",family,mask,12,16,NO_PADDING}, \
+    {id,OCB,family,"OCB",family,mask,12,16,NO_PADDING}, \
+    {id,CBC,family,"CBC",family,mask,16,0,PKCS7}, \
+    {id,CTR,family,"CTR",family,mask,16,0,NO_PADDING}, \
+    {id,XTS,family,"XTS",family,xts_mask,16,0,NO_PADDING}, \
+    {id,CFB,family,"CFB",family,mask,16,0,NO_PADDING}, \
+    {id,OFB,family,"OFB",family,mask,16,0,NO_PADDING}, \
+    {id,CFB1,family,"CFB1",family,mask,16,0,NO_PADDING}, \
+    {id,CFB8,family,"CFB8",family,mask,16,0,NO_PADDING}
+
+static const cipher_adapter adapters[] = {
+    FAMILY_MODES(AES, "AES", B128 | B192 | B256, B128 | B256),
+    FAMILY_MODES(ARIA, "ARIA", B128 | B192 | B256, B128 | B192 | B256),
+    FAMILY_MODES(CAMELLIA, "CAMELLIA", B128 | B192 | B256, B128 | B192 | B256),
+    FAMILY_MODES(SM4, "SM4", B128, B128),
+    {CHACHA20,POLY1305,"CHACHA20","POLY1305","ChaCha20-Poly1305",B256,12,16,NO_PADDING},
+    {CHACHA20,STREAM,"CHACHA20","STREAM","ChaCha20",B256,16,0,NO_PADDING},
+    {ASCON_AEAD128,ASCON,"ASCON-AEAD128","ASCON","ASCON-AEAD128",B128,16,16,NO_PADDING}
+};
+#define ADAPTER_COUNT (sizeof(adapters) / sizeof(adapters[0]))
+
+typedef struct {
     EVP_CIPHER *cipher;
     EVP_CIPHER *block;
+    const cipher_adapter *adapter;
     int algorithm, mode, padding, authenticated, xts_streaming;
     unsigned int bits, key_len, iv_len, tag_len;
     uint64_t max_data, max_aad;
@@ -85,45 +123,39 @@ static int aead_mode(int mode) {
     return mode == GCM || mode == CCM || mode == OCB || mode == POLY1305 || mode == ASCON;
 }
 
-static const char *mode_name(int mode) {
-    switch (mode) {
-        case GCM: return "GCM";
-        case CCM: return "CCM";
-        case OCB: return "OCB";
-        case CBC: return "CBC";
-        case CTR: return "CTR";
-        case XTS: return "XTS";
-        case CFB: return "CFB";
-        case OFB: return "OFB";
-        case CFB1: return "CFB1";
-        case CFB8: return "CFB8";
-        default: return NULL;
-    }
+static unsigned int bits_mask(unsigned int bits) {
+    return bits == 128 ? B128 : bits == 192 ? B192 : bits == 256 ? B256 : 0;
+}
+
+static const cipher_adapter *find_adapter(int algorithm, unsigned int bits, int mode) {
+    for (size_t i = 0; i < ADAPTER_COUNT; ++i)
+        if (adapters[i].algorithm == algorithm && adapters[i].mode == mode &&
+            (adapters[i].bits_mask & bits_mask(bits))) return &adapters[i];
+    return NULL;
+}
+
+static const cipher_adapter *find_adapter_names(const char *algorithm, unsigned int bits,
+                                                 const char *mode) {
+    if (!algorithm || !mode) return NULL;
+    for (size_t i = 0; i < ADAPTER_COUNT; ++i)
+        if (!strcmp(adapters[i].algorithm_name, algorithm) &&
+            !strcmp(adapters[i].mode_name, mode) &&
+            (adapters[i].bits_mask & bits_mask(bits))) return &adapters[i];
+    return NULL;
 }
 
 static int cipher_parameters(symmetric_cipher *c, int algorithm, unsigned int bits,
                              int mode, unsigned int iv_len, unsigned int tag_len,
                              int padding) {
-    const char *family = NULL, *m = mode_name(mode);
-    if (algorithm == AES) family = "AES";
-    else if (algorithm == ARIA) family = "ARIA";
-    else if (algorithm == CAMELLIA) family = "CAMELLIA";
-    else if (algorithm == SM4) family = "SM4";
-    else if (algorithm != CHACHA20 && algorithm != ASCON_AEAD128) return 0;
-    if (algorithm == CHACHA20) {
-        if (bits != 256 || mode != POLY1305) return 0;
-        strcpy(c->name, "ChaCha20-Poly1305");
-    } else if (algorithm == ASCON_AEAD128) {
-        if (bits != 128 || mode != ASCON) return 0;
-        strcpy(c->name, "ASCON-AEAD128");
-    } else {
-        if (!m || (bits != 128 && bits != 192 && bits != 256) ||
-            (algorithm == SM4 && bits != 128) ||
-            (mode == XTS && algorithm == AES && bits == 192))
-            return 0;
-        if (algorithm == SM4) snprintf(c->name, sizeof(c->name), "SM4-%s", m);
-        else snprintf(c->name, sizeof(c->name), "%s-%u-%s", family, bits, m);
-    }
+    const cipher_adapter *adapter = find_adapter(algorithm, bits, mode);
+    if (!adapter) return 0;
+    c->adapter = adapter;
+    if (algorithm == CHACHA20 || algorithm == ASCON_AEAD128)
+        snprintf(c->name, sizeof(c->name), "%s", adapter->cipher_family);
+    else if (algorithm == SM4)
+        snprintf(c->name, sizeof(c->name), "%s-%s", adapter->cipher_family, adapter->mode_name);
+    else
+        snprintf(c->name, sizeof(c->name), "%s-%u-%s", adapter->cipher_family, bits, adapter->mode_name);
     if (padding != NO_PADDING && padding != PKCS7) return 0;
     if (mode != CBC && padding != NO_PADDING) return 0;
     c->authenticated = aead_mode(mode);
@@ -190,6 +222,7 @@ static int cipher_matches(const symmetric_cipher *c) {
         case CFB1:
         case CFB8: expected = EVP_CIPH_CFB_MODE; break;
         case OFB: expected = EVP_CIPH_OFB_MODE; break;
+        case STREAM:
         case POLY1305:
         case ASCON: expected = EVP_CIPH_STREAM_CIPHER; break;
         default: return 0;
@@ -201,11 +234,47 @@ static int cipher_matches(const symmetric_cipher *c) {
            EVP_CIPHER_get_iv_length(c->cipher) == (int)c->iv_len;
 }
 
+static int expected_probe_error(unsigned long error, int authentication) {
+    if (ERR_SYSTEM_ERROR(error) || ERR_FATAL_ERROR(error)) return 0;
+    int lib = ERR_GET_LIB(error), reason = ERR_GET_REASON(error);
+    if (authentication)
+        return (lib == ERR_LIB_EVP && reason == EVP_R_BAD_DECRYPT) ||
+               (lib == ERR_LIB_PROV &&
+                (reason == PROV_R_BAD_DECRYPT || reason == PROV_R_INVALID_TAG));
+    if (reason == ERR_R_UNSUPPORTED) return 1;
+    if (lib == ERR_LIB_EVP &&
+        (reason == EVP_R_COMMAND_NOT_SUPPORTED ||
+         reason == EVP_R_CTRL_NOT_IMPLEMENTED ||
+         reason == EVP_R_CTRL_OPERATION_NOT_IMPLEMENTED ||
+         reason == EVP_R_INVALID_IV_LENGTH ||
+         reason == EVP_R_INVALID_KEY_LENGTH ||
+         reason == EVP_R_UNSUPPORTED_CIPHER ||
+         reason == EVP_R_UNSUPPORTED_KEYLENGTH)) return 1;
+    return lib == ERR_LIB_PROV &&
+        (reason == PROV_R_NOT_SUPPORTED || reason == PROV_R_INVALID_IV_LENGTH ||
+         reason == PROV_R_INVALID_KEY_LENGTH || reason == PROV_R_INVALID_TAG_LENGTH ||
+         reason == PROV_R_INVALID_PADDING_MODE || reason == PROV_R_INVALID_MODE ||
+         reason == PROV_R_UNSUPPORTED_KEY_SIZE);
+}
+
+static int discovery_probe_status(int failed, int authentication) {
+    unsigned long error;
+    int has_errors = 0, unexpected = 0;
+    while ((error = ERR_get_error()) != 0) {
+        has_errors = 1;
+        if (!expected_probe_error(error, authentication)) unexpected = 1;
+    }
+    if (unexpected || (!failed && has_errors)) return OPERATION;
+    return failed ? INVALID : OK;
+}
+
 static int cipher_probe(const symmetric_cipher *c, EVP_CIPHER_CTX *ctx,
-                        const unsigned char *key, const unsigned char *iv) {
+                        const unsigned char *key, const unsigned char *iv,
+                        int discovery, int *internal_error) {
     unsigned char plain[32], encrypted[80], recovered[80], tag[16];
     int a = 0, b = 0, f = 0, d = 0, e = 0, g = 0, ok = 0;
     int len = c->mode == CBC && c->padding == NO_PADDING ? 32 : 19;
+    *internal_error = 0;
     for (int i = 0; i < len; ++i) plain[i] = (unsigned char)i;
     if (!init_evp(ctx, c, key, iv, 1) ||
         EVP_CipherUpdate(ctx, encrypted, &a, plain, 7) != 1 ||
@@ -221,12 +290,21 @@ static int cipher_probe(const symmetric_cipher *c, EVP_CIPHER_CTX *ctx,
         EVP_CipherFinal_ex(ctx, recovered + d + e, &g) != 1 ||
         d + e + g != len || CRYPTO_memcmp(plain, recovered, (size_t)len) != 0)
         goto done;
+    if (discovery && discovery_probe_status(0, 0) != OK) {
+        *internal_error = 1;
+        goto done;
+    }
     if (c->authenticated) {
         tag[0] ^= 1;
         if (EVP_CIPHER_CTX_reset(ctx) != 1 || !init_evp(ctx, c, key, iv, 0) ||
             EVP_CipherUpdate(ctx, recovered, &d, encrypted, a + b + f) != 1 ||
-            EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, (int)c->tag_len, tag) != 1 ||
-            EVP_CipherFinal_ex(ctx, recovered + d, &g) == 1) goto done;
+            EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, (int)c->tag_len, tag) != 1)
+            goto done;
+        if (EVP_CipherFinal_ex(ctx, recovered + d, &g) == 1) goto done;
+        if (discovery && discovery_probe_status(1, 1) != INVALID) {
+            *internal_error = 1;
+            goto done;
+        }
     }
     ok = 1;
 done:
@@ -237,7 +315,7 @@ done:
     return ok;
 }
 
-static int ascon_known_answer(const symmetric_cipher *c) {
+static int ascon_known_answer(const symmetric_cipher *c, int *internal_error) {
     static const unsigned char expected[2][16] = {
         {0x4f,0x9c,0x27,0x82,0x11,0xbe,0xc9,0x31,0x6b,0xf6,0x8f,0x46,0xee,0x8b,0x2e,0xc6},
         {0xcc,0xcb,0x67,0x4f,0xe1,0x8a,0x09,0xa2,0x85,0xd6,0xab,0x11,0xb3,0x56,0x75,0xc0}
@@ -248,6 +326,7 @@ static int ascon_known_answer(const symmetric_cipher *c) {
     unsigned char key[16], iv[16], tag[16], out[32], aad = 0x30;
     unsigned char plaintext = 0x20;
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    *internal_error = ctx == NULL;
     int written, final_written, ok = ctx != NULL;
     for (unsigned int i = 0; i < 16; ++i) {
         key[i] = (unsigned char)i;
@@ -293,9 +372,14 @@ static int xts_stream_probe_length(const symmetric_cipher *c, unsigned int lengt
     unsigned char key[MAX_KEY] = {0}, iv[BLOCK] = {0};
     unsigned char plain[79], encrypted[96], divided[96], recovered[96];
     int a, b, d, e, f, ok = 0;
+    if (!single || !split) {
+        EVP_CIPHER_CTX_free(single);
+        EVP_CIPHER_CTX_free(split);
+        return -1;
+    }
     key[c->key_len - 1] = 1;
     for (unsigned int i = 0; i < sizeof(plain); ++i) plain[i] = (unsigned char)i;
-    if (!single || !split || !init_evp(single, c, key, iv, 1) ||
+    if (!init_evp(single, c, key, iv, 1) ||
         !init_evp(split, c, key, iv, 1) ||
         EVP_CipherUpdate(single, encrypted, &a, plain, (int)length) != 1 ||
         EVP_CipherFinal_ex(single, encrypted + a, &f) != 1 || a + f != (int)length ||
@@ -329,23 +413,116 @@ done:
 }
 
 static int xts_stream_probe(const symmetric_cipher *c) {
-    return xts_stream_probe_length(c, 64) && xts_stream_probe_length(c, 79);
+    int result = xts_stream_probe_length(c, 64);
+    if (result <= 0) return result;
+    return xts_stream_probe_length(c, 79);
 }
 
-symmetric_cipher *__k_symmetric_cipher_new(int algorithm, unsigned int bits, int mode,
-                                             unsigned int iv_len, unsigned int tag_len,
-                                             int padding) {
+static int chacha_stream_probe(const symmetric_cipher *c, int *internal_error) {
+    static const unsigned char expected[16] = {
+        0x76,0xb8,0xe0,0xad,0xa0,0xf1,0x3d,0x90,
+        0x40,0x5d,0x6a,0xe5,0x53,0x86,0xbd,0x28
+    };
+    unsigned char key[32] = {0}, iv[16] = {0}, input[128] = {0};
+    unsigned char out[128], second[64];
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    *internal_error = ctx == NULL;
+    int n = 0, m = 0, ok = 0;
+    if (!ctx || !init_evp(ctx, c, key, iv, 1) ||
+        EVP_CipherUpdate(ctx, out, &n, input, 64) != 1 || n != 64 ||
+        CRYPTO_memcmp(out, expected, sizeof(expected)) != 0) goto done;
+    memset(iv, 0xff, 4);
+    if (EVP_CIPHER_CTX_reset(ctx) != 1 || !init_evp(ctx, c, key, iv, 1) ||
+        EVP_CipherUpdate(ctx, out, &n, input, 128) != 1 || n != 128) goto done;
+    memset(iv, 0, 4);
+    iv[4] = 1;
+    if (EVP_CIPHER_CTX_reset(ctx) != 1 || !init_evp(ctx, c, key, iv, 1) ||
+        EVP_CipherUpdate(ctx, second, &m, input, 64) != 1 || m != 64 ||
+        CRYPTO_memcmp(out + 64, second, 64) != 0) goto done;
+    ok = 1;
+done:
+    EVP_CIPHER_CTX_free(ctx);
+    OPENSSL_cleanse(out, sizeof(out));
+    OPENSSL_cleanse(second, sizeof(second));
+    return ok;
+}
+
+static int begin_error_scope(unsigned long *sentinel) {
+    int marked = ERR_set_mark();
+    ERR_raise(ERR_LIB_USER, 0x4b1);
+    *sentinel = ERR_peek_last_error();
+    return marked;
+}
+
+static void end_error_scope(int marked) {
+    if (marked) ERR_pop_to_mark(); else ERR_clear_error();
+}
+
+static int probe_failure_status(unsigned long previous_error, int discovery) {
+    if (discovery) return discovery_probe_status(1, 0);
+    unsigned long error = ERR_peek_last_error();
+    if (!error || error == previous_error) return INVALID;
+    return expected_probe_error(error, 0) ? INVALID : OPERATION;
+}
+
+static EVP_CIPHER *fetch_cipher(const char *name, int discovery,
+                                unsigned long previous_error, int *status) {
+    /* Discovery runs on an isolated worker, so its entire error queue can be inspected. */
+    if (discovery && ERR_peek_error() != 0) return NULL;
+    EVP_CIPHER *cipher = EVP_CIPHER_fetch(NULL, name, NULL);
+    if (!discovery) {
+        if (!cipher) {
+            unsigned long error = ERR_peek_last_error();
+            if (error != previous_error && ERR_GET_LIB(error) == ERR_LIB_EVP &&
+                ERR_GET_REASON(error) == ERR_R_UNSUPPORTED)
+                *status = INVALID;
+        }
+        return cipher;
+    }
+
+    int unsupported = 0, other = 0;
+    unsigned long error;
+    while ((error = ERR_get_error()) != 0) {
+        int reason = ERR_GET_REASON(error);
+        if (ERR_GET_LIB(error) == ERR_LIB_EVP &&
+            (reason == ERR_R_UNSUPPORTED || reason == EVP_R_UNSUPPORTED_ALGORITHM))
+            unsupported = 1;
+        else
+            other = 1;
+    }
+    if (cipher && !unsupported && !other) return cipher;
+    if (cipher) {
+        EVP_CIPHER_free(cipher);
+        *status = OPERATION;
+    } else {
+        *status = unsupported && !other ? INVALID : OPERATION;
+    }
+    return NULL;
+}
+
+static symmetric_cipher *cipher_new(int algorithm, unsigned int bits, int mode,
+                                    unsigned int iv_len, unsigned int tag_len,
+                                    int padding, int *status, int discovery) {
+    unsigned long previous_error = ERR_peek_last_error();
+    *status = OPERATION;
+    if (discovery && ERR_peek_error() != 0) return NULL;
     int marked = ERR_set_mark();
     symmetric_cipher *c = OPENSSL_zalloc(sizeof(*c));
     if (!c) {
-        if (marked) ERR_pop_to_mark(); else ERR_clear_error();
+        end_error_scope(marked);
         return NULL;
     }
-    if (!cipher_parameters(c, algorithm, bits, mode, iv_len, tag_len, padding))
+    if (!cipher_parameters(c, algorithm, bits, mode, iv_len, tag_len, padding)) {
+        *status = INVALID;
         goto fail;
-    c->cipher = EVP_CIPHER_fetch(NULL, c->name, NULL);
-    if (!c->cipher || !cipher_matches(c))
+    }
+    c->cipher = fetch_cipher(c->name, discovery, previous_error, status);
+    if (!c->cipher) goto fail;
+    if (!cipher_matches(c)) {
+        *status = discovery ? probe_failure_status(previous_error, 1) : INVALID;
         goto fail;
+    }
+    if (discovery && discovery_probe_status(0, 0) != OK) goto fail;
     if (c->mode == CCM) {
         /* CCM is composed privately from the fetched block primitive. It is not
            a provider-validated or FIPS-validated CCM implementation. */
@@ -354,47 +531,111 @@ symmetric_cipher *__k_symmetric_cipher_new(int algorithm, unsigned int bits, int
         else snprintf(block_name, sizeof(block_name), "%s-%u-ECB",
                       algorithm == AES ? "AES" : algorithm == ARIA ? "ARIA" : "CAMELLIA",
                       bits);
-        c->block = EVP_CIPHER_fetch(NULL, block_name, NULL);
-        if (!c->block || EVP_CIPHER_get_block_size(c->block) != BLOCK ||
-            EVP_CIPHER_get_key_length(c->block) != (int)c->key_len)
+        c->block = fetch_cipher(block_name, discovery, previous_error, status);
+        if (!c->block) goto fail;
+        if (EVP_CIPHER_get_block_size(c->block) != BLOCK ||
+            EVP_CIPHER_get_key_length(c->block) != (int)c->key_len) {
+            *status = discovery ? probe_failure_status(previous_error, 1) : INVALID;
             goto fail;
+        }
+        if (discovery && discovery_probe_status(0, 0) != OK) goto fail;
         unsigned char key[MAX_KEY] = {0}, iv[13] = {0}, tag[16] = {0};
         k_ccm_ctx *probe = NULL;
-        int good = k_ccm_new(c->block, key, c->key_len, iv, c->iv_len, c->tag_len,
-                             0, 0, 1, &probe) == OK && k_ccm_final(probe, tag) == OK;
+        int probe_status = k_ccm_new(c->block, key, c->key_len, iv, c->iv_len, c->tag_len,
+                                     0, 0, 1, &probe);
+        if (probe_status == OK) probe_status = k_ccm_final(probe, tag);
         k_ccm_free(probe);
         probe = NULL;
-        good = good && k_ccm_new(c->block, key, c->key_len, iv, c->iv_len, c->tag_len,
-                                 0, 0, 0, &probe) == OK && k_ccm_final(probe, tag) == OK;
+        if (probe_status == OK)
+            probe_status = k_ccm_new(c->block, key, c->key_len, iv, c->iv_len, c->tag_len,
+                                     0, 0, 0, &probe);
+        if (probe_status == OK) probe_status = k_ccm_final(probe, tag);
         k_ccm_free(probe);
         OPENSSL_cleanse(key, sizeof(key));
         OPENSSL_cleanse(tag, sizeof(tag));
-        if (!good) goto fail;
+        if (probe_status != OK) {
+            if (probe_status != OPERATION)
+                *status = discovery ? probe_failure_status(previous_error, 1) : INVALID;
+            goto fail;
+        }
+        if (discovery && discovery_probe_status(0, 0) != OK) goto fail;
     } else {
         EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
         unsigned char key[MAX_KEY] = {0};
         unsigned char *iv = OPENSSL_zalloc(c->iv_len);
+        int probe_internal_error = 0;
         key[c->key_len - 1] = 1;
         int good = ctx && iv &&
                    (c->mode == XTS
                     ? (init_evp(ctx, c, key, iv, 1) && EVP_CIPHER_CTX_reset(ctx) == 1 &&
                        init_evp(ctx, c, key, iv, 0))
-                    : cipher_probe(c, ctx, key, iv));
+                    : cipher_probe(c, ctx, key, iv, discovery, &probe_internal_error));
+        int allocated = ctx != NULL && iv != NULL;
         EVP_CIPHER_CTX_free(ctx);
         OPENSSL_clear_free(iv, c->iv_len);
         OPENSSL_cleanse(key, sizeof(key));
-        if (!good) goto fail;
-        if (c->mode == XTS) c->xts_streaming = xts_stream_probe(c);
-        if (c->mode == ASCON && !ascon_known_answer(c)) goto fail;
+        if (!good) {
+            if (allocated && !probe_internal_error)
+                *status = probe_failure_status(previous_error, discovery);
+            goto fail;
+        }
+        if (discovery && discovery_probe_status(0, 0) != OK) goto fail;
+        if (c->mode == XTS) {
+            c->xts_streaming = xts_stream_probe(c);
+            if (c->xts_streaming < 0) goto fail;
+            if (discovery &&
+                discovery_probe_status(!c->xts_streaming, 0) !=
+                    (c->xts_streaming ? OK : INVALID))
+                goto fail;
+        }
+        previous_error = ERR_peek_last_error();
+        int internal_error = 0;
+        if (c->mode == ASCON && !ascon_known_answer(c, &internal_error)) {
+            if (!internal_error) *status = probe_failure_status(previous_error, discovery);
+            goto fail;
+        }
+        if (discovery && discovery_probe_status(0, 0) != OK) goto fail;
+        if (c->mode == STREAM && !chacha_stream_probe(c, &internal_error)) {
+            if (!internal_error) *status = probe_failure_status(previous_error, discovery);
+            goto fail;
+        }
+        if (discovery && discovery_probe_status(0, 0) != OK) goto fail;
     }
-    if (marked) ERR_pop_to_mark(); else ERR_clear_error();
+    *status = OK;
+    end_error_scope(marked);
     return c;
 fail:
     EVP_CIPHER_free(c->cipher);
     EVP_CIPHER_free(c->block);
     OPENSSL_free(c);
-    if (marked) ERR_pop_to_mark(); else ERR_clear_error();
+    end_error_scope(marked);
     return NULL;
+}
+
+symmetric_cipher *__k_symmetric_cipher_new(int algorithm, unsigned int bits, int mode,
+                                             unsigned int iv_len, unsigned int tag_len,
+                                             int padding) {
+    int status;
+    return cipher_new(algorithm, bits, mode, iv_len, tag_len, padding, &status, 0);
+}
+
+symmetric_cipher *__k_symmetric_cipher_create(const unsigned char *algorithm,
+        unsigned int bits, const unsigned char *mode, unsigned int iv_len,
+        unsigned int tag_len, const unsigned char *padding, int defaults) {
+    const cipher_adapter *a = find_adapter_names((const char *)algorithm, bits, (const char *)mode);
+    if (!a) return NULL;
+    int pad;
+    if (defaults) {
+        iv_len = a->default_iv;
+        tag_len = a->default_tag;
+        pad = a->default_padding;
+    } else {
+        if (!padding) return NULL;
+        if (!strcmp((const char *)padding, "NONE")) pad = NO_PADDING;
+        else if (!strcmp((const char *)padding, "PKCS7")) pad = PKCS7;
+        else return NULL;
+    }
+    return __k_symmetric_cipher_new(a->algorithm, bits, a->mode, iv_len, tag_len, pad);
 }
 
 void __k_symmetric_cipher_free(symmetric_cipher *c) {
@@ -427,22 +668,37 @@ void __k_symmetric_cipher_name(const symmetric_cipher *c, unsigned char *out) {
     memcpy(out, c->name, strlen(c->name) + 1);
 }
 
+static const char *cipher_field(const symmetric_cipher *c, int field) {
+    if (!c || !c->adapter) return NULL;
+    if (field == 0) return c->adapter->algorithm_name;
+    if (field == 1) return c->adapter->mode_name;
+    if (field == 2) return c->padding == PKCS7 ? "PKCS7" : "NONE";
+    return NULL;
+}
+
+unsigned int __k_symmetric_cipher_field_size(const symmetric_cipher *c, int field) {
+    const char *value = cipher_field(c, field);
+    return value ? (unsigned int)strlen(value) : 0;
+}
+
+void __k_symmetric_cipher_field_copy(const symmetric_cipher *c, int field, unsigned char *out) {
+    const char *value = cipher_field(c, field);
+    if (value && out) memcpy(out, value, strlen(value) + 1);
+}
+
 symmetric_cipher *__k_symmetric_cipher_from_name(const unsigned char *name) {
     if (!name) return NULL;
-    for (int algorithm = AES; algorithm <= ASCON_AEAD128; ++algorithm) {
+    for (size_t i = 0; i < ADAPTER_COUNT; ++i) {
+        const cipher_adapter *a = &adapters[i];
         for (unsigned int bits = 128; bits <= 256; bits += 64) {
-            for (int mode = GCM; mode <= CFB8; ++mode) {
-                symmetric_cipher candidate = {0};
-                unsigned int iv = mode == CCM || mode == GCM || mode == OCB ||
-                                  mode == POLY1305 ? 12 : 16;
-                unsigned int tag = aead_mode(mode) ? 16 : 0;
-                int padding = mode == CBC ? PKCS7 : NO_PADDING;
-                if (cipher_parameters(&candidate, algorithm, bits, mode, iv, tag, padding) &&
-                    (strcmp(candidate.name, (const char *)name) == 0 ||
-                     (algorithm == CHACHA20 &&
-                      strcmp((const char *)name, "CHACHA20-POLY1305") == 0)))
-                    return __k_symmetric_cipher_new(algorithm, bits, mode, iv, tag, padding);
-            }
+            symmetric_cipher candidate = {0};
+            if (cipher_parameters(&candidate, a->algorithm, bits, a->mode,
+                                  a->default_iv, a->default_tag, a->default_padding) &&
+                (!strcmp(candidate.name, (const char *)name) ||
+                 (a->algorithm == CHACHA20 && a->mode == POLY1305 &&
+                  !strcmp((const char *)name, "CHACHA20-POLY1305"))))
+                return __k_symmetric_cipher_new(a->algorithm, bits, a->mode,
+                                                a->default_iv, a->default_tag, a->default_padding);
         }
     }
     return NULL;
@@ -616,6 +872,15 @@ void __k_symmetric_session_free(symmetric_session *s) {
     OPENSSL_clear_free(s, sizeof(*s));
 }
 
+static uint64_t chacha_stream_limit(const unsigned char *iv) {
+    uint64_t counter = 0;
+    for (unsigned int i = 0; i < 8; ++i)
+        counter |= (uint64_t)iv[i] << (8 * i);
+    uint64_t remaining_minus_one = UINT64_MAX - counter;
+    if (remaining_minus_one >= UINT64_MAX / 64) return UINT64_MAX;
+    return (remaining_minus_one + 1) * 64;
+}
+
 symmetric_session *__k_symmetric_session_new(const symmetric_cipher *c,
         const symmetric_key *key, const unsigned char *iv, int encrypt, int file_staging,
         int known_length, uint64_t expected_length, int *status) {
@@ -624,7 +889,8 @@ symmetric_session *__k_symmetric_session_new(const symmetric_cipher *c,
         key->xts != (c->mode == XTS) || key->length != c->key_len ||
         (encrypt != 0 && encrypt != 1) || (file_staging != 0 && file_staging != 1) ||
         (known_length != 0 && known_length != 1) ||
-        (known_length && expected_length > c->max_data)) return NULL;
+        (known_length && (expected_length > c->max_data ||
+         (c->mode == STREAM && expected_length > chacha_stream_limit(iv))))) return NULL;
     *status = OPERATION;
     symmetric_session *s = OPENSSL_zalloc(sizeof(*s));
     if (!s) return NULL;
@@ -709,6 +975,7 @@ int __k_symmetric_incremental_output(const symmetric_session *s) {
 
 uint64_t __k_symmetric_session_max_data(const symmetric_session *s) {
     if (!s) return 0;
+    if (s->mode == STREAM) return s->iv ? chacha_stream_limit(s->iv) : 0;
     if (s->mode != CTR) return s->max_data;
     for (unsigned int i = 0; i < 8; ++i)
         if (s->iv[i] != 0xff) return UINT64_MAX;
@@ -867,7 +1134,9 @@ int __k_symmetric_update(symmetric_session *s, const unsigned char *data,
     else if ((len && !data) || (s->encrypt && capacity && !out) ||
              (uint64_t)len > s->max_data - s->data_length ||
              (s->known_length && (uint64_t)len > s->expected_length - s->data_length) ||
-             (s->mode == CTR && !counter_fits(s->iv, s->data_length + len)))
+             (s->mode == CTR && !counter_fits(s->iv, s->data_length + len)) ||
+             (s->mode == STREAM &&
+              s->data_length + len > chacha_stream_limit(s->iv)))
         rc = INVALID;
     else {
         if (s->state == 0 && s->mode == OCB) rc = start_ocb_data(s);
@@ -1016,4 +1285,274 @@ int __k_symmetric_read(symmetric_session *s, unsigned char *out, unsigned int le
     }
     unlock_session(s);
     return rc;
+}
+
+typedef struct {
+    char *algorithm, *mode, *padding;
+    unsigned int bits, iv_len, tag_len;
+} capability_row;
+
+typedef struct {
+    capability_row *rows;
+    unsigned int count, capacity;
+} symmetric_capabilities;
+
+typedef struct {
+    unsigned char present[ADAPTER_COUNT][3];
+} candidate_set;
+
+static void collect_cipher_candidate(EVP_CIPHER *cipher, void *argument) {
+    candidate_set *set = argument;
+    for (size_t i = 0; i < ADAPTER_COUNT; ++i) {
+        const cipher_adapter *a = &adapters[i];
+        for (unsigned int j = 0; j < 3; ++j) {
+            unsigned int bits = 128 + j * 64;
+            symmetric_cipher candidate = {0};
+            if (cipher_parameters(&candidate, a->algorithm, bits, a->mode,
+                                  a->default_iv, a->default_tag, a->default_padding) &&
+                EVP_CIPHER_is_a(cipher, candidate.name))
+                set->present[i][j] = 1;
+        }
+    }
+}
+
+static int capability_witness(const symmetric_cipher *c) {
+    unsigned char raw[MAX_KEY] = {0}, iv[16] = {0}, plain[32], encrypted[128], recovered[128];
+    unsigned char tag[16] = {0}, aad[7] = {1,2,3,4,5,6,7};
+    unsigned int len = c->mode == CBC && c->padding == NO_PADDING ? 32 :
+                       c->mode == XTS ? 31 : 19;
+    unsigned int n = 0, total = 0, read = 0, recovered_len = 0;
+    int status = OPERATION, rc = OPERATION;
+    symmetric_key *key = NULL;
+    symmetric_session *enc = NULL, *dec = NULL;
+    int marked = ERR_set_mark();
+    for (unsigned int i = 0; i < len; ++i) plain[i] = (unsigned char)i;
+    raw[c->key_len - 1] = 1;
+    key = __k_symmetric_key_new(c, raw, 0, &status);
+    if (!key || status != OK) goto done;
+    enc = __k_symmetric_session_new(c, key, iv, 1, 0, 1, len, &status);
+    if (!enc || status != OK) goto done;
+    if (c->authenticated && __k_symmetric_aad(enc, aad, sizeof(aad)) != OK) goto done;
+    if (__k_symmetric_update(enc, plain, len, encrypted, sizeof(encrypted), &n) != OK)
+        goto done;
+    total = n;
+    if (__k_symmetric_finish(enc, NULL, 0) != OK ||
+        (c->authenticated && __k_symmetric_tag(enc, tag) != OK)) goto done;
+    if (__k_symmetric_read(enc, encrypted + total, sizeof(encrypted) - total, &read) != OK)
+        goto done;
+    total += read;
+    dec = __k_symmetric_session_new(c, key, iv, 0, 0, 1, total, &status);
+    if (!dec || status != OK) goto done;
+    if (c->authenticated && __k_symmetric_aad(dec, aad, sizeof(aad)) != OK) goto done;
+    if (__k_symmetric_update(dec, encrypted, total, NULL, 0, &n) != OK ||
+        __k_symmetric_finish(dec, c->authenticated ? tag : NULL, c->tag_len) != OK)
+        goto done;
+    if (__k_symmetric_read(dec, recovered, sizeof(recovered), &recovered_len) != OK ||
+        recovered_len != len || CRYPTO_memcmp(plain, recovered, len) != 0) goto done;
+    rc = OK;
+done:
+    __k_symmetric_session_free(enc);
+    __k_symmetric_session_free(dec);
+    __k_symmetric_key_free(key);
+    OPENSSL_cleanse(raw, sizeof(raw));
+    OPENSSL_cleanse(plain, sizeof(plain));
+    OPENSSL_cleanse(encrypted, sizeof(encrypted));
+    OPENSSL_cleanse(recovered, sizeof(recovered));
+    OPENSSL_cleanse(tag, sizeof(tag));
+    if (rc == OK && discovery_probe_status(0, 0) != OK) rc = OPERATION;
+    if (marked) ERR_pop_to_mark(); else ERR_clear_error();
+    return rc;
+}
+
+static int add_capability(symmetric_capabilities *snapshot, const symmetric_cipher *c) {
+    if (snapshot->count == snapshot->capacity) {
+        unsigned int next = snapshot->capacity ? snapshot->capacity * 2 : 32;
+        if (next < snapshot->capacity || (size_t)next > SIZE_MAX / sizeof(*snapshot->rows))
+            return OPERATION;
+        capability_row *rows = OPENSSL_realloc(snapshot->rows, (size_t)next * sizeof(*rows));
+        if (!rows) return OPERATION;
+        snapshot->rows = rows;
+        snapshot->capacity = next;
+    }
+    capability_row row = {0};
+    row.algorithm = OPENSSL_strdup(cipher_field(c, 0));
+    row.mode = OPENSSL_strdup(cipher_field(c, 1));
+    row.padding = OPENSSL_strdup(cipher_field(c, 2));
+    if (!row.algorithm || !row.mode || !row.padding) {
+        OPENSSL_free(row.algorithm);
+        OPENSSL_free(row.mode);
+        OPENSSL_free(row.padding);
+        return OPERATION;
+    }
+    row.bits = c->bits;
+    row.iv_len = c->iv_len;
+    row.tag_len = c->tag_len;
+    snapshot->rows[snapshot->count++] = row;
+    return OK;
+}
+
+static int compare_capability_rows(const void *left, const void *right) {
+    const capability_row *a = left, *b = right;
+    int n = strcmp(a->algorithm, b->algorithm);
+    if (n) return n;
+    n = strcmp(a->mode, b->mode);
+    if (n) return n;
+    if (a->bits != b->bits) return a->bits < b->bits ? -1 : 1;
+    n = strcmp(a->padding, b->padding);
+    if (n) return n;
+    if (a->iv_len != b->iv_len) return a->iv_len < b->iv_len ? -1 : 1;
+    if (a->tag_len != b->tag_len) return a->tag_len < b->tag_len ? -1 : 1;
+    return 0;
+}
+
+void __k_cap_symmetric_free(void *handle) {
+    symmetric_capabilities *snapshot = handle;
+    if (!snapshot) return;
+    for (unsigned int i = 0; i < snapshot->count; ++i) {
+        OPENSSL_free(snapshot->rows[i].algorithm);
+        OPENSSL_free(snapshot->rows[i].mode);
+        OPENSSL_free(snapshot->rows[i].padding);
+    }
+    OPENSSL_free(snapshot->rows);
+    OPENSSL_free(snapshot);
+}
+
+static void *build_symmetric_capabilities(int *status) {
+    if (!status) return NULL;
+    *status = OPERATION;
+    symmetric_capabilities *snapshot = OPENSSL_zalloc(sizeof(*snapshot));
+    if (!snapshot) return NULL;
+    candidate_set set = {0};
+    unsigned long before;
+    int marked = begin_error_scope(&before);
+    EVP_CIPHER_do_all_provided(NULL, collect_cipher_candidate, &set);
+    unsigned long after = ERR_peek_last_error();
+    end_error_scope(marked);
+    if (!before || after != before) goto fail;
+    for (size_t i = 0; i < ADAPTER_COUNT; ++i) {
+        const cipher_adapter *a = &adapters[i];
+        for (unsigned int j = 0; j < 3; ++j) {
+            if (!set.present[i][j]) continue;
+            unsigned int bits = 128 + j * 64;
+            for (int p = 0; p < (a->mode == CBC ? 2 : 1); ++p) {
+                int pad = p == 0 ? a->default_padding : NO_PADDING;
+                int result;
+                symmetric_cipher *c = cipher_new(a->algorithm, bits, a->mode,
+                                                  a->default_iv, a->default_tag, pad, &result, 1);
+                if (!c) {
+                    if (result == INVALID) continue;
+                    goto fail;
+                }
+                result = capability_witness(c);
+                if (result == OK) result = add_capability(snapshot, c);
+                __k_symmetric_cipher_free(c);
+                if (result != OK) goto fail;
+            }
+        }
+    }
+    if (snapshot->count > 1)
+        qsort(snapshot->rows, snapshot->count, sizeof(*snapshot->rows), compare_capability_rows);
+    *status = OK;
+    return snapshot;
+fail:
+    __k_cap_symmetric_free(snapshot);
+    return NULL;
+}
+
+typedef struct {
+    OSSL_LIB_CTX *context;
+    void *result;
+    int status, done;
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+} capability_work;
+
+static void *capability_worker(void *arg) {
+    capability_work *work = arg;
+    OSSL_LIB_CTX *previous = OSSL_LIB_CTX_set0_default(work->context);
+    if (previous && OSSL_LIB_CTX_set0_default(NULL) == work->context) {
+        work->result = build_symmetric_capabilities(&work->status);
+        if (!OSSL_LIB_CTX_set0_default(previous) ||
+            OSSL_LIB_CTX_set0_default(NULL) != previous) {
+            __k_cap_symmetric_free(work->result);
+            work->result = NULL;
+            work->status = OPERATION;
+        }
+        OPENSSL_thread_stop_ex(work->context);
+    } else if (previous) {
+        OSSL_LIB_CTX_set0_default(previous);
+        OPENSSL_thread_stop_ex(work->context);
+    }
+    pthread_mutex_lock(&work->mutex);
+    work->done = 1;
+    pthread_cond_signal(&work->condition);
+    pthread_mutex_unlock(&work->mutex);
+    return NULL;
+}
+
+void *__k_cap_symmetric_new(int *status) {
+    if (!status) return NULL;
+    *status = OPERATION;
+    OSSL_LIB_CTX *context = OSSL_LIB_CTX_set0_default(NULL);
+    if (!context) return NULL;
+    capability_work work = {
+        .context = context, .result = NULL, .status = OPERATION, .done = 0,
+        .mutex = PTHREAD_MUTEX_INITIALIZER, .condition = PTHREAD_COND_INITIALIZER
+    };
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, capability_worker, &work) != 0) {
+        pthread_cond_destroy(&work.condition);
+        pthread_mutex_destroy(&work.mutex);
+        return NULL;
+    }
+    if (pthread_join(thread, NULL) != 0) {
+        pthread_mutex_lock(&work.mutex);
+        while (!work.done) pthread_cond_wait(&work.condition, &work.mutex);
+        pthread_mutex_unlock(&work.mutex);
+        pthread_detach(thread);
+        __k_cap_symmetric_free(work.result);
+        pthread_cond_destroy(&work.condition);
+        pthread_mutex_destroy(&work.mutex);
+        return NULL;
+    }
+    pthread_cond_destroy(&work.condition);
+    pthread_mutex_destroy(&work.mutex);
+    *status = work.status;
+    return work.result;
+}
+
+unsigned int __k_cap_symmetric_count(const void *handle) {
+    const symmetric_capabilities *snapshot = handle;
+    return snapshot ? snapshot->count : 0;
+}
+
+static const char *capability_field(const void *handle, unsigned int index, int field) {
+    const symmetric_capabilities *snapshot = handle;
+    if (!snapshot || index >= snapshot->count) return NULL;
+    const capability_row *row = &snapshot->rows[index];
+    if (field == 0) return row->algorithm;
+    if (field == 1) return row->mode;
+    if (field == 2) return row->padding;
+    return NULL;
+}
+
+unsigned int __k_cap_symmetric_size(const void *handle, unsigned int index, int field) {
+    const char *value = capability_field(handle, index, field);
+    return value ? (unsigned int)strlen(value) : 0;
+}
+
+void __k_cap_symmetric_copy(const void *handle, unsigned int index, int field,
+                            unsigned char *out) {
+    const char *value = capability_field(handle, index, field);
+    if (value && out) memcpy(out, value, strlen(value) + 1);
+}
+
+unsigned int __k_cap_symmetric_value(const void *handle, unsigned int index, int field) {
+    const symmetric_capabilities *snapshot = handle;
+    if (!snapshot || index >= snapshot->count) return 0;
+    const capability_row *row = &snapshot->rows[index];
+    if (field == 0) return row->bits;
+    if (field == 1) return row->iv_len;
+    if (field == 2) return row->tag_len;
+    return 0;
 }
