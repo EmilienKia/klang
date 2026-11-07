@@ -40,7 +40,22 @@ std::string_view ir_failure_context(const std::string& ir) {
     return "Full LLVM IR omitted; set KLANG_F1_DUMP_IR=1 locally to include it in failure output.";
 }
 
+bool has_debug_variable_location(std::string_view ir) {
+    return ir.find("llvm.dbg.declare") != std::string_view::npos ||
+           ir.find("llvm.dbg.value") != std::string_view::npos ||
+           ir.find("#dbg_declare") != std::string_view::npos ||
+           ir.find("#dbg_value") != std::string_view::npos;
+}
+
 } // anonymous namespace
+
+TEST_CASE("compiler: debug variable locations support LLVM IR formats", "[klangc][debug][ir]") {
+    REQUIRE(has_debug_variable_location("call void @llvm.dbg.declare(metadata ptr %a, metadata !10, metadata !DIExpression())"));
+    REQUIRE(has_debug_variable_location("call void @llvm.dbg.value(metadata i32 %a, metadata !10, metadata !DIExpression())"));
+    REQUIRE(has_debug_variable_location("#dbg_declare(ptr %a, !10, !DIExpression(), !17)"));
+    REQUIRE(has_debug_variable_location("#dbg_value(i32 %a, !10, !DIExpression(), !17)"));
+    REQUIRE_FALSE(has_debug_variable_location("!10 = !DILocalVariable(name: \"a\")"));
+}
 
 TEST_CASE("klangc: -g emits DWARF sections in executable", "[klangc][debug][dwarf]") {
     auto klangc = find_klangc();
@@ -141,8 +156,7 @@ TEST_CASE("compiler: debug metadata contains parameters, locals and lexical bloc
     os.flush();
 
     INFO(ir_failure_context(ir));
-    REQUIRE((ir.find("llvm.dbg.declare") != std::string::npos ||
-             ir.find("#dbg_declare") != std::string::npos));
+    REQUIRE(has_debug_variable_location(ir));
     REQUIRE(ir.find("!DILocalVariable(name: \"a\", arg: 1") != std::string::npos);
     REQUIRE(ir.find("!DILocalVariable(name: \"result\"") != std::string::npos);
     REQUIRE(ir.find("!DILocalVariable(name: \"inner\"") != std::string::npos);
@@ -179,8 +193,7 @@ TEST_CASE("compiler: debug metadata covers loop scopes and catch variables", "[k
     os.flush();
 
     INFO(ir_failure_context(ir));
-    REQUIRE((ir.find("llvm.dbg.declare") != std::string::npos ||
-             ir.find("#dbg_declare") != std::string::npos));
+    REQUIRE(has_debug_variable_location(ir));
     REQUIRE(ir.find("!DILocalVariable(name: \"caught\"") != std::string::npos);
     REQUIRE(ir.find("!DILexicalBlock(") != std::string::npos);
 }
