@@ -32,6 +32,7 @@
 #include <llvm/TargetParser/Host.h>
 
 #include "../src/parse/ast_dump.hpp"
+#include "../src/common/llvm_target_triple.hpp"
 #include "../src/model/model_builder.hpp"
 #include "../src/model/model_dump.hpp"
 
@@ -208,9 +209,9 @@ bool compile_text(const std::string_view& source, const std::string& out_file,
     // Ensure LLVM targets are registered before any target lookup.
     k::compiler::initialize();
 
-    std::string target_triple = llvm::sys::getDefaultTargetTriple();
+    llvm::Triple target_triple{llvm::sys::getDefaultTargetTriple()};
     std::string error;
-    auto target = llvm::TargetRegistry::lookupTarget(target_triple, error);
+    auto target = llvm::TargetRegistry::lookupTarget(k::llvm_target_triple_arg(target_triple), error);
     if(!target) {
         std::cerr << "Problem to find target: " << error << std::endl;
     }
@@ -223,7 +224,7 @@ bool compile_text(const std::string_view& source, const std::string& out_file,
     // PIE executables (avoids R_X86_64_32S relocations against .rodata).
     std::optional<llvm::Reloc::Model> reloc_model = llvm::Reloc::PIC_;
     auto target_machine = target->createTargetMachine(
-            target_triple, cpu,
+            k::llvm_target_triple_arg(target_triple), cpu,
             features,
             target_options,
             reloc_model);
@@ -264,15 +265,15 @@ k::tools::exec_result build_and_exec(const std::string_view& src, const IgnoredD
 llvm::TargetMachine* make_pic_target_machine() {
     k::compiler::initialize();
 
-    std::string target_triple = llvm::sys::getDefaultTargetTriple();
+    llvm::Triple target_triple{llvm::sys::getDefaultTargetTriple()};
     std::string error;
-    auto target = llvm::TargetRegistry::lookupTarget(target_triple, error);
+    auto target = llvm::TargetRegistry::lookupTarget(k::llvm_target_triple_arg(target_triple), error);
     if (!target) {
         throw std::runtime_error("Could not find LLVM target: " + error);
     }
 
     std::optional<llvm::Reloc::Model> reloc_model = llvm::Reloc::PIC_;
-    return target->createTargetMachine(target_triple, "generic", "", {}, reloc_model);
+    return target->createTargetMachine(k::llvm_target_triple_arg(target_triple), "generic", "", {}, reloc_model);
 }
 
 // ---------------------------------------------------------------------------

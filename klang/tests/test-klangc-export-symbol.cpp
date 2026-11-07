@@ -23,6 +23,7 @@
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -77,6 +78,31 @@ void check_success(const k::tools::exec_result& result) {
 }
 
 } // namespace
+
+TEST_CASE("klangc preserves explicit target triples in emitted IR",
+          "[klangc][target]") {
+    ExportSymbolFixture fixture;
+    const auto source = fixture.write_file(
+        "target.k", "module k; public answer() : int { return 42; }\n");
+    const auto object = fixture.path / "target.o";
+    const auto ir_path = fixture.path / "target.ll";
+
+    for (const auto& triple : {"x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"}) {
+        INFO("target: " << triple);
+        const auto result = k::tools::run_process(
+            find_klangc().string(),
+            {"--target", triple, "-c", "-o", object.string(),
+             "--raw-ir-file", ir_path.string(), source.string()});
+        check_success(result);
+        REQUIRE(std::filesystem::exists(object));
+        std::ifstream ir_file(ir_path);
+        REQUIRE(ir_file.is_open());
+        std::ostringstream ir;
+        ir << ir_file.rdbuf();
+        CHECK(ir.str().find(std::string("target triple = \"") + triple + "\"") !=
+              std::string::npos);
+    }
+}
 
 TEST_CASE("Native export options validate exact names and deduplicate atomically",
           "[compiler][export-symbol]") {

@@ -67,6 +67,7 @@
 #include <kdi.hpp>
 #include "errors.hpp"
 #include "common/target_init.hpp"
+#include "common/llvm_target_triple.hpp"
 
 namespace k {
 
@@ -122,9 +123,9 @@ std::shared_ptr<compiler> compiler::create(llvm::TargetMachine* target_machine) 
     initialize();
 
     if (target_machine == nullptr) {
-        std::string target_triple = llvm::sys::getDefaultTargetTriple();
+        llvm::Triple target_triple{llvm::sys::getDefaultTargetTriple()};
         std::string error;
-        auto target = llvm::TargetRegistry::lookupTarget(target_triple, error);
+        auto target = llvm::TargetRegistry::lookupTarget(k::llvm_target_triple_arg(target_triple), error);
         if(!target) {
             std::cerr << "Problem to find target: " << error << std::endl;
         }
@@ -135,7 +136,7 @@ std::shared_ptr<compiler> compiler::create(llvm::TargetMachine* target_machine) 
         llvm::TargetOptions target_options;
         std::optional<llvm::Reloc::Model> reloc_model;
         target_machine = target->createTargetMachine(
-                target_triple, cpu,
+                k::llvm_target_triple_arg(target_triple), cpu,
                 features,
                 target_options,
                 reloc_model);
@@ -549,7 +550,7 @@ void compiler::process_generation(bool optimize, bool dump) {
 
     if (_target) {
         _context->module().setDataLayout(_target->createDataLayout());
-        _context->module().setTargetTriple(_target->getTargetTriple().getTriple());
+        _context->module().setTargetTriple(k::llvm_target_triple_arg(_target->getTargetTriple()));
     }
 
     if(dump) {
@@ -885,7 +886,7 @@ bool compiler::emit_object_file(const std::string& output_file, bool position_in
     auto* emission_target = _target;
     if (position_independent && _target->getRelocationModel() != llvm::Reloc::PIC_) {
         pic_target.reset(_target->getTarget().createTargetMachine(
-            _target->getTargetTriple().getTriple(),
+            k::llvm_target_triple_arg(_target->getTargetTriple()),
             _target->getTargetCPU(), _target->getTargetFeatureString(),
             _target->Options, llvm::Reloc::PIC_,
             _target->getCodeModel(), _target->getOptLevel()));
