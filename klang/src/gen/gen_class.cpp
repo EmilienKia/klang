@@ -2724,7 +2724,7 @@ void implementation_generator::patch_rtti_global(klass& klass) {
                 llvm::Constant* vtable;
             };
             std::vector<cast_subobject> subobjects;
-            llvm::DataLayout dl(&_context->module());
+            const llvm::DataLayout& dl = _context->module().getDataLayout();
             auto dynamic_vtable = klass.get_vtable();
 
             auto secondary_vtable_for = [&](const aggregate* base) -> llvm::GlobalVariable* {
@@ -4109,7 +4109,7 @@ void implementation_generator::visit_annotation_type(annotation_type& ann) {
             llvm::Constant* vtable;
         };
         std::vector<cast_subobject> subobjects;
-        llvm::DataLayout dl(&_context->module());
+        const llvm::DataLayout& dl = _context->module().getDataLayout();
         llvm::Constant* annotation_vtable = ann.get_vtable()->llvm_global;
 
         auto has_rtti_definition = [](const std::shared_ptr<aggregate>& agg) {
