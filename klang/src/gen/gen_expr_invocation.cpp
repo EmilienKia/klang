@@ -2163,7 +2163,7 @@ implementation_generator::call_argument_cleanup_scope::call_argument_cleanup_sco
     _context.cleanup_code_bb = llvm::BasicBlock::Create(llvm_ctx, "argument_unwind", func);
     const unsigned cleanup_depth = gen._cleanup_lpad_stack.empty() ? 0 : gen._cleanup_lpad_stack.top().depth;
     const unsigned catch_depth = gen._landing_pad_stack.empty() ? 0 : gen._landing_pad_stack.top().depth;
-    _has_local_catch = catch_depth != 0;
+    _has_local_catch = catch_depth != 0 && gen._landing_pad_stack.top().has_handler;
     if (cleanup_depth > catch_depth) {
         _context.continuation = cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP;
         _context.chain_target_bb = gen._cleanup_lpad_stack.top().cleanup_code_bb;
@@ -2238,6 +2238,7 @@ implementation_generator::call_argument_cleanup_scope::~call_argument_cleanup_sc
     _gen._builder->CreateStore(_gen._builder->CreateExtractValue(lpad, 1), _gen._exc_sel_slot);
     _gen._builder->CreateBr(_context.cleanup_code_bb);
     _gen._builder->SetInsertPoint(_context.cleanup_code_bb);
+    auto pending_metadata = _gen.save_pending_exception_metadata();
     for (auto it = _entries.rbegin(); it != _entries.rend(); ++it) {
         auto* destroy_bb = llvm::BasicBlock::Create(llvm_ctx, "argument_destroy", func);
         auto* next_bb = llvm::BasicBlock::Create(llvm_ctx, "argument_destroy_done", func);
@@ -2262,6 +2263,7 @@ implementation_generator::call_argument_cleanup_scope::~call_argument_cleanup_sc
         _gen._builder->CreateBr(next_bb);
         _gen._builder->SetInsertPoint(next_bb);
     }
+    _gen.restore_pending_exception_metadata(pending_metadata);
     if (_context.continuation == cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP) {
         _gen._builder->CreateBr(_context.chain_target_bb);
     } else {

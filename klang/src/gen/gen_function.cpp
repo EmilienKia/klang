@@ -1881,8 +1881,10 @@ void implementation_generator::visit_function(function &function) {
         func->insert(func->end(), func_ctx.cleanup_code_bb);
         _builder->SetInsertPoint(func_ctx.cleanup_code_bb);
 
+        auto pending_metadata = save_pending_exception_metadata();
         emit_constructor_unwind_cleanup(function);
         emit_active_parameter_cleanup("func_unwind_param");
+        restore_pending_exception_metadata(pending_metadata);
 
         // Resume unwinding
         auto* resume_ptr = _builder->CreateLoad(ptr_ty, _exc_ptr_slot, "func_resume_ptr");

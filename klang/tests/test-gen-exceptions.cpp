@@ -31,6 +31,10 @@
 
 #include <llvm/IR/Instructions.h>
 
+#include <cerrno>
+#include <sys/wait.h>
+#include <unistd.h>
+
 TEST_CASE("Exception layout: imported chain and cause addresses match the final DataLayout",
           "[gen][exceptions][exception-layout][import][regression]") {
     auto comp = compile_model_with_stdlib(R"K(
@@ -3757,6 +3761,435 @@ TEST_CASE("Exception unwinding: intermediate frame locals cleaned before outer c
     if (!res.err.empty()) INFO("stderr: " << res.err);
     // The middle frame local must be destroyed before control reaches the outer catch.
     REQUIRE(res.exit_code == 1);
+}
+
+TEST_CASE("Exception unwinding: factory finally propagates to caller with live owners",
+          "[gen][exceptions][unwinding][finally][owner][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module exception_after_finally_factory;
+
+        finallyCount : int = 0;
+        insideDrops : int = 0;
+        keyDrops : int = 0;
+        resultDrops : int = 0;
+        failedTransfers : int = 0;
+
+        struct Guard {
+            ~Guard() { ++insideDrops; }
+        }
+        class BaseFailure : public Exception {
+            BaseFailure(code : int) : Exception(code) {}
+        }
+        class OperationFailure : public BaseFailure {
+            OperationFailure() : BaseFailure(604) {}
+        }
+        class Key {
+        public:
+            value : int;
+            Key() : value(1) {}
+            ~Key() { ++keyDrops; }
+        }
+        class Result {
+            ~Result() { ++resultDrops; }
+        }
+
+        failingArgument() : int throws(OperationFailure) {
+            throw OperationFailure();
+        }
+        consume(owner : Key!, value : int) {
+            if (value == 0) delete owner;
+        }
+
+        factory(algorithm : const String&, key : const Key&, mode : int)
+                : Result! throws(BaseFailure) {
+            encoded : unsigned byte[]! = algorithm.toUtf8();
+            valid : bool = true;
+            try {
+                if (encoded.size == 0u || key.value == 0) valid = false;
+                if (mode == 1) throw OperationFailure();
+                if (mode == 5) consume(new Key(), failingArgument());
+                {
+                    guard : Guard;
+                    if (mode == 2) throw OperationFailure();
+                }
+            } finally {
+                delete encoded;
+                ++finallyCount;
+            }
+            if (!valid) return null;
+            if (mode == 3) throw OperationFailure();
+            transferred : bool = false;
+            try {
+                result : Result! = new Result();
+                transferred = true;
+                return result;
+            } finally {
+                if (!transferred) ++failedTransfers;
+            }
+        }
+
+        test(mode : int) : int {
+            finallyCount = 0;
+            insideDrops = 0;
+            keyDrops = 0;
+            resultDrops = 0;
+            failedTransfers = 0;
+            caught : int = 0;
+            try {
+                raw : unsigned byte[]! = new unsigned byte[16u];
+                key : Key! = new Key();
+                result : Result! = factory(String("digest"), key, mode);
+                if (result == null || raw.size != 16u) return 1;
+            } catch (e : OperationFailure&) {
+                caught = e.getCode();
+            } catch (e : BaseFailure&) {
+                return 2;
+            }
+            if (finallyCount != 1 || failedTransfers != 0) return 3;
+            if (keyDrops != (mode == 5 ? 2 : 1)) return 8;
+            if (insideDrops != (mode == 1 || mode == 5 ? 0 : 1)) return 6;
+            if (mode != 0) return caught == 604 && resultDrops == 0 ? 0 : 4;
+            return caught == 0 && resultDrops == 1 ? 0 : 5;
+        }
+
+        testLocalCatch() : int {
+            finallyCount = 0;
+            insideDrops = 0;
+            caught : int = 0;
+            try {
+                try {
+                    guard : Guard;
+                    throw OperationFailure();
+                } finally {
+                    ++finallyCount;
+                }
+            } catch (e : OperationFailure&) {
+                caught = e.getCode();
+            }
+            return caught == 604 && finallyCount == 1 && insideDrops == 1 ? 0 : 7;
+        }
+
+        testLocalArgumentCatch() : int {
+            finallyCount = 0;
+            keyDrops = 0;
+            caught : int = 0;
+            try {
+                try {
+                    consume(new Key(), failingArgument());
+                } finally {
+                    ++finallyCount;
+                }
+            } catch (e : OperationFailure&) {
+                caught = e.getCode();
+            }
+            return caught == 604 && finallyCount == 1 && keyDrops == 1 ? 0 : 9;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    INFO("optimize=" << optimize);
+    auto test = jit->lookup_symbol<int (*)(int)>("test");
+    auto testLocalCatch = jit->lookup_symbol<int (*)()>("testLocalCatch");
+    auto testLocalArgumentCatch = jit->lookup_symbol<int (*)()>("testLocalArgumentCatch");
+    REQUIRE(test);
+    REQUIRE(testLocalCatch);
+    REQUIRE(testLocalArgumentCatch);
+
+    for (int mode : {1, 2, 3, 0, 4, 5, 6}) {
+        INFO("mode=" << mode);
+        const pid_t child = fork();
+        REQUIRE(child >= 0);
+        if (child == 0) {
+            alarm(10);
+            _exit(mode == 4 ? testLocalCatch()
+                            : mode == 6 ? testLocalArgumentCatch() : test(mode));
+        }
+        int status = 0;
+        pid_t waited;
+        do {
+            waited = waitpid(child, &status, 0);
+        } while (waited < 0 && errno == EINTR);
+        REQUIRE(waited == child);
+        INFO("child status=" << status);
+        REQUIRE(WIFEXITED(status));
+        CHECK(WEXITSTATUS(status) == 0);
+    }
+}
+
+namespace {
+
+void check_bounded_exception_probe(int (*probe)()) {
+    const pid_t child = fork();
+    REQUIRE(child >= 0);
+    if (child == 0) {
+        alarm(10);
+        _exit(probe());
+    }
+    int status = 0;
+    pid_t waited;
+    do {
+        waited = waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    REQUIRE(waited == child);
+    INFO("child status=" << status);
+    CHECK(WIFEXITED(status));
+    if (WIFEXITED(status)) CHECK(WEXITSTATUS(status) == 0);
+}
+
+}
+
+TEST_CASE("Exception unwinding: nested finally cleans intervening scopes before catch",
+          "[gen][exceptions][finally][unwinding][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module finally_intervening_scopes;
+        order : int = 0;
+        swallowed : int = 0;
+        scramble : bool = false;
+
+        class Original : public Exception {
+            Original() : Exception(41) {}
+        }
+        class Noise : public Exception {
+            Noise() : Exception(82) {}
+        }
+
+        struct Guard {
+            id : int;
+            Guard(value : int) : id(value) {}
+            ~Guard() {
+                if (id == 2 && scramble) {
+                    try { throw Noise(); }
+                    catch (ignored : Noise&) { ++swallowed; }
+                }
+                order = order * 10 + id;
+            }
+        }
+
+        test(mode : int) : int {
+            order = 0;
+            swallowed = 0;
+            scramble = mode != 0;
+            {
+                outside : Guard(9);
+                try {
+                    outer : Guard(1);
+                    {
+                        middle : Guard! = new Guard(2);
+                        try {
+                            inner : Guard(3);
+                            throw Original();
+                        } finally {
+                            order = order * 10 + 4;
+                        }
+                    }
+                } catch (wrong : Noise&) {
+                    return 4;
+                } catch (e : Original&) {
+                    if (e.getCode() != 41 || order != 3421) return 1;
+                }
+                if (order != 3421) return 2;
+            }
+            return order == 34219 && swallowed == mode ? 0 : 3;
+        }
+        plain() : int { return test(0); }
+        nestedCleanupException() : int { return test(1); }
+        failArgument() : int throws(Original) { throw Original(); }
+        consume(value : Guard!, number : int) {}
+        argumentCleanupException() : int {
+            order = 0;
+            swallowed = 0;
+            scramble = true;
+            try {
+                try {
+                    consume(new Guard(2), failArgument());
+                } finally {
+                    order = order * 10 + 4;
+                }
+            } catch (wrong : Noise&) {
+                return 5;
+            } catch (e : Original&) {
+                if (e.getCode() != 41) return 6;
+            }
+            return order == 24 && swallowed == 1 ? 0 : 7;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    INFO("optimize=" << optimize);
+    for (const auto* name : {"plain", "nestedCleanupException", "argumentCleanupException"}) {
+        INFO(name);
+        auto test = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(test);
+        check_bounded_exception_probe(test);
+    }
+}
+
+TEST_CASE("Exception unwinding: finally preserves pending type or propagates replacement",
+          "[gen][exceptions][finally][metadata][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module finally_pending_exception_metadata;
+        cleanups : int = 0;
+
+        class Primary : public Exception {
+            Primary() : Exception(41) {}
+        }
+        class Secondary : public Exception {
+            Secondary() : Exception(82) {}
+        }
+        class Replacement : public Exception {
+            Replacement() : Exception(93) {}
+        }
+
+        fail(mode : int) throws(Exception) {
+            try {
+                throw Primary();
+            } finally {
+                try {
+                    throw Secondary();
+                } catch (ignored : Secondary&) {
+                    ++cleanups;
+                }
+                if (mode != 0) throw Replacement();
+            }
+        }
+        test(mode : int) : int {
+            cleanups = 0;
+            code : int = 0;
+            try {
+                fail(mode);
+            } catch (wrong : Secondary&) {
+                code = 82;
+            } catch (original : Primary&) {
+                code = original.getCode();
+            } catch (replacement : Replacement&) {
+                code = replacement.getCode();
+            } catch (other : Exception&) {
+                code = -1;
+            }
+            if (cleanups != 1) return 1;
+            return code == (mode == 0 ? 41 : 93) ? 0 : 2;
+        }
+        original() : int { return test(0); }
+        replacement() : int { return test(1); }
+        nestedFail() throws(Exception) {
+            try {
+                try { throw Primary(); }
+                finally { ++cleanups; }
+            } finally { ++cleanups; }
+        }
+        nestedFinally() : int {
+            cleanups = 0;
+            code : int = 0;
+            try { nestedFail(); }
+            catch (e : Primary&) { code = e.getCode(); }
+            catch (e : Exception&) { code = -1; }
+            return cleanups == 2 && code == 41 ? 0 : 3;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    INFO("optimize=" << optimize);
+    for (const auto* name : {"original", "replacement", "nestedFinally"}) {
+        INFO(name);
+        auto test = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(test);
+        check_bounded_exception_probe(test);
+    }
+}
+
+TEST_CASE("Exception unwinding: constructor finally cleans completed members",
+          "[gen][exceptions][finally][constructor-members][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module finally_failed_constructor_members;
+        order : int = 0;
+        memberDrops : int = 0;
+        wholeDrops : int = 0;
+        parameterDrops : int = 0;
+        parameterExceptions : int = 0;
+        disturbParameter : bool = false;
+
+        class Failure : public Exception {
+            Failure() : Exception(923) {}
+        }
+        class Noise : public Exception {
+            Noise() : Exception(82) {}
+        }
+        struct Parameter {
+            ~Parameter() {
+                if (disturbParameter) {
+                    try { throw Noise(); }
+                    catch (ignored : Noise&) { ++parameterExceptions; }
+                }
+                ++parameterDrops;
+            }
+        }
+        struct Member {
+            id : int;
+            Member(value : int) : id(value) {}
+            ~Member() {
+                ++memberDrops;
+                order = order * 10 + id;
+            }
+        }
+        struct Holder {
+            first : Member;
+            second : Member;
+            Holder(fail : bool, parameter : Parameter!) : first(1), second(2) {
+                try {
+                    if (fail) throw Failure();
+                } finally {
+                    order = order * 10 + 3;
+                }
+            }
+            ~Holder() { ++wholeDrops; }
+        }
+
+        failed(mode : int) : int {
+            order = 0;
+            memberDrops = 0;
+            wholeDrops = 0;
+            parameterDrops = 0;
+            parameterExceptions = 0;
+            disturbParameter = mode != 0;
+            code : int = 0;
+            try {
+                value : Holder(true, new Parameter());
+            } catch (wrong : Noise&) {
+                return 4;
+            } catch (e : Failure&) {
+                code = e.getCode();
+            }
+            return code == 923 && order == 321 &&
+                memberDrops == 2 && wholeDrops == 0 && parameterDrops == 1 &&
+                parameterExceptions == mode ? 0 : 1;
+        }
+        failedPlain() : int { return failed(0); }
+        failedNestedParameterException() : int { return failed(1); }
+        success() : int {
+            order = 0;
+            memberDrops = 0;
+            wholeDrops = 0;
+            parameterDrops = 0;
+            parameterExceptions = 0;
+            disturbParameter = false;
+            {
+                value : Holder(false, new Parameter());
+                if (order != 3 || memberDrops != 0 || wholeDrops != 0 ||
+                    parameterDrops != 1) return 2;
+            }
+            return order == 321 && memberDrops == 2 && wholeDrops == 1 &&
+                parameterDrops == 1 ? 0 : 3;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    INFO("optimize=" << optimize);
+    for (const auto* name : {"failedPlain", "failedNestedParameterException", "success"}) {
+        INFO(name);
+        auto test = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(test);
+        check_bounded_exception_probe(test);
+    }
 }
 
 TEST_CASE("Exception unwinding: sized array elements destroyed on throw",

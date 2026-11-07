@@ -281,6 +281,7 @@ protected:
         llvm::AllocaInst* exc_ptr_alloca; ///< Alloca holding the exception pointer
         llvm::AllocaInst* exc_sel_alloca; ///< Alloca holding the exception selector
         unsigned depth = 0;               ///< Nesting depth (higher = innermost)
+        bool has_handler = false;        ///< This or an enclosing try has catch clauses
     };
 
     /** Stack of landing pad contexts for try-catch exception handling.
@@ -294,6 +295,14 @@ protected:
         llvm::AllocaInst* type;
     };
     std::vector<caught_exception_metadata> _caught_exception_metadata;
+
+    struct pending_exception_metadata {
+        llvm::AllocaInst* chain;
+        llvm::AllocaInst* type;
+    };
+
+    pending_exception_metadata save_pending_exception_metadata();
+    void restore_pending_exception_metadata(const pending_exception_metadata& metadata);
 
     /** Cleanup landing pad context for exception unwinding.
      *  Each block scope with destructible variables gets its own cleanup landing

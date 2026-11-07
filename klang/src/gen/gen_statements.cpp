@@ -52,6 +52,32 @@ llvm::Value* implementation_generator::get_thrown_state_slot(const char* accesso
     return _builder->CreateCall(fn_ty, accessor, {}, "thrown_state_slot");
 }
 
+implementation_generator::pending_exception_metadata
+implementation_generator::save_pending_exception_metadata() {
+    auto* func = _builder->GetInsertBlock()->getParent();
+    auto* entry = &func->getEntryBlock();
+    llvm::IRBuilder<> alloca_builder(entry, entry->begin());
+    auto* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
+    pending_exception_metadata metadata{
+        alloca_builder.CreateAlloca(ptr_ty, nullptr, "pending_exception_chain"),
+        alloca_builder.CreateAlloca(ptr_ty, nullptr, "pending_exception_type")
+    };
+    auto* chain_slot = get_thrown_state_slot("__k_thrown_typeinfo_chain_addr");
+    auto* type_slot = get_thrown_state_slot("__k_thrown_typeinfo_addr");
+    _builder->CreateStore(_builder->CreateLoad(ptr_ty, chain_slot), metadata.chain);
+    _builder->CreateStore(_builder->CreateLoad(ptr_ty, type_slot), metadata.type);
+    return metadata;
+}
+
+void implementation_generator::restore_pending_exception_metadata(
+    const pending_exception_metadata& metadata) {
+    auto* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
+    auto* chain_slot = get_thrown_state_slot("__k_thrown_typeinfo_chain_addr");
+    auto* type_slot = get_thrown_state_slot("__k_thrown_typeinfo_addr");
+    _builder->CreateStore(_builder->CreateLoad(ptr_ty, metadata.chain), chain_slot);
+    _builder->CreateStore(_builder->CreateLoad(ptr_ty, metadata.type), type_slot);
+}
+
 llvm::Value* implementation_generator::create_call_or_invoke(
     llvm::FunctionType* fn_type, llvm::Value* callee,
     llvm::ArrayRef<llvm::Value*> args, const llvm::Twine& name)
@@ -619,9 +645,12 @@ void implementation_generator::visit_block(block& blk) {
         auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
         auto* lpad_type = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
 
-        // Include catch-all clause if chaining to a catch dispatch (for personality phase-1 search)
+        // A cleanup must advertise a handler only when an enclosing try can catch.
+        // Otherwise phase 1 must continue searching for a handler in the caller.
+        const bool has_local_handler =
+            !_landing_pad_stack.empty() && _landing_pad_stack.top().has_handler;
         llvm::LandingPadInst* lpad;
-        if (cleanup_ctx.continuation == cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH) {
+        if (has_local_handler) {
             lpad = _builder->CreateLandingPad(lpad_type, 1, "cleanup_lpad_val");
             lpad->setCleanup(true);
             lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty)); // catch-all
@@ -640,7 +669,9 @@ void implementation_generator::visit_block(block& blk) {
         func->insert(func->end(), cleanup_code_bb);
         _builder->SetInsertPoint(cleanup_code_bb);
 
+        auto pending_metadata = save_pending_exception_metadata();
         emit_scope_variable_cleanup(dtor_vars, "unwind_owner", true);
+        restore_pending_exception_metadata(pending_metadata);
 
         // Chain to continuation
         switch (cleanup_ctx.continuation) {
@@ -1894,9 +1925,11 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
 
     // Save the outer context (if any) for nested unwinding
     eh_landing_context* outer_ctx = _landing_pad_stack.empty() ? nullptr : &_landing_pad_stack.top();
+    const bool has_handler = !clauses.empty() || (outer_ctx && outer_ctx->has_handler);
 
     // Push landing pad context so function calls within the try body use invoke
-    _landing_pad_stack.push({lpad_bb, dispatch_bb, exc_ptr_alloca, exc_sel_alloca, ++_lpad_depth_counter});
+    _landing_pad_stack.push(
+        {lpad_bb, dispatch_bb, exc_ptr_alloca, exc_sel_alloca, ++_lpad_depth_counter, has_handler});
 
     // Helper lambda: emit the finally body at the current insert point (inlined copy).
     auto finally_body = stmt.get_finally_body();
@@ -1975,10 +2008,15 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
         typeinfos.push_back(ti_gv);
     }
 
-    // Create the landingpad instruction with catch-all clause.
+    // A try-finally with no enclosing handler is a cleanup, not a handler:
+    // marking it catch-all would stop the personality's search in this frame.
     auto* lpad_type = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
-    auto* lpad = _builder->CreateLandingPad(lpad_type, 1, "lpad_val");
-    lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty));
+    auto* lpad = _builder->CreateLandingPad(lpad_type, has_handler ? 1 : 0, "lpad_val");
+    if (has_handler) {
+        lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty));
+    } else {
+        lpad->setCleanup(true);
+    }
 
     // Extract exception pointer and selector, store to shared allocas
     auto* exc_ptr_from_lpad = _builder->CreateExtractValue(lpad, 0, "exc_ptr");
@@ -2182,24 +2220,41 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     // Catch fallthrough — no match, emit finally then propagate to outer handler or resume unwinding
     _builder->SetInsertPoint(catch_fallthrough_bb);
 
-    // Emit finally body before propagating unmatched exception
+    // A normally completing finally can catch another exception, overwriting
+    // the thread-local metadata of the exception being propagated.
     set_debug_location(get_statement_debug_lexeme(stmt));
-    emit_finally();
+    if (finally_body) {
+        auto pending_metadata = save_pending_exception_metadata();
+        emit_finally();
+        if (!_builder->GetInsertBlock()->getTerminator()) {
+            restore_pending_exception_metadata(pending_metadata);
+        }
+    }
 
-    if (outer_ctx) {
-        // Nested try-catch in the same function: store the exception pointer into the
-        // outer handler's alloca and branch directly to its dispatch block.
-        // This avoids re-throwing and stays entirely within the function's CFG.
+    if (_builder->GetInsertBlock()->getTerminator()) {
+        _builder->SetInsertPoint(end_bb);
+        return;
+    }
+
+    const unsigned outer_depth = outer_ctx ? outer_ctx->depth : 0;
+    if (!_cleanup_lpad_stack.empty() && _cleanup_lpad_stack.top().depth > outer_depth) {
+        const auto& cleanup = _cleanup_lpad_stack.top();
+        if (!cleanup.cleanup_code_bb || !_exc_ptr_slot || !_exc_sel_slot) {
+            throw_error(0, try_lexeme, "Internal error: missing exception cleanup continuation");
+        }
         auto* exc_ptr = _builder->CreateLoad(ptr_ty, exc_ptr_alloca, "exc_ptr_prop");
+        auto* exc_sel = _builder->CreateLoad(i32_ty, exc_sel_alloca, "exc_sel_prop");
+        _builder->CreateStore(exc_ptr, _exc_ptr_slot);
+        _builder->CreateStore(exc_sel, _exc_sel_slot);
+        _builder->CreateBr(cleanup.cleanup_code_bb);
+    } else if (outer_ctx) {
+        auto* exc_ptr = _builder->CreateLoad(ptr_ty, exc_ptr_alloca, "exc_ptr_prop");
+        auto* exc_sel = _builder->CreateLoad(i32_ty, exc_sel_alloca, "exc_sel_prop");
         _builder->CreateStore(exc_ptr, outer_ctx->exc_ptr_alloca);
+        _builder->CreateStore(exc_sel, outer_ctx->exc_sel_alloca);
         set_debug_location(get_statement_debug_lexeme(stmt));
         _builder->CreateBr(outer_ctx->dispatch_bb);
     } else {
-        // Top-level try-catch: emit cleanup for all outer scope variables, then resume.
-        // This ensures destructors and owner cleanup run during exception propagation.
-        emit_active_scope_cleanup(_cleanup_vars_stack.size(), "fallthru_owner", true);
-        emit_active_parameter_cleanup("fallthru_param");
-
         // Resume unwinding with original exception pointer and selector
         auto* exc_ptr = _builder->CreateLoad(ptr_ty, exc_ptr_alloca, "exc_ptr_resume");
         auto* exc_sel = _builder->CreateLoad(i32_ty, exc_sel_alloca, "exc_sel_resume");
