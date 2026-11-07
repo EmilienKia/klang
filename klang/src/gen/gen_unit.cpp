@@ -26,7 +26,7 @@
 #include "../model/expressions.hpp"
 #include "../model/mangler.hpp"
 
-#include <llvm/ADT/ScopeExit.h>
+#include "../common/llvm_scope_exit.hpp"
 #include <llvm/IR/Verifier.h>
 #include <llvm/IR/GlobalAlias.h>
 
@@ -2534,7 +2534,7 @@ llvm::Function* implementation_generator::get_or_create_tls_init_function(global
     auto* previous_union_failure = std::exchange(_union_failure_bb, nullptr);
     auto* previous_debug_scope = std::exchange(_current_debug_scope, nullptr);
     auto* previous_value = _value;
-    auto restore_function_state = llvm::make_scope_exit([&]() {
+    auto restore_function_state = k::make_scope_exit([&]() {
         _cleanup_lpad_stack = std::move(previous_cleanup_lpads);
         _landing_pad_stack = std::move(previous_catch_lpads);
         _lpad_depth_counter = previous_lpad_depth;
@@ -2562,7 +2562,7 @@ llvm::Function* implementation_generator::get_or_create_tls_init_function(global
     // do_init block: initialize variable
     _builder->SetInsertPoint(do_init_bb);
     _tls_constructing_vars.insert(&var);
-    auto constructing_guard = llvm::make_scope_exit([&]() {
+    auto constructing_guard = k::make_scope_exit([&]() {
         _tls_constructing_vars.erase(&var);
     });
 

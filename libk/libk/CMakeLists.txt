@@ -951,6 +951,12 @@ libk_add_test(libk-tests-application-lifecycle 120
 # The JIT resolves the fixture's C callbacks through the process symbol table.
 target_link_options(libk-tests-application-lifecycle PRIVATE -Wl,--export-dynamic)
 
+add_test(NAME libk-tests-application-ffi-c23
+    COMMAND ${CMAKE_C_COMPILER} -Werror=implicit-function-declaration -fsyntax-only
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/test-application-ffi-c23.c)
+klang_scale_ctest_timeout(_libk_test_timeout 120)
+set_tests_properties(libk-tests-application-ffi-c23 PROPERTIES TIMEOUT "${_libk_test_timeout}")
+
 # ── libk foundational types & memory tests ───────────────────────────────────
 libk_add_test_sharded(libk-tests-types 120 3
     tests/test-expected.cpp

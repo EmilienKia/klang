@@ -569,7 +569,7 @@ llvm::Type* pointer_type::get_llvm_type() const {
     if(_llvm_type==nullptr && sub && is_resolved()) {
         auto sub_llvm = sub->get_llvm_type();
         if (sub_llvm) {
-            _llvm_type = llvm::PointerType::get(sub_llvm, 0 /*llvm::ADDRESS_SPACE_GENERIC*/);
+            _llvm_type = llvm::PointerType::get(sub_llvm->getContext(), 0 /*llvm::ADDRESS_SPACE_GENERIC*/);
         }
     }
     return _llvm_type;
@@ -609,7 +609,7 @@ llvm::Type* reference_type::get_llvm_type() const {
     if(_llvm_type==nullptr && sub && is_resolved()) {
         auto llvm_subtype = sub->get_llvm_type();
         if (!llvm_subtype) return nullptr;
-        _llvm_type = llvm::PointerType::get(llvm_subtype, 0 /*llvm::ADDRESS_SPACE_GENERIC*/);
+        _llvm_type = llvm::PointerType::get(llvm_subtype->getContext(), 0 /*llvm::ADDRESS_SPACE_GENERIC*/);
     }
     return _llvm_type;
 }
@@ -641,7 +641,7 @@ llvm::Type* link_type::get_llvm_type() const {
     if(_llvm_type==nullptr && sub && is_resolved()) {
         auto sub_llvm = sub->get_llvm_type();
         if (sub_llvm) {
-            _llvm_type = llvm::PointerType::get(sub_llvm, 0);
+            _llvm_type = llvm::PointerType::get(sub_llvm->getContext(), 0);
         }
     }
     return _llvm_type;
@@ -674,7 +674,7 @@ llvm::Type* view_type::get_llvm_type() const {
     if(_llvm_type==nullptr && sub && is_resolved()) {
         auto* sub_llvm = sub->get_llvm_type();
         if (!sub_llvm) return nullptr;
-        _llvm_type = llvm::PointerType::get(sub_llvm, 0);
+        _llvm_type = llvm::PointerType::get(sub_llvm->getContext(), 0);
     }
     return _llvm_type;
 }
@@ -706,7 +706,7 @@ llvm::Type* owner_type::get_llvm_type() const {
     if(_llvm_type==nullptr && sub && is_resolved()) {
         auto sub_llvm = sub->get_llvm_type();
         if (sub_llvm) {
-            _llvm_type = llvm::PointerType::get(sub_llvm, 0);
+            _llvm_type = llvm::PointerType::get(sub_llvm->getContext(), 0);
         }
     }
     return _llvm_type;
@@ -739,7 +739,7 @@ llvm::Type* drain_type::get_llvm_type() const {
     if(_llvm_type==nullptr && sub && is_resolved()) {
         auto sub_llvm = sub->get_llvm_type();
         if (sub_llvm) {
-            _llvm_type = llvm::PointerType::get(sub_llvm, 0);
+            _llvm_type = llvm::PointerType::get(sub_llvm->getContext(), 0);
         }
     }
     return _llvm_type;

@@ -26,7 +26,7 @@
 #include "../errors.hpp"
 #include "gen_operators_helpers.hpp"
 
-#include <llvm/ADT/ScopeExit.h>
+#include "../common/llvm_scope_exit.hpp"
 
 namespace k::model::gen {
 
@@ -99,7 +99,7 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
             constructed_flag = it->second;
         }
     }
-    auto assignment_guard = llvm::make_scope_exit([&]() {
+    auto assignment_guard = k::make_scope_exit([&]() {
         if (constructed_flag) {
             _builder->CreateStore(llvm::ConstantInt::getTrue(_builder->getContext()), constructed_flag);
         }
@@ -1280,9 +1280,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
 
                             // Fail: discriminant is out of range — call trap
                             _builder->SetInsertPoint(fail_bb);
-                            auto* trap_fn = llvm::Intrinsic::getDeclaration(
-                                &_context->module(), llvm::Intrinsic::trap);
-                            _builder->CreateCall(trap_fn);
+                            _builder->CreateIntrinsic(llvm::Intrinsic::trap, llvm::ArrayRef<llvm::Type*>{}, {});
                             _builder->CreateUnreachable();
 
                             _builder->SetInsertPoint(ok_bb);

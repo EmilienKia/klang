@@ -30,7 +30,7 @@
 #include "../parse/ast.hpp"
 #include "../../../libkdi/src/kdi_aggregates.hpp"
 #include "llvm/Support/raw_os_ostream.h"
-#include <llvm/ADT/ScopeExit.h>
+#include "../common/llvm_scope_exit.hpp"
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DataLayout.h>
 #include <llvm/IR/DerivedTypes.h>
@@ -694,8 +694,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                         auto* fail_bb = llvm::BasicBlock::Create(_builder->getContext(), "enum_obj_cast_fail", cur_fn);
                         _builder->CreateCondBr(found, ok_bb, fail_bb);
                         _builder->SetInsertPoint(fail_bb);
-                        auto* trap_fn = llvm::Intrinsic::getDeclaration(&get_module(), llvm::Intrinsic::trap);
-                        _builder->CreateCall(trap_fn, {});
+                        _builder->CreateIntrinsic(llvm::Intrinsic::trap, llvm::ArrayRef<llvm::Type*>{}, {});
                         _builder->CreateUnreachable();
                         _builder->SetInsertPoint(ok_bb);
                     }
@@ -1252,7 +1251,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
 
             // Virtual-base adjustment can load a vbptr, so a select after
             // adjustment is insufficient: the null path must bypass all loads.
-            auto finish_nullable_upcast = llvm::make_scope_exit([&]() {
+            auto finish_nullable_upcast = k::make_scope_exit([&]() {
                 if (!upcast_merge) return;
                 auto* adjusted = _value;
                 auto* nonnull_predecessor = _builder->GetInsertBlock();

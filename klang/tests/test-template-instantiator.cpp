@@ -39,6 +39,7 @@
 #include <llvm/MC/TargetRegistry.h>
 
 #include "helpers.hpp"
+#include "../src/common/llvm_target_triple.hpp"
 #include "../src/model/template.hpp"
 #include "../src/model/template_instantiator.hpp"
 
@@ -695,7 +696,7 @@ TEST_CASE("Native libraries: default and static targets emit PIC RTTI manifests"
         std::unique_ptr<llvm::TargetMachine> pic_target{make_pic_target_machine()};
         REQUIRE(pic_target != nullptr);
         static_target.reset(pic_target->getTarget().createTargetMachine(
-            pic_target->getTargetTriple().getTriple(),
+            k::llvm_target_triple_arg(pic_target->getTargetTriple()),
             pic_target->getTargetCPU(), pic_target->getTargetFeatureString(),
             pic_target->Options, llvm::Reloc::Static,
             pic_target->getCodeModel(), pic_target->getOptLevel()));

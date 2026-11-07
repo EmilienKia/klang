@@ -39,6 +39,7 @@
 #include "errors.hpp"
 
 #include "common/logger.hpp"
+#include "common/llvm_target_triple.hpp"
 #include "common/path_lookup_file_resolver.hpp"
 #include <kdi.hpp>
 #include <kdi_mangling.hpp>
@@ -316,7 +317,8 @@ int main(int argc, const char** argv) {
     }
 
     std::string error;
-    auto target = llvm::TargetRegistry::lookupTarget(target_triple, error);
+    llvm::Triple triple{target_triple};
+    auto target = llvm::TargetRegistry::lookupTarget(k::llvm_target_triple_arg(triple), error);
     if(!target) {
         std::cerr << "Problem to find target: " << error << std::endl;
     }
@@ -329,7 +331,7 @@ int main(int argc, const char** argv) {
     // PIE executables and shared libraries.
     std::optional<llvm::Reloc::Model> reloc_model = llvm::Reloc::PIC_;
     auto target_machine = target->createTargetMachine(
-            target_triple, cpu,
+            k::llvm_target_triple_arg(triple), cpu,
             features,
             target_options,
             reloc_model);

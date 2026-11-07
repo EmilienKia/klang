@@ -1087,8 +1087,7 @@ inline llvm::Value* emit_polymorphic_union_to_base_ptr(
 
     // Fail BB: emit trap
     builder->SetInsertPoint(fail_bb);
-    auto* trap_fn = llvm::Intrinsic::getDeclaration(&ctx->module(), llvm::Intrinsic::trap);
-    builder->CreateCall(trap_fn);
+    builder->CreateIntrinsic(llvm::Intrinsic::trap, llvm::ArrayRef<llvm::Type*>{}, {});
     builder->CreateUnreachable();
 
     // Merge BB
