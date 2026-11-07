@@ -23,24 +23,38 @@ public class CryptoStateException : CryptoException {
     CryptoStateException() : CryptoException(605) {}
 }
 
+private struct NativeSymmetricCipher {}
 private struct NativeSymmetricKey {}
 private struct NativeSymmetricSession {}
 
-@ffi::Extern("C") private __k_symmetric_available(size: unsigned int) : int;
+@ffi::Extern("C") private __k_symmetric_cipher_new(algorithm: int, bits: unsigned int,
+    mode: int, nonceSize: unsigned int, tagSize: unsigned int, padding: int) : NativeSymmetricCipher*;
+@ffi::Extern("C") private __k_symmetric_cipher_from_name(name: const unsigned byte*) : NativeSymmetricCipher*;
+@ffi::Extern("C") private __k_symmetric_cipher_free(cipher: NativeSymmetricCipher*);
+@ffi::Extern("C") private __k_symmetric_cipher_info(cipher: const NativeSymmetricCipher*, field: int) : unsigned long;
+@ffi::Extern("C") private __k_symmetric_cipher_name(cipher: const NativeSymmetricCipher*, out: unsigned byte*);
 @ffi::Extern("C") private __k_symmetric_random(out: unsigned byte*, length: unsigned int) : int;
-@ffi::Extern("C") private __k_symmetric_key_new(size: unsigned int, data: const unsigned byte*,
+@ffi::Extern("C") private __k_symmetric_key_new(cipher: const NativeSymmetricCipher*, data: const unsigned byte*,
     generate: int, status: int*) : NativeSymmetricKey*;
 @ffi::Extern("C") private __k_symmetric_key_free(key: NativeSymmetricKey*);
-@ffi::Extern("C") private __k_symmetric_session_new(size: unsigned int, key: const NativeSymmetricKey*,
-    nonce: const unsigned byte*, encrypt: int, fileStaging: int, status: int*) : NativeSymmetricSession*;
+@ffi::Extern("C") private __k_symmetric_session_new(cipher: const NativeSymmetricCipher*, key: const NativeSymmetricKey*,
+    nonce: const unsigned byte*, encrypt: int, fileStaging: int, knownLength: int,
+    messageLength: unsigned long, status: int*) : NativeSymmetricSession*;
 @ffi::Extern("C") private __k_symmetric_session_free(session: NativeSymmetricSession*);
 @ffi::Extern("C") private __k_symmetric_close(session: NativeSymmetricSession*) : int;
 @ffi::Extern("C") private __k_symmetric_nonce(session: NativeSymmetricSession*, out: unsigned byte*) : int;
+@ffi::Extern("C") private __k_symmetric_capacity(session: NativeSymmetricSession*,
+    length: unsigned int, capacity: unsigned int*) : int;
+@ffi::Extern("C") private __k_symmetric_incremental_output(session: const NativeSymmetricSession*) : int;
+@ffi::Extern("C") private __k_symmetric_session_max_data(session: const NativeSymmetricSession*) : unsigned long;
 @ffi::Extern("C") private __k_symmetric_aad(session: NativeSymmetricSession*,
     data: const unsigned byte*, length: unsigned int) : int;
 @ffi::Extern("C") private __k_symmetric_update(session: NativeSymmetricSession*,
-    data: const unsigned byte*, length: unsigned int, out: unsigned byte*) : int;
-@ffi::Extern("C") private __k_symmetric_finish(session: NativeSymmetricSession*, tag: unsigned byte*) : int;
+    data: const unsigned byte*, length: unsigned int, out: unsigned byte*,
+    capacity: unsigned int, count: unsigned int*) : int;
+@ffi::Extern("C") private __k_symmetric_finish(session: NativeSymmetricSession*,
+    tag: const unsigned byte*, tagLength: unsigned int) : int;
+@ffi::Extern("C") private __k_symmetric_tag(session: NativeSymmetricSession*, out: unsigned byte*) : int;
 @ffi::Extern("C") private __k_symmetric_read(session: NativeSymmetricSession*,
     out: unsigned byte*, length: unsigned int, count: unsigned int*) : int;
 
@@ -62,8 +76,43 @@ public enum DecryptionStaging {
     TemporaryFile;
 }
 
+public enum SymmetricAlgorithm {
+    AES = 1;
+    ARIA = 2;
+    Camellia = 3;
+    SM4 = 4;
+    ChaCha20 = 5;
+    AsconAead128 = 6;
+}
+
+public enum SymmetricMode {
+    GCM = 1;
+    CCM = 2;
+    OCB = 3;
+    CBC = 4;
+    CTR = 5;
+    XTS = 6;
+    Poly1305 = 7;
+    Ascon = 8;
+    CFB = 9;
+    OFB = 10;
+    CFB1 = 11;
+    CFB8 = 12;
+}
+
+public enum SymmetricPadding {
+    None = 0;
+    PKCS7 = 1;
+}
+
+private symmetricStaging(staging: DecryptionStaging) : int throws(CryptoException) {
+    if (staging == DecryptionStaging::Memory) return 0;
+    if (staging == DecryptionStaging::TemporaryFile) return 1;
+    throw CryptoInvalidInputException();
+}
+
 /**
- * An AES key whose bytes are held privately and cleared on destruction.
+ * A symmetric key whose bytes are held privately and cleared on destruction.
  * It must not be copied or used concurrently with destruction.
  */
 public final class SymmetricKey : Key {
@@ -72,10 +121,11 @@ private:
     _native: NativeSymmetricKey*;
     _size: unsigned int;
 
-    SymmetricKey(size: unsigned int, data: const unsigned byte*, generate: int)
+    SymmetricKey(cipher: const NativeSymmetricCipher*, size: unsigned int,
+                 data: const unsigned byte*, generate: int)
             : _native(null), _size(size) throws(CryptoException) {
         status: int = 0;
-        _native = __k_symmetric_key_new(size, data, generate, &status);
+        _native = __k_symmetric_key_new(cipher, data, generate, &status);
         symmetricCheck(status);
     }
     SymmetricKey(other: const SymmetricKey&) -> delete;
@@ -90,90 +140,179 @@ public:
 }
 
 /**
- * An immutable AES-GCM descriptor. Sizes are in bytes.
+ * An immutable symmetric cipher descriptor. Sizes are in bytes except keyBits,
+ * which is the component-key size for XTS. XTS keySize is twice that size.
  *
  * A nonce must never be reused with the same key. Random nonces are convenient
  * but callers remain responsible for their collision and usage limits.
+ * CBC needs an unpredictable IV; CTR counter ranges and XTS data-unit tweaks
+ * must not be reused with the same key. CBC, CTR, XTS, CFB and OFB do not
+ * authenticate their output.
+ * CCM uses a private streaming composition and is not provider-validated or
+ * FIPS-validated merely because its underlying block cipher is.
  */
 public final class SymmetricCipher {
 private:
-    _size: unsigned int;
-    SymmetricCipher(size: unsigned int) : _size(size) {}
+    _native: NativeSymmetricCipher*;
+    SymmetricCipher(native: NativeSymmetricCipher*) : _native(native) {}
+    SymmetricCipher(other: const SymmetricCipher&) -> delete;
     operator =(other: const SymmetricCipher&) -> delete;
-    static create(size: unsigned int) : SymmetricCipher! {
-        if (__k_symmetric_available(size) == 0) return null;
-        return new SymmetricCipher(size);
-    }
 public:
-    static AES128GCM() : SymmetricCipher! { return create(16u); }
-    static AES192GCM() : SymmetricCipher! { return create(24u); }
-    static AES256GCM() : SymmetricCipher! { return create(32u); }
+    ~SymmetricCipher() {
+        __k_symmetric_cipher_free(_native);
+        _native = null;
+    }
+
+    static create(algorithm: SymmetricAlgorithm, keyBits: unsigned int, mode: SymmetricMode,
+                  nonceSize: unsigned int, tagSize: unsigned int, padding: SymmetricPadding)
+            : SymmetricCipher! {
+        native: NativeSymmetricCipher* = __k_symmetric_cipher_new(
+            (int) algorithm, keyBits, (int) mode, nonceSize, tagSize, (int) padding);
+        if (native == null) return null;
+        return new SymmetricCipher(native);
+    }
+
+    static create(algorithm: SymmetricAlgorithm, keyBits: unsigned int, mode: SymmetricMode)
+            : SymmetricCipher! {
+        if (mode == SymmetricMode::GCM || mode == SymmetricMode::CCM ||
+            mode == SymmetricMode::OCB || mode == SymmetricMode::Poly1305) {
+            return create(algorithm, keyBits, mode, 12u, 16u, SymmetricPadding::None);
+        }
+        if (mode == SymmetricMode::Ascon) {
+            return create(algorithm, keyBits, mode, 16u, 16u, SymmetricPadding::None);
+        }
+        if (mode == SymmetricMode::CBC) {
+            return create(algorithm, keyBits, mode, 16u, 0u, SymmetricPadding::PKCS7);
+        }
+        return create(algorithm, keyBits, mode, 16u, 0u, SymmetricPadding::None);
+    }
+
+    static AES128GCM() : SymmetricCipher! {
+        return create(SymmetricAlgorithm::AES, 128u, SymmetricMode::GCM);
+    }
+    static AES192GCM() : SymmetricCipher! {
+        return create(SymmetricAlgorithm::AES, 192u, SymmetricMode::GCM);
+    }
+    static AES256GCM() : SymmetricCipher! {
+        return create(SymmetricAlgorithm::AES, 256u, SymmetricMode::GCM);
+    }
 
     static fromName(name: const String&) : SymmetricCipher! {
-        if (name == String("AES-128-GCM")) return AES128GCM();
-        if (name == String("AES-192-GCM")) return AES192GCM();
-        if (name == String("AES-256-GCM")) return AES256GCM();
-        return null;
+        encoded: unsigned byte[]! = name.toUtf8();
+        i: unsigned int = 0u;
+        while (i + 1u < encoded.size) {
+            if (encoded[i] == 0) return null;
+            ++i;
+        }
+        native: NativeSymmetricCipher* = __k_symmetric_cipher_from_name(&encoded[0u]);
+        if (native == null) return null;
+        return new SymmetricCipher(native);
     }
 
     const name() : String {
-        if (_size == 16u) return String("AES-128-GCM");
-        if (_size == 24u) return String("AES-192-GCM");
-        return String("AES-256-GCM");
+        size: unsigned int = (unsigned int) __k_symmetric_cipher_info(_native, 11);
+        bytes: unsigned byte[]! = new unsigned byte[size + 1u];
+        __k_symmetric_cipher_name(_native, &bytes[0u]);
+        return String(bytes);
     }
-    const keySize() : unsigned int { return _size; }
-    const nonceSize() : unsigned int { return 12u; }
-    const tagSize() : unsigned int { return 16u; }
+    const keySize() : unsigned int { return (unsigned int) __k_symmetric_cipher_info(_native, 0); }
+    const nonceSize() : unsigned int { return (unsigned int) __k_symmetric_cipher_info(_native, 1); }
+    const tagSize() : unsigned int { return (unsigned int) __k_symmetric_cipher_info(_native, 2); }
+    const authenticated() : bool { return __k_symmetric_cipher_info(_native, 3) != 0uL; }
+    const maxDataSize() : unsigned long { return __k_symmetric_cipher_info(_native, 4); }
+    const maxAadSize() : unsigned long { return __k_symmetric_cipher_info(_native, 5); }
+    const algorithm() : SymmetricAlgorithm {
+        return (SymmetricAlgorithm) (int) __k_symmetric_cipher_info(_native, 6);
+    }
+    const mode() : SymmetricMode {
+        return (SymmetricMode) (int) __k_symmetric_cipher_info(_native, 7);
+    }
+    const keyBits() : unsigned int { return (unsigned int) __k_symmetric_cipher_info(_native, 8); }
+    const padding() : SymmetricPadding {
+        return (SymmetricPadding) (int) __k_symmetric_cipher_info(_native, 9);
+    }
 
     const generateKey() : SymmetricKey! throws(CryptoException) {
-        return new SymmetricKey(_size, null, 1);
+        return new SymmetricKey(_native, keySize(), null, 1);
     }
 
     const importKey(data: const unsigned byte[]) : SymmetricKey! throws(CryptoException) {
-        if (data.size != _size) throw CryptoInvalidInputException();
-        return new SymmetricKey(_size, &data[0u], 0);
+        if (data.size != keySize()) throw CryptoInvalidInputException();
+        return new SymmetricKey(_native, keySize(), &data[0u], 0);
     }
 
     const randomNonce() : unsigned byte[]! throws(CryptoException) {
-        result: unsigned byte[]! = new unsigned byte[12u];
-        symmetricCheck(__k_symmetric_random(&result[0u], 12u));
+        result: unsigned byte[]! = new unsigned byte[nonceSize()];
+        symmetricCheck(__k_symmetric_random(&result[0u], nonceSize()));
         return result;
     }
 
     const encrypt(key: const SymmetricKey&, nonce: const unsigned byte[]) : EncryptSession!
             throws(CryptoException) {
-        if (key._size != _size || nonce.size != 12u) throw CryptoInvalidInputException();
-        return new EncryptSession(_size, key._native, &nonce[0u]);
+        return encrypt(key, nonce, DecryptionStaging::Memory);
     }
 
     const encrypt(key: const SymmetricKey&) : EncryptSession! throws(CryptoException) {
-        if (key._size != _size) throw CryptoInvalidInputException();
         nonce: unsigned byte[]! = randomNonce();
         return encrypt(key, nonce);
     }
 
+    const encrypt(key: const SymmetricKey&, nonce: const unsigned byte[],
+                  staging: DecryptionStaging) : EncryptSession! throws(CryptoException) {
+        if (key._size != keySize() || nonce.size != nonceSize()) throw CryptoInvalidInputException();
+        return new EncryptSession(_native, key._native, &nonce[0u], symmetricStaging(staging),
+                                  0, 0uL, nonceSize(), tagSize(), authenticated());
+    }
+
+    /** Declares the total plaintext length, enabling incremental CCM output. */
+    const encrypt(key: const SymmetricKey&, nonce: const unsigned byte[],
+                  staging: DecryptionStaging, messageLength: unsigned long)
+            : EncryptSession! throws(CryptoException) {
+        if (key._size != keySize() || nonce.size != nonceSize()) throw CryptoInvalidInputException();
+        return new EncryptSession(_native, key._native, &nonce[0u], symmetricStaging(staging),
+                                  1, messageLength, nonceSize(), tagSize(), authenticated());
+    }
+
     const decrypt(key: const SymmetricKey&, nonce: const unsigned byte[],
                   staging: DecryptionStaging) : DecryptSession! throws(CryptoException) {
-        if (key._size != _size || nonce.size != 12u) throw CryptoInvalidInputException();
-        fileStaging: int = 0;
-        if (staging == DecryptionStaging::TemporaryFile) fileStaging = 1;
-        else if (staging != DecryptionStaging::Memory) throw CryptoInvalidInputException();
-        return new DecryptSession(_size, key._native, &nonce[0u], fileStaging);
+        if (key._size != keySize() || nonce.size != nonceSize()) throw CryptoInvalidInputException();
+        return new DecryptSession(_native, key._native, &nonce[0u], symmetricStaging(staging),
+                                  0, 0uL, nonceSize(), tagSize(), authenticated());
+    }
+
+    /** Declares the total ciphertext length before decryption. */
+    const decrypt(key: const SymmetricKey&, nonce: const unsigned byte[], staging: DecryptionStaging,
+                  messageLength: unsigned long) : DecryptSession! throws(CryptoException) {
+        if (key._size != keySize() || nonce.size != nonceSize()) throw CryptoInvalidInputException();
+        return new DecryptSession(_native, key._native, &nonce[0u], symmetricStaging(staging),
+                                  1, messageLength, nonceSize(), tagSize(), authenticated());
     }
 }
 
 /**
- * One AES-GCM encryption operation. AAD precedes every data update.
+ * One encryption operation. AAD precedes every data update.
  * Sessions may not be reused, shared concurrently, or destroyed during a call.
+ * finish() retains any final ciphertext for readFinal(); the separate tag
+ * follows that ciphertext. Unknown-length CCM stages the message until finish.
+ * XTS stages one bounded data unit if the selected provider cannot stream it
+ * correctly; updatesProduceOutput() exposes that choice.
  */
 public final class EncryptSession {
     friend SymmetricCipher;
 private:
     _native: NativeSymmetricSession*;
-    EncryptSession(size: unsigned int, key: const NativeSymmetricKey*, nonce: const unsigned byte*)
-            : _native(null) throws(CryptoException) {
+    _nonceSize: unsigned int;
+    _tagSize: unsigned int;
+    _authenticated: bool;
+    EncryptSession(cipher: const NativeSymmetricCipher*, key: const NativeSymmetricKey*,
+                   nonce: const unsigned byte*, fileStaging: int, knownLength: int,
+                   messageLength: unsigned long, nonceSize: unsigned int, tagSize: unsigned int,
+                   authenticated: bool)
+            : _native(null), _nonceSize(nonceSize), _tagSize(tagSize), _authenticated(authenticated)
+            throws(CryptoException) {
         status: int = 0;
-        _native = __k_symmetric_session_new(size, key, nonce, 1, 0, &status);
+        _native = __k_symmetric_session_new(cipher, key, nonce, 1, fileStaging,
+                                             knownLength, messageLength, &status);
         symmetricCheck(status);
     }
     EncryptSession(other: const EncryptSession&) -> delete;
@@ -181,11 +320,20 @@ private:
 
     updateAddress(data: const unsigned byte*, len: unsigned int) : unsigned byte[]!
             throws(CryptoException) {
-        result: unsigned byte[]! = new unsigned byte[len];
+        capacity: unsigned int = updateOutputCapacity(len);
+        result: unsigned byte[]! = new unsigned byte[capacity];
         output: unsigned byte* = null;
-        if (len != 0u) output = &result[0u];
-        symmetricCheck(__k_symmetric_update(_native, data, len, output));
-        return result;
+        if (capacity != 0u) output = &result[0u];
+        count: unsigned int = 0u;
+        symmetricCheck(__k_symmetric_update(_native, data, len, output, capacity, &count));
+        if (count == capacity) return result;
+        exact: unsigned byte[]! = new unsigned byte[count];
+        i: unsigned int = 0u;
+        while (i < count) {
+            exact[i] = result[i];
+            ++i;
+        }
+        return exact;
     }
 public:
     ~EncryptSession() {
@@ -193,14 +341,23 @@ public:
         _native = null;
     }
 
-    const tagSize() : unsigned int { return 16u; }
+    const tagSize() : unsigned int { return _tagSize; }
+    const authenticated() : bool { return _authenticated; }
+    const updatesProduceOutput() : bool { return __k_symmetric_incremental_output(_native) != 0; }
+    const maxDataSize() : unsigned long { return __k_symmetric_session_max_data(_native); }
+    /** Safe output bound including previously buffered input; may exceed len. */
+    const updateOutputCapacity(len: unsigned int) : unsigned int throws(CryptoException) {
+        capacity: unsigned int = 0u;
+        symmetricCheck(__k_symmetric_capacity(_native, len, &capacity));
+        return capacity;
+    }
 
     close() throws(CryptoException) {
         symmetricCheck(__k_symmetric_close(_native));
     }
 
     nonce() : unsigned byte[]! throws(CryptoException) {
-        result: unsigned byte[]! = new unsigned byte[12u];
+        result: unsigned byte[]! = new unsigned byte[_nonceSize];
         symmetricCheck(__k_symmetric_nonce(_native, &result[0u]));
         return result;
     }
@@ -230,7 +387,7 @@ public:
             throws(CryptoException) {
         symmetricRange(data.size, off, len);
         ptr: const unsigned byte* = null;
-        if (len != 0u) ptr = &data[off];
+        if (len != 0u) ptr = (const unsigned byte*) &data[off];
         return updateAddress(ptr, len);
     }
     update(data: const byte[], off: unsigned int, len: unsigned int) : unsigned byte[]!
@@ -250,48 +407,102 @@ public:
     updateTo(data: const byte[], off: unsigned int, len: unsigned int,
              output: byte[], outputOff: unsigned int) : unsigned int throws(CryptoException) {
         symmetricRange(data.size, off, len);
-        symmetricRange(output.size, outputOff, len);
+        capacity: unsigned int = updateOutputCapacity(len);
+        symmetricRange(output.size, outputOff, capacity);
         result: unsigned byte[]! = update(data, off, len);
         i: unsigned int = 0u;
-        while (i < len) {
+        while (i < result.size) {
             output[outputOff + i] = (byte) result[i];
             ++i;
         }
-        return len;
+        return result.size;
+    }
+
+    updateTo(data: const unsigned byte[], off: unsigned int, len: unsigned int,
+             output: unsigned byte[], outputOff: unsigned int) : unsigned int throws(CryptoException) {
+        symmetricRange(data.size, off, len);
+        capacity: unsigned int = updateOutputCapacity(len);
+        symmetricRange(output.size, outputOff, capacity);
+        result: unsigned byte[]! = update(data, off, len);
+        i: unsigned int = 0u;
+        while (i < result.size) {
+            output[outputOff + i] = result[i];
+            ++i;
+        }
+        return result.size;
+    }
+
+    finish() throws(CryptoException) {
+        symmetricCheck(__k_symmetric_finish(_native, null, 0u));
+    }
+
+    tag() : unsigned byte[]! throws(CryptoException) {
+        result: unsigned byte[]! = new unsigned byte[_tagSize];
+        ptr: unsigned byte* = null;
+        if (_tagSize != 0u) ptr = &result[0u];
+        symmetricCheck(__k_symmetric_tag(_native, ptr));
+        return result;
+    }
+
+    readFinal(output: unsigned byte[], off: unsigned int, len: unsigned int) : unsigned int
+            throws(CryptoException) {
+        symmetricRange(output.size, off, len);
+        ptr: unsigned byte* = null;
+        if (len != 0u) ptr = &output[off];
+        count: unsigned int = 0u;
+        symmetricCheck(__k_symmetric_read(_native, ptr, len, &count));
+        return count;
+    }
+    readFinal(output: byte[], off: unsigned int, len: unsigned int) : unsigned int
+            throws(CryptoException) {
+        symmetricRange(output.size, off, len);
+        ptr: unsigned byte* = null;
+        if (len != 0u) ptr = (unsigned byte*) &output[off];
+        count: unsigned int = 0u;
+        symmetricCheck(__k_symmetric_read(_native, ptr, len, &count));
+        return count;
     }
 
     finalize() : unsigned byte[]! throws(CryptoException) {
-        tag: unsigned byte[]! = new unsigned byte[16u];
-        symmetricCheck(__k_symmetric_finish(_native, &tag[0u]));
-        return tag;
+        finish();
+        return tag();
     }
 
     finalizeTo(output: byte[], off: unsigned int) : unsigned int throws(CryptoException) {
-        symmetricRange(output.size, off, 16u);
-        tag: unsigned byte[]! = finalize();
+        symmetricRange(output.size, off, _tagSize);
+        result: unsigned byte[]! = finalize();
         i: unsigned int = 0u;
-        while (i < 16u) {
-            output[off + i] = (byte) tag[i];
+        while (i < _tagSize) {
+            output[off + i] = (byte) result[i];
             ++i;
         }
-        return 16u;
+        return _tagSize;
     }
 }
 
 /**
- * A single authenticated decryption. No staged plaintext is readable until
- * finalize verifies the complete tag. File staging is explicit and private;
- * deleting its temporary file does not guarantee erasure from storage.
+ * A single decryption. Authenticated plaintext is withheld until verification.
+ * Plaintext from unauthenticated modes is not verified, even if it is readable.
+ * A pre-final read returning zero means no output is currently available.
+ * CBC may report invalid padding after earlier unauthenticated reads.
+ * File staging is explicit and does not guarantee physical erasure.
  */
 public final class DecryptSession {
     friend SymmetricCipher;
 private:
     _native: NativeSymmetricSession*;
-    DecryptSession(size: unsigned int, key: const NativeSymmetricKey*,
-                   nonce: const unsigned byte*, fileStaging: int)
-            : _native(null) throws(CryptoException) {
+    _nonceSize: unsigned int;
+    _tagSize: unsigned int;
+    _authenticated: bool;
+    DecryptSession(cipher: const NativeSymmetricCipher*, key: const NativeSymmetricKey*,
+                   nonce: const unsigned byte*, fileStaging: int, knownLength: int,
+                   messageLength: unsigned long, nonceSize: unsigned int, tagSize: unsigned int,
+                   authenticated: bool)
+            : _native(null), _nonceSize(nonceSize), _tagSize(tagSize), _authenticated(authenticated)
+            throws(CryptoException) {
         status: int = 0;
-        _native = __k_symmetric_session_new(size, key, nonce, 0, fileStaging, &status);
+        _native = __k_symmetric_session_new(cipher, key, nonce, 0, fileStaging,
+                                             knownLength, messageLength, &status);
         symmetricCheck(status);
     }
     DecryptSession(other: const DecryptSession&) -> delete;
@@ -302,14 +513,18 @@ public:
         _native = null;
     }
 
-    const tagSize() : unsigned int { return 16u; }
+    const tagSize() : unsigned int { return _tagSize; }
+    const authenticated() : bool { return _authenticated; }
+    const readableBeforeFinalize() : bool { return !_authenticated; }
+    const updatesProduceOutput() : bool { return __k_symmetric_incremental_output(_native) != 0; }
+    const maxDataSize() : unsigned long { return __k_symmetric_session_max_data(_native); }
 
     close() throws(CryptoException) {
         symmetricCheck(__k_symmetric_close(_native));
     }
 
     nonce() : unsigned byte[]! throws(CryptoException) {
-        result: unsigned byte[]! = new unsigned byte[12u];
+        result: unsigned byte[]! = new unsigned byte[_nonceSize];
         symmetricCheck(__k_symmetric_nonce(_native, &result[0u]));
         return result;
     }
@@ -339,14 +554,16 @@ public:
         symmetricRange(data.size, off, len);
         ptr: const unsigned byte* = null;
         if (len != 0u) ptr = &data[off];
-        symmetricCheck(__k_symmetric_update(_native, ptr, len, null));
+        count: unsigned int = 0u;
+        symmetricCheck(__k_symmetric_update(_native, ptr, len, null, 0u, &count));
     }
     update(data: const byte[], off: unsigned int, len: unsigned int)
             throws(CryptoException) {
         symmetricRange(data.size, off, len);
         ptr: const unsigned byte* = null;
         if (len != 0u) ptr = (const unsigned byte*) &data[off];
-        symmetricCheck(__k_symmetric_update(_native, ptr, len, null));
+        count: unsigned int = 0u;
+        symmetricCheck(__k_symmetric_update(_native, ptr, len, null, 0u, &count));
     }
     update(data: const unsigned byte[]) throws(CryptoException) {
         update(data, 0u, data.size);
@@ -356,26 +573,23 @@ public:
     }
 
     finalize(tag: const unsigned byte[]) throws(CryptoException) {
-        if (tag.size != 16u) throw CryptoInvalidInputException();
-        copied: unsigned byte[16];
-        i: unsigned int = 0u;
-        while (i < 16u) {
-            copied[i] = tag[i];
-            ++i;
-        }
-        symmetricCheck(__k_symmetric_finish(_native, &copied[0u]));
+        if (tag.size != _tagSize) throw CryptoInvalidInputException();
+        ptr: const unsigned byte* = null;
+        if (_tagSize != 0u) ptr = &tag[0u];
+        symmetricCheck(__k_symmetric_finish(_native, ptr, _tagSize));
     }
 
     finalize(tag: const byte[], off: unsigned int, len: unsigned int) throws(CryptoException) {
         symmetricRange(tag.size, off, len);
-        if (len != 16u) throw CryptoInvalidInputException();
-        copied: unsigned byte[16];
-        i: unsigned int = 0u;
-        while (i < 16u) {
-            copied[i] = (unsigned byte) tag[off + i];
-            ++i;
-        }
-        symmetricCheck(__k_symmetric_finish(_native, &copied[0u]));
+        if (len != _tagSize) throw CryptoInvalidInputException();
+        ptr: const unsigned byte* = null;
+        if (len != 0u) ptr = (const unsigned byte*) &tag[off];
+        symmetricCheck(__k_symmetric_finish(_native, ptr, len));
+    }
+
+    finalize() throws(CryptoException) {
+        if (_tagSize != 0u) throw CryptoInvalidInputException();
+        symmetricCheck(__k_symmetric_finish(_native, null, 0u));
     }
 
     read(output: unsigned byte[], off: unsigned int, len: unsigned int) : unsigned int

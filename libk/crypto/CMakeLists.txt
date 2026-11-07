@@ -53,6 +53,9 @@ set(LIBK_CRYPTO_OPENSSL_FFI_C ${CMAKE_CURRENT_SOURCE_DIR}/src/openssl_ffi.c)
 set(LIBK_CRYPTO_OPENSSL_FFI_OBJ ${CMAKE_CURRENT_BINARY_DIR}/openssl_ffi.o)
 set(LIBK_CRYPTO_SYMMETRIC_FFI_C ${CMAKE_CURRENT_SOURCE_DIR}/src/symmetric_ffi.c)
 set(LIBK_CRYPTO_SYMMETRIC_FFI_OBJ ${CMAKE_CURRENT_BINARY_DIR}/symmetric_ffi.o)
+set(LIBK_CRYPTO_CCM_C ${CMAKE_CURRENT_SOURCE_DIR}/src/ccm_engine.c)
+set(LIBK_CRYPTO_CCM_H ${CMAKE_CURRENT_SOURCE_DIR}/src/ccm_engine.h)
+set(LIBK_CRYPTO_CCM_OBJ ${CMAKE_CURRENT_BINARY_DIR}/ccm_engine.o)
 set(LIBK_CRYPTO_C_FLAGS -c -fPIC -fexceptions -fasynchronous-unwind-tables
     -I${OPENSSL_INCLUDE_DIR})
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -72,8 +75,17 @@ add_custom_command(
     OUTPUT ${LIBK_CRYPTO_SYMMETRIC_FFI_OBJ}
     COMMAND ${CMAKE_C_COMPILER} ${LIBK_CRYPTO_C_FLAGS}
             -o ${LIBK_CRYPTO_SYMMETRIC_FFI_OBJ} ${LIBK_CRYPTO_SYMMETRIC_FFI_C}
-    DEPENDS ${LIBK_CRYPTO_SYMMETRIC_FFI_C}
+    DEPENDS ${LIBK_CRYPTO_SYMMETRIC_FFI_C} ${LIBK_CRYPTO_CCM_H}
     COMMENT "Compiling libk-crypto symmetric OpenSSL bridge"
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${LIBK_CRYPTO_CCM_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${LIBK_CRYPTO_C_FLAGS}
+            -o ${LIBK_CRYPTO_CCM_OBJ} ${LIBK_CRYPTO_CCM_C}
+    DEPENDS ${LIBK_CRYPTO_CCM_C} ${LIBK_CRYPTO_CCM_H}
+    COMMENT "Compiling libk-crypto streaming CCM engine"
     VERBATIM
 )
 
@@ -105,8 +117,10 @@ add_custom_command(
         ${LIBK_CRYPTO_SOURCES}
         ${LIBK_CRYPTO_OPENSSL_FFI_OBJ}
         ${LIBK_CRYPTO_SYMMETRIC_FFI_OBJ}
+        ${LIBK_CRYPTO_CCM_OBJ}
     DEPENDS klangc libk_stdlib ${LIBK_CRYPTO_SOURCES}
             ${LIBK_CRYPTO_OPENSSL_FFI_OBJ} ${LIBK_CRYPTO_SYMMETRIC_FFI_OBJ}
+            ${LIBK_CRYPTO_CCM_OBJ}
             ${OPENSSL_CRYPTO_LIBRARY}
     WORKING_DIRECTORY ${LIBK_CRYPTO_OUTPUT_DIR}
     COMMENT "Compiling K crypto standard library (module k::crypto)"
@@ -234,3 +248,13 @@ macro(libk_crypto_add_test TARGET TIMEOUT)
 endmacro()
 
 libk_crypto_add_test(libk-crypto-tests 120 tests/test-crypto.cpp)
+libk_crypto_add_test(libk-crypto-symmetric-tests 120
+    tests/test-symmetric-descriptors.cpp tests/test-symmetric-cipher-streams.cpp)
+target_include_directories(libk-crypto-symmetric-tests PRIVATE ${OPENSSL_INCLUDE_DIR})
+target_link_libraries(libk-crypto-symmetric-tests PRIVATE ${OPENSSL_CRYPTO_LIBRARY})
+add_executable(libk-crypto-ccm-engine-tests tests/test-ccm-engine.cpp src/ccm_engine.c)
+target_include_directories(libk-crypto-ccm-engine-tests PRIVATE ${OPENSSL_INCLUDE_DIR})
+target_link_libraries(libk-crypto-ccm-engine-tests PRIVATE Catch2::Catch2WithMain ${OPENSSL_CRYPTO_LIBRARY})
+add_test(NAME libk-crypto-ccm-engine-tests COMMAND libk-crypto-ccm-engine-tests)
+klang_scale_ctest_timeout(_ccm_test_timeout 120)
+set_tests_properties(libk-crypto-ccm-engine-tests PROPERTIES TIMEOUT "${_ccm_test_timeout}")

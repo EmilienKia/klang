@@ -19,7 +19,7 @@
 module k::io::crypto;
 import k::crypto;
 
-// Keep only the final GCM tag; all earlier bytes go directly to the session.
+// Keep only the final authentication tag; earlier bytes go to the session.
 private class CipherTrailer {
 private:
     _tag : byte[]!;
@@ -78,7 +78,7 @@ public:
 }
 
 /**
- * Encrypts a borrowed source as a single ciphertext-and-tag message.
+ * Encrypts a borrowed source as a single message, followed by any AEAD tag.
  * The session is consumed; configure its AAD before transferring it.
  */
 public class EncryptCipherInputStream : public k::io::FilterInputStream<byte> {
@@ -88,6 +88,8 @@ private:
     _pos : unsigned int;
     _count : unsigned int;
     _finalized : bool;
+    _finalDrained : bool;
+    _tagLoaded : bool;
     _complete : bool;
     _closed : bool;
     _failed : bool;
@@ -96,16 +98,14 @@ public:
     EncryptCipherInputStream(input: k::io::InputStream<byte>&,
                              session: k::crypto::EncryptSession!)
         : FilterInputStream(&input), _session(session), _pending(null), _pos(0u), _count(0u),
-          _finalized(false), _complete(false), _closed(false), _failed(false)
+          _finalized(false), _finalDrained(false), _tagLoaded(false),
+          _complete(false), _closed(false), _failed(false)
             throws(k::crypto::CryptoException) {
         if (_session == null) throw k::crypto::CryptoInvalidInputException();
-        tagSize : unsigned int = _session->tagSize();
-        if (tagSize == 0u) throw k::crypto::CryptoInvalidInputException();
-        capacity : unsigned int = tagSize > 4096u ? tagSize : 4096u;
-        _pending = new byte[capacity];
+        _pending = new byte[4096u];
     }
 
-    /** True once the entire tag has been delivered. */
+    /** True once all final ciphertext and any authentication tag have been delivered. */
     public const isComplete() : bool { return _complete; }
 
     override read() : k::Optional<byte> throws(k::crypto::CryptoException) {
@@ -128,30 +128,76 @@ public:
             zero : unsigned int = 0u;
             return Expected<unsigned int, k::io::StreamOutOfData>::expected(zero);
         }
-        if (_pos == _count) {
-            input : byte[4096];
-            _failed = true;
-            source : Expected<unsigned int, k::io::StreamOutOfData> = _in->read(input, 0u, 4096u);
-            if (source.hasError()) return source;
-            n : unsigned int = source.getResult();
+        _failed = true;
+        while (_pos == _count && !_complete) {
             _pos = 0u;
-            if (n == 0u) {
-                _count = _session->finalizeTo(_pending, 0u);
-                _finalized = true;
+            _count = 0u;
+            if (!_finalized) {
+                input : byte[4096];
+                source : Expected<unsigned int, k::io::StreamOutOfData> = _in->read(input, 0u, 4096u);
+                if (source.hasError()) return source;
+                n : unsigned int = source.getResult();
+                if (n == 0u) {
+                    _session->finish();
+                    _finalized = true;
+                } else {
+                    capacity : unsigned int = _session->updateOutputCapacity(n);
+                    if (capacity > _pending.size) _pending = new byte[capacity];
+                    _count = _session->updateTo(input, 0u, n, _pending, 0u);
+                }
+            } else if (!_finalDrained) {
+                _count = _session->readFinal(_pending, 0u, _pending.size);
+                if (_count == 0u) _finalDrained = true;
+            } else if (!_tagLoaded) {
+                tag : unsigned byte[]! = _session->tag();
+                if (tag.size > _pending.size) _pending = new byte[tag.size];
+                i : unsigned int = 0u;
+                while (i < tag.size) {
+                    _pending[i] = (byte) tag[i];
+                    ++i;
+                }
+                _count = tag.size;
+                _tagLoaded = true;
+                if (_count == 0u) _complete = true;
             } else {
-                _count = _session->updateTo(input, 0u, n, _pending, 0u);
+                _complete = true;
             }
-            _failed = false;
         }
         n : unsigned int = _count - _pos;
         if (n > len) n = len;
+        next : byte[]! = null;
+        nextCount : unsigned int = 0u;
+        lookedAhead : bool = false;
+        if (n != 0u && n == _count - _pos && _finalized && !_finalDrained) {
+            next = new byte[4096u];
+            nextCount = _session->readFinal(next, 0u, 4096u);
+            lookedAhead = true;
+            if (nextCount == 0u) {
+                _finalDrained = true;
+                tag : unsigned byte[]! = _session->tag();
+                if (tag.size > next.size) next = new byte[tag.size];
+                i : unsigned int = 0u;
+                while (i < tag.size) {
+                    next[i] = (byte) tag[i];
+                    ++i;
+                }
+                nextCount = tag.size;
+                _tagLoaded = true;
+            }
+        }
         i : unsigned int = 0u;
         while (i < n) {
             buf[off + i] = _pending[_pos + i];
             ++i;
         }
         _pos += n;
-        if (_finalized && _pos == _count) _complete = true;
+        if (lookedAhead) {
+            _pending = next;
+            _pos = 0u;
+            _count = nextCount;
+        }
+        if (_tagLoaded && _pos == _count) _complete = true;
+        _failed = false;
         return Expected<unsigned int, k::io::StreamOutOfData>::expected(n);
     }
 
@@ -198,13 +244,16 @@ public:
 }
 
 /**
- * Authenticates a borrowed source before releasing any staged plaintext.
- * Closing before source EOF aborts verification.
+ * Decrypts a borrowed source. AEAD plaintext is released only after verification.
+ * Other modes can release unauthenticated plaintext before a final error.
+ * Closing before source EOF aborts finalization.
  */
 public class DecryptCipherInputStream : public k::io::FilterInputStream<byte> {
 private:
     _session : k::crypto::DecryptSession!;
     _trailer : CipherTrailer;
+    _authenticated : bool;
+    _finalized : bool;
     _verified : bool;
     _complete : bool;
     _closed : bool;
@@ -213,15 +262,20 @@ private:
 public:
     DecryptCipherInputStream(input: k::io::InputStream<byte>&,
                              session: k::crypto::DecryptSession!)
-        : FilterInputStream(&input), _session(session), _verified(false),
+        : FilterInputStream(&input), _session(session), _authenticated(false),
+          _finalized(false), _verified(false),
           _complete(false), _closed(false), _failed(false)
             throws(k::crypto::CryptoException) {
         if (_session == null) throw k::crypto::CryptoInvalidInputException();
-        _trailer.initialize(_session->tagSize());
+        _authenticated = _session->authenticated();
+        if (_authenticated) _trailer.initialize(_session->tagSize());
     }
 
+    /** Whether this stream uses an authenticated cipher mode. */
+    public const authenticated() : bool { return _authenticated; }
+    /** True only after successful AEAD verification. */
     public const isVerified() : bool { return _verified; }
-    /** True once verified plaintext EOF has been observed. */
+    /** True once finalized plaintext EOF has been observed. */
     public const isComplete() : bool { return _complete; }
 
     override read() : k::Optional<byte> throws(k::crypto::CryptoException) {
@@ -245,24 +299,33 @@ public:
             return Expected<unsigned int, k::io::StreamOutOfData>::expected(zero);
         }
         _failed = true;
-        if (!_verified) {
+        count : unsigned int = 0u;
+        while (true) {
+            if (_finalized || (!_authenticated && _session->readableBeforeFinalize())) {
+                count = _session->read(buf, off, len);
+                if (count != 0u || _finalized) break;
+            }
             input : byte[4096];
-            while (true) {
-                source : Expected<unsigned int, k::io::StreamOutOfData> = _in->read(input, 0u, 4096u);
-                if (source.hasError()) return source;
-                n : unsigned int = source.getResult();
-                if (n == 0u) {
+            source : Expected<unsigned int, k::io::StreamOutOfData> = _in->read(input, 0u, 4096u);
+            if (source.hasError()) return source;
+            n : unsigned int = source.getResult();
+            if (n == 0u) {
+                if (_authenticated) {
                     _trailer.finish(_session);
                     _verified = true;
-                    break;
+                } else {
+                    _session->finalize();
                 }
+                _finalized = true;
+            } else if (_authenticated) {
                 _trailer.accept(_session, input, 0u, n);
+            } else {
+                _session->update(input, 0u, n);
             }
         }
-        n : unsigned int = _session->read(buf, off, len);
-        if (n == 0u) _complete = true;
+        if (count == 0u) _complete = true;
         _failed = false;
-        return Expected<unsigned int, k::io::StreamOutOfData>::expected(n);
+        return Expected<unsigned int, k::io::StreamOutOfData>::expected(count);
     }
 
     override read(buf: byte[]) : Expected<unsigned int, k::io::StreamOutOfData>
@@ -308,7 +371,7 @@ public:
     }
 }
 
-/** Encrypts writes to a borrowed destination; close appends the GCM tag. */
+/** Encrypts writes to a borrowed destination; close appends any AEAD tag. */
 public class EncryptCipherOutputStream : public k::io::FilterOutputStream<byte> {
 private:
     _session : k::crypto::EncryptSession!;
@@ -353,13 +416,14 @@ public:
         if (off > buf.size || len > buf.size - off) throw IndexOutOfBoundsError();
         if (len == 0u) return this;
         _failed = true;
-        encrypted : byte[4096];
         pos : unsigned int = 0u;
         while (pos < len) {
             count : unsigned int = len - pos;
             if (count > 4096u) count = 4096u;
+            capacity : unsigned int = _session->updateOutputCapacity(count);
+            encrypted : byte[]! = new byte[capacity];
             written : unsigned int = _session->updateTo(buf, off + pos, count, encrypted, 0u);
-            _out->write(encrypted, 0u, written);
+            if (written != 0u) _out->write(encrypted, 0u, written);
             pos += count;
         }
         _failed = false;
@@ -390,11 +454,23 @@ public:
         }
         _failed = true;
         try {
-            tagSize : unsigned int = _session->tagSize();
-            if (tagSize == 0u) throw k::crypto::CryptoInvalidInputException();
-            tag : byte[]! = new byte[tagSize];
-            count : unsigned int = _session->finalizeTo(tag, 0u);
-            _out->write(tag, 0u, count);
+            _session->finish();
+            finalBytes : byte[4096];
+            while (true) {
+                count : unsigned int = _session->readFinal(finalBytes, 0u, 4096u);
+                if (count == 0u) break;
+                _out->write(finalBytes, 0u, count);
+            }
+            tag : unsigned byte[]! = _session->tag();
+            if (tag.size != 0u) {
+                signedTag : byte[]! = new byte[tag.size];
+                i : unsigned int = 0u;
+                while (i < tag.size) {
+                    signedTag[i] = (byte) tag[i];
+                    ++i;
+                }
+                _out->write(signedTag, 0u, signedTag.size);
+            }
             _out->flush();
         } catch (e: Throwable&) {
             try {
@@ -409,17 +485,31 @@ public:
     }
 }
 
-/** Stages ciphertext and writes plaintext only after close-time authentication. */
+/**
+ * Decrypts writes to a borrowed destination. AEAD plaintext is written only
+ * after close-time authentication; other modes write unauthenticated plaintext
+ * incrementally and can still fail during finalization.
+ */
 public class DecryptCipherOutputStream : public k::io::FilterOutputStream<byte> {
 private:
     _session : k::crypto::DecryptSession!;
     _trailer : CipherTrailer;
+    _authenticated : bool;
     _verified : bool;
     _complete : bool;
     _closed : bool;
     _failed : bool;
     _ensureWritable() throws(k::crypto::CryptoException) {
         if (_closed || _failed) throw k::crypto::CryptoStateException();
+    }
+
+    _drainPlaintext() throws(k::crypto::CryptoException) {
+        plain : byte[4096];
+        while (true) {
+            count : unsigned int = _session->read(plain, 0u, 4096u);
+            if (count == 0u) break;
+            _out->write(plain, 0u, count);
+        }
     }
 
     _closeResources() throws(Throwable) {
@@ -437,13 +527,17 @@ private:
 public:
     DecryptCipherOutputStream(output: k::io::OutputStream<byte>&,
                               session: k::crypto::DecryptSession!)
-        : FilterOutputStream(&output), _session(session), _verified(false),
+        : FilterOutputStream(&output), _session(session), _authenticated(false), _verified(false),
           _complete(false), _closed(false), _failed(false)
             throws(k::crypto::CryptoException) {
         if (_session == null) throw k::crypto::CryptoInvalidInputException();
-        _trailer.initialize(_session->tagSize());
+        _authenticated = _session->authenticated();
+        if (_authenticated) _trailer.initialize(_session->tagSize());
     }
 
+    /** Whether this stream uses an authenticated cipher mode. */
+    public const authenticated() : bool { return _authenticated; }
+    /** True only after successful AEAD verification. */
     public const isVerified() : bool { return _verified; }
     public const isComplete() : bool { return _complete; }
 
@@ -459,7 +553,18 @@ public:
         if (off > buf.size || len > buf.size - off) throw IndexOutOfBoundsError();
         if (len == 0u) return this;
         _failed = true;
-        _trailer.accept(_session, buf, off, len);
+        pos : unsigned int = 0u;
+        while (pos < len) {
+            count : unsigned int = len - pos;
+            if (count > 4096u) count = 4096u;
+            if (_authenticated) {
+                _trailer.accept(_session, buf, off + pos, count);
+            } else {
+                _session->update(buf, off + pos, count);
+                if (_session->readableBeforeFinalize()) _drainPlaintext();
+            }
+            pos += count;
+        }
         _failed = false;
         return this;
     }
@@ -488,14 +593,13 @@ public:
         }
         _failed = true;
         try {
-            _trailer.finish(_session);
-            _verified = true;
-            plain : byte[4096];
-            while (true) {
-                count : unsigned int = _session->read(plain, 0u, 4096u);
-                if (count == 0u) break;
-                _out->write(plain, 0u, count);
+            if (_authenticated) {
+                _trailer.finish(_session);
+                _verified = true;
+            } else {
+                _session->finalize();
             }
+            _drainPlaintext();
             _out->flush();
         } catch (e: Throwable&) {
             try {
