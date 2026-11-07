@@ -21,12 +21,26 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <string>
+#include <string_view>
 #include <vector>
 #include <unistd.h>
 
 #include "helpers.hpp"
+
+namespace {
+
+std::string_view ir_failure_context(const std::string& ir) {
+    if (std::getenv("KLANG_F1_DUMP_IR") != nullptr) {
+        return ir;
+    }
+    return "Full LLVM IR omitted; set KLANG_F1_DUMP_IR=1 locally to include it in failure output.";
+}
+
+} // anonymous namespace
 
 TEST_CASE("klangc: -g emits DWARF sections in executable", "[klangc][debug][dwarf]") {
     auto klangc = find_klangc();
@@ -126,7 +140,7 @@ TEST_CASE("compiler: debug metadata contains parameters, locals and lexical bloc
     comp->get_context_for_test()->module().print(os, nullptr);
     os.flush();
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     REQUIRE((ir.find("llvm.dbg.declare") != std::string::npos ||
              ir.find("#dbg_declare") != std::string::npos));
     REQUIRE(ir.find("!DILocalVariable(name: \"a\", arg: 1") != std::string::npos);
@@ -164,7 +178,7 @@ TEST_CASE("compiler: debug metadata covers loop scopes and catch variables", "[k
     comp->get_context_for_test()->module().print(os, nullptr);
     os.flush();
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     REQUIRE((ir.find("llvm.dbg.declare") != std::string::npos ||
              ir.find("#dbg_declare") != std::string::npos));
     REQUIRE(ir.find("!DILocalVariable(name: \"caught\"") != std::string::npos);
@@ -265,7 +279,7 @@ sum(n: int) : int {
     size_t lexical_block_count = 0;
     for (size_t pos = 0; (pos = ir.find("!DILexicalBlock(", pos)) != std::string::npos; ++lexical_block_count, ++pos) {}
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     REQUIRE(ir.find("!DILocalVariable(name: \"i\"") != std::string::npos);
     REQUIRE(ir.find("!DILocalVariable(name: \"total\"") != std::string::npos);
     REQUIRE(lexical_block_count >= 2);
@@ -302,7 +316,7 @@ flow(a: int) : int {
     comp->get_context_for_test()->module().print(os, nullptr);
     os.flush();
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     REQUIRE(ir.find("!DILocation(line: 6,") != std::string::npos);
     REQUIRE(ir.find("!DILocation(line: 7,") != std::string::npos);
     REQUIRE(ir.find("!DILocation(line: 9,") != std::string::npos);
@@ -335,7 +349,7 @@ class Counter {
     comp->get_context_for_test()->module().print(os, nullptr);
     os.flush();
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     REQUIRE(ir.find("!DILocalVariable(name: \"this\", arg: 1") != std::string::npos);
     REQUIRE(ir.find("!DILocalVariable(name: \"delta\", arg: 2") != std::string::npos);
 }
@@ -389,7 +403,7 @@ cast_line(v: short) : int {
         return std::stoi(ir.substr(line_start, line_end - line_start));
     };
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     REQUIRE(ir.find("!DILocation(line: 4,") != std::string::npos);
     REQUIRE(ir.find("!DILocation(line: 5,") != std::string::npos);
     REQUIRE(extract_dbg_line_for_instruction("sext i16") == 5);
@@ -449,7 +463,7 @@ flow(a: int) : int {
         return std::stoi(ir.substr(line_start, line_end - line_start));
     };
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     const int cxa_end_line = extract_dbg_line_for_call("call void @__cxa_end_catch()");
     REQUIRE(cxa_end_line == 9);
 }
@@ -502,7 +516,7 @@ read(ptr: int*) : int {
         return std::stoi(ir.substr(line_start, line_end - line_start));
     };
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     const int deref_line = extract_dbg_line_for_instruction("deref_load = load");
     const int deref_null_check_line = extract_dbg_line_for_instruction("deref_is_null");
     REQUIRE(deref_line == 5);
@@ -567,7 +581,7 @@ cast_to_derived(base: Base*) : Derived* {
         return std::stoi(ir.substr(line_start, line_end - line_start));
     };
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     const int cast_call_line = extract_dbg_line_for_instruction(
         "dyncast_result = call ptr @__k_dynamic_cast_adjust(");
     REQUIRE(cast_call_line == 13);
@@ -632,7 +646,7 @@ guarded(base: Base*) : int {
         return std::stoi(ir.substr(line_start, line_end - line_start));
     };
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     const int guard_line = extract_dbg_line_for_instruction("dyncast_src_null");
     REQUIRE(guard_line == 13);
 }
@@ -687,7 +701,7 @@ make() : Box! {
         return std::stoi(ir.substr(line_start, line_end - line_start));
     };
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     const int alloc_guard_line = extract_dbg_line_for_instruction("new_single_is_null");
     REQUIRE(alloc_guard_line == 7);
 }
@@ -743,7 +757,7 @@ branch(a: int) : int {
         return std::stoi(ir.substr(line_start, line_end - line_start));
     };
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     const int cond_branch_line = extract_dbg_line_for_instruction("label %if-then, label %if-continue");
     REQUIRE(cond_branch_line == 4);
 }
@@ -800,7 +814,7 @@ branch(a: int*, b: int*) : int {
         return std::stoi(ir.substr(line_start, line_end - line_start));
     };
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     const int softfail_guard_line = extract_dbg_line_for_instruction("softfail_is_null");
     REQUIRE(softfail_guard_line == 4);
 }
@@ -861,7 +875,7 @@ branch(a: int) : int {
         merge_branch_lines.push_back(extract_dbg_line_at(pos));
     }
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     REQUIRE(std::find(merge_branch_lines.begin(), merge_branch_lines.end(), 5) != merge_branch_lines.end());
     REQUIRE(std::find(merge_branch_lines.begin(), merge_branch_lines.end(), 9) != merge_branch_lines.end());
 }
@@ -911,7 +925,7 @@ loop(a: int) : int {
         while_cond_lines.push_back(extract_dbg_line_at(pos));
     }
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     REQUIRE(std::find(while_cond_lines.begin(), while_cond_lines.end(), 4) != while_cond_lines.end());
 }
 
@@ -969,7 +983,7 @@ loop(n: int) : int {
         for_back_edge_lines.push_back(extract_dbg_line_at(pos));
     }
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     REQUIRE(std::find(for_cond_lines.begin(), for_cond_lines.end(), 5) != for_cond_lines.end());
     REQUIRE(std::find(for_back_edge_lines.begin(), for_back_edge_lines.end(), 5) != for_back_edge_lines.end());
 }
@@ -1028,7 +1042,7 @@ run(a: int, n: int) : int {
         for_continue_branch_lines.push_back(extract_dbg_line_at(pos));
     }
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     REQUIRE(std::find(while_continue_branch_lines.begin(), while_continue_branch_lines.end(), 5) != while_continue_branch_lines.end());
     REQUIRE(std::find(for_continue_branch_lines.begin(), for_continue_branch_lines.end(), 9) != for_continue_branch_lines.end());
 }
@@ -1087,7 +1101,7 @@ run(a: int, n: int) : int {
         for_break_branch_lines.push_back(extract_dbg_line_at(pos));
     }
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     REQUIRE(std::find(while_break_branch_lines.begin(), while_break_branch_lines.end(), 5) != while_break_branch_lines.end());
     REQUIRE(std::find(for_break_branch_lines.begin(), for_break_branch_lines.end(), 9) != for_break_branch_lines.end());
 }
@@ -1152,7 +1166,7 @@ run(n: int) : int {
         for_no_test_entry_lines.push_back(extract_dbg_line_at(pos));
     }
 
-    INFO(ir);
+    INFO(ir_failure_context(ir));
     REQUIRE(std::find(while_back_edge_lines.begin(), while_back_edge_lines.end(), 4) != while_back_edge_lines.end());
     REQUIRE(std::find(for_no_test_entry_lines.begin(), for_no_test_entry_lines.end(), 10) != for_no_test_entry_lines.end());
 }

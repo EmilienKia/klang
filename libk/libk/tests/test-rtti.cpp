@@ -36,6 +36,7 @@
 
 #include "helpers.hpp"
 
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -301,7 +302,7 @@ TEST_CASE("RTTI: getBases() size on String is 1", "[libk][rtti]") {
             // String inherits from Object, so 1 base
             return s.getClass().getBases()->size;
         }
-    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR, /*dump=*/true, /*optimize=*/false);
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR, std::getenv("KLANG_F1_DUMP_IR") != nullptr, /*optimize=*/false);
     REQUIRE(jit);
 
     auto test = jit->lookup_symbol<int(*)()>("test");
@@ -2103,7 +2104,7 @@ TEST_CASE("RTTI: annotation array of nested annotations", "[libk][rtti][annotati
             if (t == null) return -3;
             return t->value;
         }
-    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR, /*dump=*/true, /*optimize=*/false);
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR, std::getenv("KLANG_F1_DUMP_IR") != nullptr, /*optimize=*/false);
     REQUIRE(jit);
 
     auto test_tag_count = jit->lookup_symbol<int(*)()>("test_tag_count");
@@ -2171,7 +2172,7 @@ TEST_CASE("RTTI: annotation array of typed nested annotations", "[libk][rtti][an
             if (t == null) return -3;
             return t->value;
         }
-    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR, /*dump=*/true, /*optimize=*/false);
+    )SRC", LIBK_KDI_DIR, LIBK_LIB_DIR, std::getenv("KLANG_F1_DUMP_IR") != nullptr, /*optimize=*/false);
     REQUIRE(jit);
 
     auto test_tag_count = jit->lookup_symbol<int(*)()>("test_tag_count");
