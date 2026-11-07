@@ -88,39 +88,39 @@ TEST_CASE("Generalized symmetric descriptors select the requested cipher",
         test() : int {
             try {
                 ctr : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::CTR);
+                    k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::CTR);
                 if (!ctr) return 1;
-                if (ctr.algorithm() != k::crypto::SymmetricAlgorithm::AES ||
-                    ctr.mode() != k::crypto::SymmetricMode::CTR ||
+                if (ctr.algorithm() != k::crypto::SymmetricAlgorithms::AES ||
+                    ctr.mode() != k::crypto::SymmetricModes::CTR ||
                     ctr.keyBits() != 128u || ctr.keySize() != 16u ||
                     ctr.nonceSize() != 16u || ctr.tagSize() != 0u ||
-                    ctr.padding() != k::crypto::SymmetricPadding::None ||
+                    ctr.padding() != k::crypto::SymmetricPaddings::None ||
                     ctr.authenticated()) return 2;
                 byName : k::crypto::SymmetricCipher! =
                     k::crypto::SymmetricCipher::fromName(String("AES-128-CTR"));
-                if (!byName || byName.algorithm() != k::crypto::SymmetricAlgorithm::AES ||
-                    byName.mode() != k::crypto::SymmetricMode::CTR ||
+                if (!byName || byName.algorithm() != k::crypto::SymmetricAlgorithms::AES ||
+                    byName.mode() != k::crypto::SymmetricModes::CTR ||
                     byName.keyBits() != 128u) return 3;
                 unknown : k::crypto::SymmetricCipher! =
                     k::crypto::SymmetricCipher::fromName(String("AES-128-NOT-A-MODE"));
                 if (unknown) return 4;
                 invalid : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u,
-                    k::crypto::SymmetricMode::Poly1305);
+                    k::crypto::SymmetricAlgorithms::AES, 128u,
+                    k::crypto::SymmetricModes::Poly1305);
                 if (invalid) return 5;
                 invalid = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 129u, k::crypto::SymmetricMode::CTR);
+                    k::crypto::SymmetricAlgorithms::AES, 129u, k::crypto::SymmetricModes::CTR);
                 if (invalid) return 6;
 
                 gcm : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::GCM);
+                    k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::GCM);
                 if (!gcm || !gcm.authenticated() || gcm.tagSize() == 0u) return 7;
 
                 xts : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::XTS);
+                    k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::XTS);
                 if (xts) {
-                    if (xts.algorithm() != k::crypto::SymmetricAlgorithm::AES ||
-                        xts.mode() != k::crypto::SymmetricMode::XTS ||
+                    if (xts.algorithm() != k::crypto::SymmetricAlgorithms::AES ||
+                        xts.mode() != k::crypto::SymmetricModes::XTS ||
                         xts.keyBits() != 128u || xts.keySize() != 32u ||
                         xts.authenticated()) return 8;
                     key : k::crypto::SymmetricKey! = xts.generateKey();
@@ -136,16 +136,16 @@ TEST_CASE("Generalized symmetric descriptors select the requested cipher",
                 }
 
                 camellia : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::Camellia, 128u,
-                    k::crypto::SymmetricMode::CTR);
+                    k::crypto::SymmetricAlgorithms::Camellia, 128u,
+                    k::crypto::SymmetricModes::CTR);
                 if (camellia) {
-                    if (camellia.algorithm() != k::crypto::SymmetricAlgorithm::Camellia ||
-                        camellia.mode() != k::crypto::SymmetricMode::CTR ||
+                    if (camellia.algorithm() != k::crypto::SymmetricAlgorithms::Camellia ||
+                        camellia.mode() != k::crypto::SymmetricModes::CTR ||
                         camellia.keySize() != 16u || camellia.authenticated()) return 11;
                     namedCamellia : k::crypto::SymmetricCipher! =
                         k::crypto::SymmetricCipher::fromName(String("CAMELLIA-128-CTR"));
                     if (!namedCamellia ||
-                        namedCamellia.algorithm() != k::crypto::SymmetricAlgorithm::Camellia)
+                        namedCamellia.algorithm() != k::crypto::SymmetricAlgorithms::Camellia)
                         return 12;
                     foreignKey : k::crypto::SymmetricKey! = camellia.generateKey();
                     nonce : unsigned byte[]! = ctr.randomNonce();
@@ -178,10 +178,10 @@ TEST_CASE("AES CBC padding and CTR direct sessions preserve final and incrementa
                 plain : unsigned byte[]! = fromHex(String("6bc1bee22e409f96e93d7e117393172a"));
                 iv : unsigned byte[]! = fromHex(String("000102030405060708090a0b0c0d0e0f"));
                 cbc : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::CBC,
-                    16u, 0u, k::crypto::SymmetricPadding::PKCS7);
+                    k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::CBC,
+                    16u, 0u, k::crypto::SymmetricPaddings::PKCS7);
                 if (!cbc || cbc.authenticated() ||
-                    cbc.padding() != k::crypto::SymmetricPadding::PKCS7) return 1;
+                    cbc.padding() != k::crypto::SymmetricPaddings::PKCS7) return 1;
                 key : k::crypto::SymmetricKey! = cbc.importKey(raw);
                 enc : k::crypto::EncryptSession! = cbc.encrypt(key, iv);
                 signedPlain : byte[]! = new byte[5u];
@@ -220,7 +220,7 @@ TEST_CASE("AES CBC padding and CTR direct sessions preserve final and incrementa
                 }
 
                 ctr : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::CTR);
+                    k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::CTR);
                 if (!ctr) return 11;
                 counter : unsigned byte[]! =
                     fromHex(String("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"));
@@ -265,7 +265,7 @@ TEST_CASE("AES XTS direct sessions support incremental and staged providers",
         test() : int {
             try {
                 cipher : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::XTS);
+                    k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::XTS);
                 if (!cipher) return 77;
                 raw : unsigned byte[]! = fromHex(
                     String("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"));
@@ -333,7 +333,7 @@ TEST_CASE("CTR temporary-file staging supports repeated complete drains",
         test() : int {
             try {
                 cipher : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::CTR);
+                    k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::CTR);
                 if (!cipher) return 1;
                 key : k::crypto::SymmetricKey! = cipher.generateKey();
                 nonce : unsigned byte[]! = cipher.randomNonce();
@@ -394,11 +394,11 @@ TEST_CASE("AES CCM RFC 3610 vector streams with a length or defers without one",
         check(staging: k::crypto::DecryptionStaging, known: bool) : int
                 throws(k::crypto::CryptoException) {
             cipher : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::CCM,
-                13u, 8u, k::crypto::SymmetricPadding::None);
+                k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::CCM,
+                13u, 8u, k::crypto::SymmetricPaddings::None);
             if (!cipher || !cipher.authenticated() ||
-                cipher.algorithm() != k::crypto::SymmetricAlgorithm::AES ||
-                cipher.mode() != k::crypto::SymmetricMode::CCM ||
+                cipher.algorithm() != k::crypto::SymmetricAlgorithms::AES ||
+                cipher.mode() != k::crypto::SymmetricModes::CCM ||
                 cipher.nonceSize() != 13u || cipher.tagSize() != 8u ||
                 cipher.maxDataSize() < 23uL || cipher.maxAadSize() < 8uL) return 1;
             raw : unsigned byte[]! = fromHex(String("c0c1c2c3c4c5c6c7c8c9cacbcccdcecf"));
@@ -575,20 +575,20 @@ TEST_CASE("ChaCha20 Poly1305 direct sessions authenticate before exposing plaint
         test() : int {
             try {
                 cipher : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::ChaCha20, 256u,
-                    k::crypto::SymmetricMode::Poly1305);
+                    k::crypto::SymmetricAlgorithms::ChaCha20, 256u,
+                    k::crypto::SymmetricModes::Poly1305);
                 if (!cipher) return 77;
-                if (cipher.algorithm() != k::crypto::SymmetricAlgorithm::ChaCha20 ||
-                    cipher.mode() != k::crypto::SymmetricMode::Poly1305 ||
+                if (cipher.algorithm() != k::crypto::SymmetricAlgorithms::ChaCha20 ||
+                    cipher.mode() != k::crypto::SymmetricModes::Poly1305 ||
                     cipher.keyBits() != 256u || cipher.keySize() != 32u ||
                     cipher.nonceSize() != 12u || cipher.tagSize() != 16u ||
                     !cipher.authenticated()) return 1;
                 named : k::crypto::SymmetricCipher! =
                     k::crypto::SymmetricCipher::fromName(String("CHACHA20-POLY1305"));
-                if (!named || named.algorithm() != k::crypto::SymmetricAlgorithm::ChaCha20 ||
-                    named.mode() != k::crypto::SymmetricMode::Poly1305) return 2;
+                if (!named || named.algorithm() != k::crypto::SymmetricAlgorithms::ChaCha20 ||
+                    named.mode() != k::crypto::SymmetricModes::Poly1305) return 2;
                 aes : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 256u, k::crypto::SymmetricMode::CTR);
+                    k::crypto::SymmetricAlgorithms::AES, 256u, k::crypto::SymmetricModes::CTR);
                 if (!aes) return 3;
                 foreignKey : k::crypto::SymmetricKey! = cipher.generateKey();
                 nonce : unsigned byte[]! = aes.randomNonce();
@@ -630,8 +630,8 @@ TEST_CASE("AES OCB RFC 7253 vector with incremental AAD",
         test() : int {
             try {
                 cipher : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::OCB,
-                    12u, 16u, k::crypto::SymmetricPadding::None);
+                    k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::OCB,
+                    12u, 16u, k::crypto::SymmetricPaddings::None);
                 if (!cipher || !cipher.authenticated()) return 1;
                 raw : unsigned byte[]! = fromHex(String("000102030405060708090a0b0c0d0e0f"));
                 nonce : unsigned byte[]! = fromHex(String("bbaa99887766554433221107"));
@@ -700,47 +700,47 @@ TEST_CASE("Generalized families and modes follow provider availability",
             try {
                 cipher : k::crypto::SymmetricCipher! = null;
                 named : k::crypto::SymmetricCipher! = null;
-                algorithm : k::crypto::SymmetricAlgorithm = k::crypto::SymmetricAlgorithm::AES;
-                mode : k::crypto::SymmetricMode = k::crypto::SymmetricMode::CBC;
+                algorithm : k::crypto::SymmetricAlgorithms = k::crypto::SymmetricAlgorithms::AES;
+                mode : k::crypto::SymmetricModes = k::crypto::SymmetricModes::CBC;
                 if (index == 0) {
-                    algorithm = k::crypto::SymmetricAlgorithm::ARIA;
-                    mode = k::crypto::SymmetricMode::CBC;
+                    algorithm = k::crypto::SymmetricAlgorithms::ARIA;
+                    mode = k::crypto::SymmetricModes::CBC;
                     cipher = k::crypto::SymmetricCipher::create(
-                        algorithm, 128u, mode, 16u, 0u, k::crypto::SymmetricPadding::PKCS7);
+                        algorithm, 128u, mode, 16u, 0u, k::crypto::SymmetricPaddings::PKCS7);
                     named = k::crypto::SymmetricCipher::fromName(String("ARIA-128-CBC"));
                 } else if (index == 1) {
-                    algorithm = k::crypto::SymmetricAlgorithm::Camellia;
-                    mode = k::crypto::SymmetricMode::CTR;
+                    algorithm = k::crypto::SymmetricAlgorithms::Camellia;
+                    mode = k::crypto::SymmetricModes::CTR;
                     cipher = k::crypto::SymmetricCipher::create(algorithm, 128u, mode);
                     named = k::crypto::SymmetricCipher::fromName(String("CAMELLIA-128-CTR"));
                 } else if (index == 2) {
-                    algorithm = k::crypto::SymmetricAlgorithm::SM4;
-                    mode = k::crypto::SymmetricMode::OFB;
+                    algorithm = k::crypto::SymmetricAlgorithms::SM4;
+                    mode = k::crypto::SymmetricModes::OFB;
                     cipher = k::crypto::SymmetricCipher::create(algorithm, 128u, mode);
                     named = k::crypto::SymmetricCipher::fromName(String("SM4-OFB"));
                 } else if (index == 3) {
-                    mode = k::crypto::SymmetricMode::OCB;
+                    mode = k::crypto::SymmetricModes::OCB;
                     cipher = k::crypto::SymmetricCipher::create(
-                        algorithm, 128u, mode, 12u, 16u, k::crypto::SymmetricPadding::None);
+                        algorithm, 128u, mode, 12u, 16u, k::crypto::SymmetricPaddings::None);
                     named = k::crypto::SymmetricCipher::fromName(String("AES-128-OCB"));
                 } else if (index == 4) {
-                    mode = k::crypto::SymmetricMode::CFB1;
+                    mode = k::crypto::SymmetricModes::CFB1;
                     cipher = k::crypto::SymmetricCipher::create(algorithm, 128u, mode);
                     named = k::crypto::SymmetricCipher::fromName(String("AES-128-CFB1"));
                 } else if (index == 5) {
-                    mode = k::crypto::SymmetricMode::CFB8;
+                    mode = k::crypto::SymmetricModes::CFB8;
                     cipher = k::crypto::SymmetricCipher::create(algorithm, 128u, mode);
                     named = k::crypto::SymmetricCipher::fromName(String("AES-128-CFB8"));
                 } else {
                     return 1;
                 }
                 unsupported : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::SM4, 128u,
-                    k::crypto::SymmetricMode::Poly1305);
+                    k::crypto::SymmetricAlgorithms::SM4, 128u,
+                    k::crypto::SymmetricModes::Poly1305);
                 if (unsupported) return 2;
                 unsupported = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 129u,
-                    k::crypto::SymmetricMode::CFB1);
+                    k::crypto::SymmetricAlgorithms::AES, 129u,
+                    k::crypto::SymmetricModes::CFB1);
                 if (unsupported) return 3;
                 if (available == 0) {
                     if (cipher || named) return 4;

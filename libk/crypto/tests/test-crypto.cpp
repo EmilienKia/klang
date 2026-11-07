@@ -1411,3 +1411,44 @@ TEST_CASE("Cipher streams propagate underlying failures",
     REQUIRE(test);
     CHECK(test() == 0);
 }
+
+TEST_CASE("Symmetric cipher string aliases select algorithms, modes and padding",
+          "[crypto][symmetric][string-alias]") {
+    auto jit = gen_jit_with_crypto(R"K(
+        module __crypto_symmetric_alias_test__;
+        import k::crypto;
+
+        test() : int {
+            algorithm : const k::crypto::SymmetricAlgorithm! = new String("AES");
+            mode : const k::crypto::SymmetricMode! = new String("CBC");
+            padding : const k::crypto::SymmetricPadding! = new String("PKCS7");
+            cipher : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
+                algorithm, 128u, mode, 16u, 0u, padding);
+            if (!cipher || cipher.algorithm() != String("AES") ||
+                cipher.mode() != String("CBC") || cipher.padding() != String("PKCS7"))
+                return 1;
+            byEnum : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
+                k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::CBC,
+                16u, 0u, k::crypto::SymmetricPaddings::PKCS7);
+            if (!byEnum || byEnum.algorithm() != String("AES") ||
+                byEnum.mode() != String("CBC") || byEnum.padding() != String("PKCS7"))
+                return 2;
+            badAlgorithm : const k::crypto::SymmetricAlgorithm! = new String("aes");
+            badMode : const k::crypto::SymmetricMode! = new String("UNKNOWN");
+            badPadding : const k::crypto::SymmetricPadding! = new String("UNKNOWN");
+            invalid : k::crypto::SymmetricCipher! =
+                k::crypto::SymmetricCipher::create(badAlgorithm, 128u, mode);
+            if (invalid) return 3;
+            invalid = k::crypto::SymmetricCipher::create(algorithm, 128u, badMode);
+            if (invalid) return 4;
+            invalid = k::crypto::SymmetricCipher::create(
+                algorithm, 128u, mode, 16u, 0u, badPadding);
+            if (invalid) return 5;
+            return 0;
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}

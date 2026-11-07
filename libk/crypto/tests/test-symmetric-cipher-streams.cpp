@@ -136,7 +136,7 @@ constexpr auto prelude = R"K(
             key, nonce, k::crypto::DecryptionStaging::Memory);
         if (auth) dec.updateAad(aad, 0u, aad.size);
         inputIncremental : bool = dec.updatesProduceOutput();
-        if (!auth && (cbc || cipher.mode() == k::crypto::SymmetricMode::CTR) &&
+        if (!auth && (cbc || cipher.mode() == k::crypto::SymmetricModes::CTR) &&
             !inputIncremental) return 25;
         input : k::io::crypto::DecryptCipherInputStream! =
             new k::io::crypto::DecryptCipherInputStream(chunks, dec);
@@ -188,7 +188,7 @@ constexpr auto prelude = R"K(
             key, nonce2, k::crypto::DecryptionStaging::TemporaryFile);
         if (auth) dec2.updateAad(aad, 0u, aad.size);
         outputIncremental : bool = dec2.updatesProduceOutput();
-        if (!auth && (cbc || cipher.mode() == k::crypto::SymmetricMode::CTR) &&
+        if (!auth && (cbc || cipher.mode() == k::crypto::SymmetricModes::CTR) &&
             !outputIncremental) return 27;
         plainSink : k::io::ArrayOutputStream<byte>;
         decryptOutput : k::io::crypto::DecryptCipherOutputStream! =
@@ -234,13 +234,13 @@ TEST_CASE("CBC and CTR cipher streams preserve incremental and final output",
         test() : int {
             try {
                 cbc : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::CBC,
-                    16u, 0u, k::crypto::SymmetricPadding::PKCS7);
+                    k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::CBC,
+                    16u, 0u, k::crypto::SymmetricPaddings::PKCS7);
                 if (!cbc) return 1;
                 result : int = check(cbc, 48u, true, false);
                 if (result != 0) return 100 + result;
                 ctr : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::CTR);
+                    k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::CTR);
                 if (!ctr) return 2;
                 result = check(ctr, 37u, false, false);
                 if (result != 0) return 200 + result;
@@ -262,13 +262,13 @@ TEST_CASE("GCM and deferred CCM streams verify before releasing plaintext",
         test() : int {
             try {
                 gcm : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::GCM);
+                    k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::GCM);
                 if (!gcm || !gcm.authenticated()) return 1;
                 result : int = check(gcm, 53u, false, false);
                 if (result != 0) return 100 + result;
                 ccm : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::CCM,
-                    13u, 8u, k::crypto::SymmetricPadding::None);
+                    k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::CCM,
+                    13u, 8u, k::crypto::SymmetricPaddings::None);
                 if (!ccm || !ccm.authenticated()) return 2;
                 result = check(ccm, 45u, false, true);
                 if (result != 0) return 200 + result;
@@ -290,7 +290,7 @@ TEST_CASE("AES XTS cipher streams retain and finish the final partial block",
         test() : int {
             try {
                 xts : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::XTS);
+                    k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::XTS);
                 if (!xts) return 77;
                 result : int = check(xts, 37u, false, false);
                 if (result != 0) return 100 + result;
@@ -314,7 +314,7 @@ TEST_CASE("Untagged encrypt input completes on the last final ciphertext byte",
         test() : int {
             try {
                 cipher : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::XTS);
+                    k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::XTS);
                 if (!cipher) return 77;
                 key : k::crypto::SymmetricKey! = cipher.generateKey();
                 nonce : unsigned byte[]! = cipher.randomNonce();
@@ -358,8 +358,8 @@ TEST_CASE("Deferred CCM encrypt input drains large final output before its tag",
         test() : int {
             try {
                 cipher : k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::create(
-                    k::crypto::SymmetricAlgorithm::AES, 128u, k::crypto::SymmetricMode::CCM,
-                    13u, 8u, k::crypto::SymmetricPadding::None);
+                    k::crypto::SymmetricAlgorithms::AES, 128u, k::crypto::SymmetricModes::CCM,
+                    13u, 8u, k::crypto::SymmetricPaddings::None);
                 if (!cipher) return 1;
                 key : k::crypto::SymmetricKey! = cipher.generateKey();
                 nonce : unsigned byte[]! = cipher.randomNonce();

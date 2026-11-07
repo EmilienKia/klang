@@ -72,20 +72,24 @@ when the desired digest is over the final bytes written to that sink.
 ## Symmetric encryption
 
 `SymmetricCipher` selects an algorithm family and an operation mode
-independently:
+independently. `SymmetricAlgorithm`, `SymmetricMode`, and `SymmetricPadding`
+are aliases of `String`. Their corresponding enums provide standard names:
 
-| Enum | Values |
+| Enum | Entries and underlying names |
 |---|---|
-| `SymmetricAlgorithm` | `AES`, `ARIA`, `Camellia`, `SM4`, `ChaCha20`, `AsconAead128` |
-| `SymmetricMode` | `GCM`, `CCM`, `OCB`, `CBC`, `CTR`, `XTS`, `Poly1305`, `Ascon`, `CFB`, `OFB`, `CFB1`, `CFB8` |
-| `SymmetricPadding` | `None`, `PKCS7` |
+| `SymmetricAlgorithms` | `AES`, `ARIA`, `Camellia` (`CAMELLIA`), `SM4`, `ChaCha20` (`CHACHA20`), `AsconAead128` (`ASCON-AEAD128`) |
+| `SymmetricModes` | `GCM`, `CCM`, `OCB`, `CBC`, `CTR`, `XTS`, `Poly1305` (`POLY1305`), `Ascon` (`ASCON`), `CFB`, `OFB`, `CFB1`, `CFB8` |
+| `SymmetricPaddings` | `None` (`NONE`), `PKCS7` |
+
+Entries without an explicit underlying name use the entry name. Factories
+accept enum values or alias strings; names are case-sensitive.
 
 ```k
-public static create(algorithm: SymmetricAlgorithm, keyBits: unsigned int,
-                     mode: SymmetricMode) : SymmetricCipher!;
-public static create(algorithm: SymmetricAlgorithm, keyBits: unsigned int,
-                     mode: SymmetricMode, nonceSize: unsigned int,
-                     tagSize: unsigned int, padding: SymmetricPadding) : SymmetricCipher!;
+public static create(algorithm: const SymmetricAlgorithm&, keyBits: unsigned int,
+                     mode: const SymmetricMode&) : SymmetricCipher!;
+public static create(algorithm: const SymmetricAlgorithm&, keyBits: unsigned int,
+                     mode: const SymmetricMode&, nonceSize: unsigned int,
+                     tagSize: unsigned int, padding: const SymmetricPadding&) : SymmetricCipher!;
 ```
 
 Sizes other than `keyBits` are in bytes. The three-argument factory defaults
