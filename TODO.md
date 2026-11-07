@@ -1375,6 +1375,11 @@
 - Add support for generating language bindings (e.g. C header generation) from K code
 - Add iterative compilation mode for faster edit-compile-test cycles (e.g. via an interactive REPL or watch mode)
 - Add support for incremental compilation and caching of intermediate results to speed up subsequent builds
+- [ ] Migrate `klang/src/common/process.cpp` from Boost.Process v1 to the common
+  v2 API, removing the Boost-version `#if` compatibility code. Preserve Ubuntu
+  24.04/Boost 1.83 and Ubuntu 26.04/Boost 1.90 support, account for their
+  different v2 build/link packaging, and test PATH lookup, process I/O, exit
+  codes, and timeouts on both versions.
 - Add support for cross-compilation to different target architectures and platforms. Partial: `klangc
   --target <triple>` already selects the LLVM codegen target triple (see `klang/src/klang.cpp`); still
   missing is end-to-end cross-toolchain support (cross-linker/sysroot selection in
