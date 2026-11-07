@@ -640,6 +640,59 @@ TEST_CASE("Exception: throwing destruction clears moved owners and reaches the l
     }
 }
 
+TEST_CASE("Constructor return preserves finally and cleanup before virtual dispatch",
+          "[gen][exceptions][finally][constructor-return][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module constructor_return_cleanup;
+        order : int = 0;
+        wholeDrops : int = 0;
+        struct Guard {
+            id : int;
+            Guard(value : int) : id(value) {}
+            ~Guard() { order = order * 10 + id; }
+        }
+        class Base {
+            value() : int { return 0; }
+        }
+        class Derived : public Base {
+            member : Guard;
+            Derived(mode : int) : member(1) {
+                local : Guard(2);
+                try {
+                    if (mode == 0) return;
+                } finally {
+                    order = order * 10 + 3;
+                }
+                if (mode == 2) throw Exception(923);
+            }
+            override value() : int { return 42; }
+            ~Derived() { ++wholeDrops; }
+        }
+        test(mode : int) : int {
+            order = 0;
+            wholeDrops = 0;
+            result : int = 0;
+            try {
+                value : Derived(mode);
+                base : Base& = value;
+                result = base.value();
+            } catch (e : Throwable&) {
+                result = e.getCode();
+            }
+            if (mode == 2) {
+                return result == 923 && order == 321 && wholeDrops == 0 ? 1 : 0;
+            }
+            return result == 42 && order == 321 && wholeDrops == 1 ? 1 : 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)(int)>("test");
+    REQUIRE(test);
+    CHECK(test(0) == 1);
+    CHECK(test(1) == 1);
+    CHECK(test(2) == 1);
+}
+
 TEST_CASE("Exception: failed constructors unwind only completed members in reverse order",
           "[gen][exceptions][copy-arguments][constructor-members][lifecycle][regression]") {
     auto jit = gen_jit(R"SRC(

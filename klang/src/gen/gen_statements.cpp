@@ -1008,6 +1008,13 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
     // Emit destructor calls for all active scopes, from innermost to outermost.
     // We use a copy of the cleanup vars stack to iterate without modifying the live stack.
     emit_active_scope_cleanup(_cleanup_vars_stack.size(), "ret_owner", false, named_ret_var);
+
+    // Match constructor fallthrough: repair vptrs and virtual-base pointers
+    // after body cleanup, but only on the successful return path.
+    if (func) {
+        emit_constructor_post_block(*func);
+    }
+
     emit_active_parameter_cleanup("ret_param");
 
     // Step 4: For NRVO candidates: no copy needed (already in sret destination)

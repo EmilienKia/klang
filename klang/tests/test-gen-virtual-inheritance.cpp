@@ -41,6 +41,65 @@
 
 #include "helpers.hpp"
 
+TEST_CASE("Constructor returns restore interface dispatch",
+          "[gen][virtual][constructor-return][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module constructor_return_interface;
+        interface Reader { read() : int; }
+        class ArrayReader : Reader {
+            value : int;
+            ArrayReader(mode : int) : value(42) {
+                if (mode == 0) return;
+                if (mode == 1) return;
+                value = 43;
+            }
+            override read() : int { return value; }
+        }
+        readThroughBase(reader : Reader&) : int { return reader.read(); }
+        test(mode : int) : int {
+            reader : ArrayReader(mode);
+            return readThroughBase(reader);
+        }
+    )SRC", false, false);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)(int)>("test");
+    REQUIRE(test);
+    CHECK(test(0) == 42);
+    CHECK(test(1) == 42);
+    CHECK(test(2) == 43);
+}
+
+TEST_CASE("Constructor returns restore virtual diamond links",
+          "[gen][virtual][diamond][constructor-return][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module constructor_return_diamond;
+        class Root {
+            public x : int;
+            Root() : x(0) {}
+            value() : int { return x; }
+        }
+        class Left : public Root { Left() {} }
+        class Right : public Root { Right() {} }
+        class Diamond : public Left, public Right {
+            Diamond(early : bool) { if (early) return; }
+            override value() : int { return 42; }
+        }
+        setLeft(left : Left&) { left.x = 37; }
+        getRight(right : Right&) : int { return right.x; }
+        dispatch(root : Root&) : int { return root.value(); }
+        test(early : bool) : int {
+            diamond : Diamond(early);
+            setLeft(diamond);
+            return getRight(diamond) * 100 + dispatch(diamond);
+        }
+    )SRC", false, false);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)(bool)>("test");
+    REQUIRE(test);
+    CHECK(test(true) == 3742);
+    CHECK(test(false) == 3742);
+}
+
 TEST_CASE("Virtual diamond: overloaded owner returns preserve this after a class value copy",
           "[gen][virtual][diamond][class][value-copy][interface-owner-dispatch][regression]") {
     auto jit = gen_jit(R"SRC(
