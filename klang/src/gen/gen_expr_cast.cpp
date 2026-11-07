@@ -694,8 +694,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                         auto* fail_bb = llvm::BasicBlock::Create(_builder->getContext(), "enum_obj_cast_fail", cur_fn);
                         _builder->CreateCondBr(found, ok_bb, fail_bb);
                         _builder->SetInsertPoint(fail_bb);
-                        auto* trap_fn = llvm::Intrinsic::getDeclaration(&get_module(), llvm::Intrinsic::trap);
-                        _builder->CreateCall(trap_fn, {});
+                        _builder->CreateIntrinsic(llvm::Intrinsic::trap, llvm::ArrayRef<llvm::Type*>{}, {});
                         _builder->CreateUnreachable();
                         _builder->SetInsertPoint(ok_bb);
                     }

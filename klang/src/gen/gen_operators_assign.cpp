@@ -1280,9 +1280,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
 
                             // Fail: discriminant is out of range — call trap
                             _builder->SetInsertPoint(fail_bb);
-                            auto* trap_fn = llvm::Intrinsic::getDeclaration(
-                                &_context->module(), llvm::Intrinsic::trap);
-                            _builder->CreateCall(trap_fn);
+                            _builder->CreateIntrinsic(llvm::Intrinsic::trap, llvm::ArrayRef<llvm::Type*>{}, {});
                             _builder->CreateUnreachable();
 
                             _builder->SetInsertPoint(ok_bb);

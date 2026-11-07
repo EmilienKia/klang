@@ -787,8 +787,7 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
 
                     // Fail branch: call trap and unreachable
                     _builder->SetInsertPoint(fail_bb);
-                    auto* trap_fn = llvm::Intrinsic::getDeclaration(&_context->module(), llvm::Intrinsic::trap);
-                    _builder->CreateCall(trap_fn);
+                    _builder->CreateIntrinsic(llvm::Intrinsic::trap, llvm::ArrayRef<llvm::Type*>{}, {});
                     _builder->CreateUnreachable();
                 }
 

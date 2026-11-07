@@ -1334,8 +1334,7 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
 
     if (!throw_val) {
         // Fallback: trap if expression evaluation failed
-        auto* trap_fn = llvm::Intrinsic::getDeclaration(&_context->module(), llvm::Intrinsic::trap);
-        _builder->CreateCall(trap_fn);
+        _builder->CreateIntrinsic(llvm::Intrinsic::trap, llvm::ArrayRef<llvm::Type*>{}, {});
         _builder->CreateUnreachable();
         auto* func = _builder->GetInsertBlock()->getParent();
         auto* after_throw = llvm::BasicBlock::Create(_context->llvm_context(), "after_throw", func);
