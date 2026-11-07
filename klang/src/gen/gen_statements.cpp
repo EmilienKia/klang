@@ -1288,6 +1288,40 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
         auto cxa_rethrow = mod.getOrInsertFunction("__cxa_rethrow",
             llvm::FunctionType::get(void_ty, {}, false));
 
+        if (!_caught_exception_metadata.empty()) {
+            // A pre-existing unbalanced catch can leave the ABI's active
+            // exception different from the lexically enclosing catch. Never
+            // publish metadata for a different thrown type.
+            auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+            auto current_type_fn = mod.getOrInsertFunction("__cxa_current_exception_type",
+                llvm::FunctionType::get(ptr_ty, {}, false));
+            auto* current_type = _builder->CreateCall(current_type_fn, {}, "rethrow_current_type");
+            auto* chain_slot = get_thrown_state_slot("__k_thrown_typeinfo_chain_addr");
+            auto* type_slot = get_thrown_state_slot("__k_thrown_typeinfo_addr");
+            auto* restored_bb = llvm::BasicBlock::Create(llvm_ctx, "rethrow_metadata_ready", current_func);
+
+            for (auto it = _caught_exception_metadata.rbegin();
+                 it != _caught_exception_metadata.rend(); ++it) {
+                auto* saved_type = _builder->CreateLoad(ptr_ty, it->type, "caught_type");
+                auto* saved_chain = _builder->CreateLoad(ptr_ty, it->chain, "caught_chain");
+                auto* matches = _builder->CreateAnd(
+                    _builder->CreateICmpNE(current_type, llvm::ConstantPointerNull::get(ptr_ty)),
+                    _builder->CreateICmpEQ(current_type, saved_type));
+                matches = _builder->CreateAnd(matches,
+                    _builder->CreateICmpNE(saved_chain, llvm::ConstantPointerNull::get(ptr_ty)));
+                auto* restore_bb = llvm::BasicBlock::Create(llvm_ctx, "rethrow_restore_metadata", current_func);
+                auto* next_bb = llvm::BasicBlock::Create(llvm_ctx, "rethrow_check_outer_metadata", current_func);
+                _builder->CreateCondBr(matches, restore_bb, next_bb);
+                _builder->SetInsertPoint(restore_bb);
+                _builder->CreateStore(saved_chain, chain_slot);
+                _builder->CreateStore(saved_type, type_slot);
+                _builder->CreateBr(restored_bb);
+                _builder->SetInsertPoint(next_bb);
+            }
+            _builder->CreateBr(restored_bb);
+            _builder->SetInsertPoint(restored_bb);
+        }
+
         if (!_landing_pad_stack.empty()) {
             // Inside a try-catch: use invoke so the rethrown exception unwinds to the landing pad
             // Determine unwind destination using same priority logic
@@ -2074,6 +2108,16 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
         // Begin catch — returns pointer to the exception object (start of thrown type)
         auto* caught_ptr = _builder->CreateCall(cxa_begin, {exc_ptr}, "caught");
 
+        // The earlier entry builder may still point to end() after the entry
+        // acquired a terminator. Insert these allocas before its first instruction.
+        llvm::IRBuilder<> catch_alloca_builder(entry_bb, entry_bb->begin());
+        auto* saved_chain = catch_alloca_builder.CreateAlloca(ptr_ty, nullptr, "caught_chain_slot");
+        auto* saved_type = catch_alloca_builder.CreateAlloca(ptr_ty, nullptr, "caught_type_slot");
+        auto* chain_slot = get_thrown_state_slot("__k_thrown_typeinfo_chain_addr");
+        auto* type_slot = get_thrown_state_slot("__k_thrown_typeinfo_addr");
+        _builder->CreateStore(_builder->CreateLoad(ptr_ty, chain_slot), saved_chain);
+        _builder->CreateStore(_builder->CreateLoad(ptr_ty, type_slot), saved_type);
+
         // Adjust the pointer by the matched base offset to point to the correct
         // base sub-object for the catch variable's declared type.
         auto* matched_offset = _builder->CreateLoad(i32_ty, offset_alloca, "matched_offset");
@@ -2105,9 +2149,11 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
             _finally_stack.push({finally_body, true});
         }
 
+        _caught_exception_metadata.push_back({saved_chain, saved_type});
         if (auto body = clauses[i]->get_body()) {
             body->accept(*this);
         }
+        _caught_exception_metadata.pop_back();
 
         if (finally_body) {
             _finally_stack.pop();

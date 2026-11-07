@@ -2525,6 +2525,7 @@ llvm::Function* implementation_generator::get_or_create_tls_init_function(global
     llvm::IRBuilderBase::InsertPointGuard insertion_guard(*_builder);
     auto previous_cleanup_lpads = std::exchange(_cleanup_lpad_stack, {});
     auto previous_catch_lpads = std::exchange(_landing_pad_stack, {});
+    auto previous_caught_metadata = std::exchange(_caught_exception_metadata, {});
     auto previous_lpad_depth = std::exchange(_lpad_depth_counter, 0);
     auto* previous_exc_ptr_slot = std::exchange(_exc_ptr_slot, nullptr);
     auto* previous_exc_sel_slot = std::exchange(_exc_sel_slot, nullptr);
@@ -2537,6 +2538,7 @@ llvm::Function* implementation_generator::get_or_create_tls_init_function(global
     auto restore_function_state = k::make_scope_exit([&]() {
         _cleanup_lpad_stack = std::move(previous_cleanup_lpads);
         _landing_pad_stack = std::move(previous_catch_lpads);
+        _caught_exception_metadata = std::move(previous_caught_metadata);
         _lpad_depth_counter = previous_lpad_depth;
         _exc_ptr_slot = previous_exc_ptr_slot;
         _exc_sel_slot = previous_exc_sel_slot;

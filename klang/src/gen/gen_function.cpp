@@ -41,6 +41,7 @@
 #include <cctype>
 #include <queue>
 #include <unordered_set>
+#include <utility>
 #include "../errors.hpp"
 
 
@@ -1519,6 +1520,10 @@ void implementation_generator::visit_function(function &function) {
     begin_function_debug_scope(function, func);
     auto debug_scope_guard = k::make_scope_exit([&]() {
         end_function_debug_scope();
+    });
+    auto previous_caught_metadata = std::exchange(_caught_exception_metadata, {});
+    auto caught_metadata_guard = llvm::make_scope_exit([&]() {
+        _caught_exception_metadata = std::move(previous_caught_metadata);
     });
 
     // Step 2: Create entry basic block and reset per-function state

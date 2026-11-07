@@ -2367,6 +2367,112 @@ TEST_CASE("Exception: bare throw rethrows to caller", "[gen][exceptions][rethrow
     REQUIRE(fn() == 7);
 }
 
+TEST_CASE("Exception: rethrow restores the caught type after nested cleanup failures",
+          "[gen][exceptions][rethrow][nested][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module rethrow_nested_cleanup;
+        class Primary : public Exception {
+        public:
+            Primary() : Exception(41) {}
+        }
+        class Cleanup : public Exception {
+        public:
+            Cleanup() : Exception(82) {}
+        }
+        class Replacement : public Exception {
+        public:
+            Replacement() : Exception(93) {}
+        }
+        failCleanup() throws(Throwable) { throw Cleanup(); }
+        rethrowPrimary(mode : int) throws(Throwable) {
+            try {
+                throw Primary();
+            } catch (original : Throwable&) {
+                try {
+                    failCleanup();
+                } catch (ignored : Cleanup&) {}
+                if (mode == 1) throw Replacement();
+                throw;
+            }
+        }
+        rethrowNoArgs() throws(Throwable) {
+            try {
+                throw Primary();
+            } catch (original : Throwable&) {
+                try {
+                    failCleanup();
+                } catch (ignored : Cleanup&) {}
+                throw;
+            }
+        }
+        rethrowInFinally() throws(Throwable) {
+            try {
+                throw Primary();
+            } catch (original : Throwable&) {
+                try {
+                    throw Cleanup();
+                } catch (ignored : Cleanup&) {
+                    return;
+                } finally {
+                    throw;
+                }
+            }
+        }
+        test(mode : int) : int {
+            result : int = 0;
+            try {
+                rethrowPrimary(mode);
+            } catch (wrong : Cleanup&) {
+                result = -1;
+            } catch (primary : Primary&) {
+                result = primary.getCode();
+            } catch (replacement : Replacement&) {
+                result = replacement.getCode();
+            } catch (other : Throwable&) {
+                result = -2;
+            }
+            return result;
+        }
+        testFinally() : int {
+            result : int = 0;
+            try {
+                rethrowInFinally();
+            } catch (wrong : Cleanup&) {
+                result = -1;
+            } catch (primary : Primary&) {
+                result = primary.getCode();
+            } catch (other : Throwable&) {
+                result = -2;
+            }
+            return result;
+        }
+        testNoArgs() : int {
+            result : int = 0;
+            try {
+                rethrowNoArgs();
+            } catch (wrong : Cleanup&) {
+                result = -1;
+            } catch (primary : Primary&) {
+                result = primary.getCode();
+            } catch (other : Throwable&) {
+                result = -2;
+            }
+            return result;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)(int)>("test");
+    REQUIRE(test);
+    CHECK(test(0) == 41);
+    CHECK(test(1) == 93);
+    auto test_no_args = jit->lookup_symbol<int (*)()>("testNoArgs");
+    REQUIRE(test_no_args);
+    CHECK(test_no_args() == 41);
+    auto test_finally = jit->lookup_symbol<int (*)()>("testFinally");
+    REQUIRE(test_finally);
+    CHECK(test_finally() == 41);
+}
+
 TEST_CASE("Exception: bare throw outside catch block fails compilation", "[gen][exceptions][rethrow][resolution]") {
     // A bare 'throw;' that is not inside a catch block should produce a compile-time error.
     REQUIRE_THROWS_AS(gen_jit_throws(R"(

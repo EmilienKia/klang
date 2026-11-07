@@ -21,6 +21,7 @@
 
 #include <optional>
 #include <stack>
+#include <vector>
 
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/IR/BasicBlock.h>
@@ -287,6 +288,12 @@ protected:
      *  try-catch — function calls within the try body should invoke to
      *  top().lpad_bb instead of using a plain call. */
     std::stack<eh_landing_context> _landing_pad_stack;
+
+    struct caught_exception_metadata {
+        llvm::AllocaInst* chain;
+        llvm::AllocaInst* type;
+    };
+    std::vector<caught_exception_metadata> _caught_exception_metadata;
 
     /** Cleanup landing pad context for exception unwinding.
      *  Each block scope with destructible variables gets its own cleanup landing

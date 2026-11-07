@@ -1392,6 +1392,7 @@ void implementation_generator::visit_enumeration(enumeration& en) {
     llvm::IRBuilderBase::InsertPointGuard insertion_guard(*_builder);
     auto previous_cleanup = std::exchange(_cleanup_lpad_stack, {});
     auto previous_catches = std::exchange(_landing_pad_stack, {});
+    auto previous_caught_metadata = std::exchange(_caught_exception_metadata, {});
     auto previous_depth = std::exchange(_lpad_depth_counter, 0);
     auto* previous_exc_ptr = std::exchange(_exc_ptr_slot, nullptr);
     auto* previous_exc_sel = std::exchange(_exc_sel_slot, nullptr);
@@ -1405,6 +1406,7 @@ void implementation_generator::visit_enumeration(enumeration& en) {
     auto restore = llvm::make_scope_exit([&]() {
         _cleanup_lpad_stack = std::move(previous_cleanup);
         _landing_pad_stack = std::move(previous_catches);
+        _caught_exception_metadata = std::move(previous_caught_metadata);
         _lpad_depth_counter = previous_depth;
         _exc_ptr_slot = previous_exc_ptr;
         _exc_sel_slot = previous_exc_sel;

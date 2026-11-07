@@ -91,6 +91,97 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **Exception metadata and catch cleanup outside bare rethrow remain incomplete.**
+      The bare-rethrow repair snapshots the caught chain and restores it only
+      when its type matches `__cxa_current_exception_type()`. It does not repair
+      normal catch exit or exception unwinding: a destructor or finally block
+      can throw and catch a different exception while a primary exception is
+      already unwinding, overwriting the thread-local chain before the primary
+      reaches its next typed handler. Preserve the in-flight chain and type
+      through each cleanup continuation without overwriting a genuinely new
+      exception. Also, `visit_try_catch_statement` currently pushes a catch
+      finalization context only when there is a `finally` block, so
+      `return`/`break`/`continue` from a catch without `finally` can bypass
+      `__cxa_end_catch()`. Fix all catch exits and their cleanup ordering with
+      focused regressions; see also the constructor try/finally issue below.
+
+- [ ] **Implicit member access through a virtual diamond fails codegen.**
+      The following source was rejected with internal diagnostic `0F01E`:
+      unable to reach owning struct `Root` for member `x` from `Diamond`.
+      `klang/src/gen/gen_expressions.cpp` walks non-virtual `__base_` fields
+      and skips virtual base edges when lowering an implicit member symbol.
+      The constructor return is not needed to explain that lookup path; the
+      reported failure was observed with the complete fixture below.
+      ```k
+      module constructor_return_diamond;
+      class Root {
+          public x : int;
+          Root() : x(0) {}
+          value() : int { return x; }
+      }
+      class Left : public Root { Left() {} }
+      class Right : public Root { Right() {} }
+      class Diamond : public Left, public Right {
+          Diamond(early : bool) { if (early) return; }
+          override value() : int { return x + 5; }
+      }
+      setLeft(left : Left&) { left.x = 37; }
+      getRight(right : Right&) : int { return right.x; }
+      dispatch(root : Root&) : int { return root.value(); }
+      test(early : bool) : int {
+          diamond : Diamond(early);
+          setLeft(diamond);
+          return getRight(diamond) * 100 + dispatch(diamond);
+      }
+      ```
+
+- [ ] **Constructor throw inside top-level try/finally hangs during propagation.**
+      In `klang-tests-gen-exceptions`, the following fixture returned 1 for
+      `test(0)` and `test(1)`, but `test(2)` consumed CPU until the 120-second
+      timeout. The constructor-return vptr fix emits stores only on `return`,
+      not on this throw path; an unmodified-compiler rerun and runtime
+      backtrace are still needed to confirm the hang's precise cause.
+      Source inspection: `visit_try_catch_statement` emits a catch-all landing
+      pad for a try/finally and, with no enclosing try in that function, resumes
+      after local and parameter cleanup without chaining to the function-level
+      constructor-member cleanup. Investigate both propagation and member
+      destruction; the source observation alone does not establish the loop.
+      ```k
+      module constructor_return_cleanup;
+      order : int = 0;
+      wholeDrops : int = 0;
+      struct Guard {
+          id : int;
+          Guard(value : int) : id(value) {}
+          ~Guard() { order = order * 10 + id; }
+      }
+      class Base { value() : int { return 0; } }
+      class Derived : public Base {
+          member : Guard;
+          Derived(mode : int) : member(1) {
+              local : Guard(2);
+              try {
+                  if (mode == 0) return;
+                  if (mode == 2) throw Exception(923);
+              } finally { order = order * 10 + 3; }
+          }
+          override value() : int { return 42; }
+          ~Derived() { ++wholeDrops; }
+      }
+      test(mode : int) : int {
+          order = 0; wholeDrops = 0;
+          result : int = 0;
+          try {
+              value : Derived(mode);
+              base : Base& = value;
+              result = base.value();
+          } catch (e : Throwable&) { result = e.getCode(); }
+          if (mode == 2)
+              return result == 923 && order == 321 && wholeDrops == 0 ? 1 : 0;
+          return result == 42 && order == 321 && wholeDrops == 1 ? 1 : 0;
+      }
+      ```
+
 - [ ] **Unsigned conversion-operator lookup omits short/int/long targets (blocks BigInteger casts).**
       The BigInteger standard library now builds after the frozen-observer
       fix, but its public cast cases fail with diagnostic `00945`:
