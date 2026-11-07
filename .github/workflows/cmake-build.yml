@@ -18,7 +18,7 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
-          # - ubuntu-24.04
+          - ubuntu-24.04
 
     steps:
       - name: Checkout sources
@@ -37,7 +37,6 @@ jobs:
             libgmp-dev \
             libboost-filesystem-dev \
             libboost-program-options-dev \
-            libboost-system-dev \
             liburing-dev \
             libicu-dev \
             nlohmann-json3-dev \

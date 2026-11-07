@@ -18,12 +18,21 @@
 
 #include "process.hpp"
 
+#include <boost/version.hpp>
+#if BOOST_VERSION >= 108600
+#include <boost/process/v1.hpp>
+#else
 #include <boost/process.hpp>
+#endif
 
 
 namespace k::tools {
 
+#if BOOST_VERSION >= 108600
+namespace bp = boost::process::v1;
+#else
 namespace bp = boost::process;
+#endif
 
 exec_result lookup_run_process(
     const std::string& exe_name,

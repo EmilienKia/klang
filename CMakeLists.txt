@@ -120,7 +120,7 @@ find_package(nlohmann_json REQUIRED)
 find_package(fmt REQUIRED)
 
 find_package(Boost REQUIRED
-    COMPONENTS program_options system filesystem
+    COMPONENTS program_options filesystem
 )
 include_directories(${Boost_INCLUDE_DIRS})
 
