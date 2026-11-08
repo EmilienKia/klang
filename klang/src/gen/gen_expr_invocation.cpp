@@ -1992,10 +1992,10 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     resolved_type = try_instantiate_template_type(unres, expr);
                 }
 
-                if (!resolved_type) {
+                if (!resolved_type && !callee->has_ast_template_args()) {
                     resolved_type = resolve_type_by_name(callee->get_name(), expr);
                 }
-                if (!resolved_type) {
+                if (!resolved_type && !callee->has_ast_template_args()) {
                     if (auto tpl_agg = find_template_aggregate(callee->get_name(), expr)) {
                         auto ctad = resolve_ctad(tpl_agg, expr.arguments(), expr, expr.first_lexeme());
                         if (ctad.success && ctad.concrete_struct_type) {
@@ -3094,29 +3094,29 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                 std::shared_ptr<type> resolved;
                 if (unres->has_template_args()) {
                     resolved = try_instantiate_template_type(unres, static_cast<const element&>(expr));
-                }
-                if (!resolved || !type::is_resolved(resolved)) {
+                } else {
                     resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
-                }
-                if (!resolved || !type::is_resolved(resolved)) {
-                    if (auto tpl_agg = find_template_aggregate(unres->type_id(), static_cast<const element&>(expr))) {
-                        auto ctad = resolve_ctad(tpl_agg, expr.uniform_ctor_args(), static_cast<const element&>(expr), expr.first_lexeme());
-                        if (ctad.success && ctad.concrete_struct_type) {
-                            resolved = ctad.concrete_struct_type;
+                    if (!resolved || !type::is_resolved(resolved)) {
+                        if (auto tpl_agg = find_template_aggregate(unres->type_id(), static_cast<const element&>(expr))) {
+                            auto ctad = resolve_ctad(tpl_agg, expr.uniform_ctor_args(), static_cast<const element&>(expr), expr.first_lexeme());
+                            if (ctad.success && ctad.concrete_struct_type) {
+                                resolved = ctad.concrete_struct_type;
+                            }
                         }
                     }
+                    if (!resolved || !type::is_resolved(resolved)) {
+                        auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
+                        if (imported_agg) resolved = imported_agg->get_struct_type();
+                    }
                 }
-                if (!resolved || !type::is_resolved(resolved)) {
-                    auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
-                    if (imported_agg) resolved = imported_agg->get_struct_type();
-                }
-                if (resolved && type::is_resolved(resolved)) {
+                if (resolved && (type::is_resolved(resolved)
+                    || (unres->has_template_args() && std::dynamic_pointer_cast<struct_type>(resolved)))) {
                     expr.allocated_type(resolved);
                     elem_type = resolved;
                 }
             }
         }
-        if (!type::is_resolved(elem_type)) {
+        if (!type::is_resolved(elem_type) && !std::dynamic_pointer_cast<struct_type>(elem_type)) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_TYPE_NOT_FOUND), expr.first_lexeme(),
                 "Cannot resolve element type of 'new' uniform array expression: type '{}' is unknown",
                 {elem_type ? elem_type->to_string() : "<null>"});
@@ -3250,18 +3250,24 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
         auto elem_type = expr.allocated_type();
         if (!type::is_resolved(elem_type)) {
             if (auto unres = std::dynamic_pointer_cast<unresolved_type>(elem_type)) {
-                auto resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
-                if (!resolved || !type::is_resolved(resolved)) {
-                    auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
-                    if (imported_agg) resolved = imported_agg->get_struct_type();
+                std::shared_ptr<type> resolved;
+                if (unres->has_template_args()) {
+                    resolved = try_instantiate_template_type(unres, static_cast<const element&>(expr));
+                } else {
+                    resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
+                    if (!resolved || !type::is_resolved(resolved)) {
+                        auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
+                        if (imported_agg) resolved = imported_agg->get_struct_type();
+                    }
                 }
-                if (resolved && type::is_resolved(resolved)) {
+                if (resolved && (type::is_resolved(resolved)
+                    || (unres->has_template_args() && std::dynamic_pointer_cast<struct_type>(resolved)))) {
                     expr.allocated_type(resolved);
                     elem_type = resolved;
                 }
             }
         }
-        if (!type::is_resolved(elem_type)) {
+        if (!type::is_resolved(elem_type) && !std::dynamic_pointer_cast<struct_type>(elem_type)) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_TYPE_NOT_FOUND), expr.first_lexeme(),
                 "Cannot resolve element type of 'new[]' expression: type '{}' is unknown",
                 {elem_type ? elem_type->to_string() : "<null>"});
@@ -3491,27 +3497,27 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
             // Try template instantiation first (e.g. new Node<int>(...))
             if (unres->has_template_args()) {
                 resolved = try_instantiate_template_type(unres, static_cast<const element&>(expr));
-            }
-            if (!resolved || !type::is_resolved(resolved)) {
+            } else {
                 resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
-            }
-            if (!resolved || !type::is_resolved(resolved)) {
-                if (auto tpl_agg = find_template_aggregate(unres->type_id(), static_cast<const element&>(expr))) {
-                    auto ctad = resolve_ctad(tpl_agg, expr.arguments(), static_cast<const element&>(expr), expr.first_lexeme());
-                    if (ctad.success && ctad.concrete_struct_type) {
-                        resolved = ctad.concrete_struct_type;
-                    } else if (!ctad.failure_reason.empty()) {
-                        throw_error(static_cast<unsigned int>(k::diag::template_diag::ERR_CTAD_NO_MATCH), expr.first_lexeme(),
-                            "Class template argument deduction failed for 'new {}': {}",
-                            {tpl_agg->get_short_name(), ctad.failure_reason});
+                if (!resolved || !type::is_resolved(resolved)) {
+                    if (auto tpl_agg = find_template_aggregate(unres->type_id(), static_cast<const element&>(expr))) {
+                        auto ctad = resolve_ctad(tpl_agg, expr.arguments(), static_cast<const element&>(expr), expr.first_lexeme());
+                        if (ctad.success && ctad.concrete_struct_type) {
+                            resolved = ctad.concrete_struct_type;
+                        } else if (!ctad.failure_reason.empty()) {
+                            throw_error(static_cast<unsigned int>(k::diag::template_diag::ERR_CTAD_NO_MATCH), expr.first_lexeme(),
+                                "Class template argument deduction failed for 'new {}': {}",
+                                {tpl_agg->get_short_name(), ctad.failure_reason});
+                        }
                     }
                 }
+                if (!resolved || !type::is_resolved(resolved)) {
+                    auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
+                    if (imported_agg) resolved = imported_agg->get_struct_type();
+                }
             }
-            if (!resolved || !type::is_resolved(resolved)) {
-                auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
-                if (imported_agg) resolved = imported_agg->get_struct_type();
-            }
-            if (resolved && type::is_resolved(resolved)) {
+            if (resolved && (type::is_resolved(resolved)
+                || (unres->has_template_args() && std::dynamic_pointer_cast<struct_type>(resolved)))) {
                 expr.allocated_type(resolved);
                 alloc_type = resolved;
             }

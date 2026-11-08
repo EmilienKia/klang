@@ -1915,6 +1915,8 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                             auto nested = try_instantiate_template_type(unres_arg, context_elem);
                             if (resolved_argument(nested)) {
                                 arg_type = nested;
+                            } else {
+                                return {};
                             }
                         }
                         // A bare template-parameter placeholder (e.g. 'I'/'O'/'T' used

@@ -370,11 +370,15 @@ void type_reference_resolver::resolve_variable_type(
         const element* var_elem = dynamic_cast<const element*>(&var);
         if (var_elem) {
             auto tpl_resolved = try_instantiate_template_type(unres_type, *var_elem);
-            if (tpl_resolved && type::is_resolved(tpl_resolved)) {
+            if (tpl_resolved && (type::is_resolved(tpl_resolved)
+                || std::dynamic_pointer_cast<struct_type>(tpl_resolved))) {
                 var.set_type(tpl_resolved);
                 return;
             }
         }
+        throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_VAR_TYPE_UNRESOLVED), var_lexeme,
+            "Unknown type '{}' for variable '{}': cannot resolve its template arguments",
+            {unres_type->type_id().to_string(), var.get_fq_name()});
     }
 
     // Step 5a: Qualified name resolution from root namespace (resolve_type_by_name)

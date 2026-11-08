@@ -2197,6 +2197,76 @@ TEST_CASE("imported generic template parameters reject invalid nested KDI types"
     )K", false, false), k::log::compiler_error, invalid_type);
 }
 
+TEST_CASE("constructor uses reject discarded explicit template arguments",
+          "[import][template][new][regression]") {
+    auto compile = [](const char* filename, const char* source) {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        compiler->set_file_resolver(resolver);
+        compiler->parse_source(filename, source, false, false);
+    };
+    REQUIRE_NOTHROW(compile("new_explicit_template_valid.k", R"K(
+        module new_explicit_template_valid;
+        template<typename T = int> struct Box {
+            Box() {}
+            Box(value: T) {}
+        }
+        use() {
+            new Box<int>(1);
+            new Box<>(1);
+            new Box<int>(1)[2];
+            new Box<int>[2];
+        }
+    )K"));
+
+    auto unresolved = Catch::Matchers::Predicate<k::log::compiler_error>(
+        [](const auto& error) {
+            return error.get_diagnostic().message.find("Cannot resolve") != std::string::npos;
+        }, "rejects an invalid explicit template type");
+    REQUIRE_THROWS_MATCHES(compile("new_nontemplate_single.k", R"K(
+        module new_nontemplate_single;
+        struct Plain { Plain(value: int) {} }
+        use() { new Plain<int>(1); }
+    )K"), k::log::compiler_error, unresolved);
+    REQUIRE_THROWS_MATCHES(compile("new_nontemplate_uniform.k", R"K(
+        module new_nontemplate_uniform;
+        struct Plain { Plain(value: int) {} }
+        use() { new Plain<int>(1)[2]; }
+    )K"), k::log::compiler_error, unresolved);
+    REQUIRE_THROWS_MATCHES(compile("new_nontemplate_array.k", R"K(
+        module new_nontemplate_array;
+        struct Plain { Plain() {} }
+        use() { new Plain<int>[2]; }
+    )K"), k::log::compiler_error, unresolved);
+    REQUIRE_THROWS_MATCHES(compile("new_wrong_template_arity.k", R"K(
+        module new_wrong_template_arity;
+        template<typename T> struct Box { Box(value: T) {} }
+        use() { new Box<int, long>(1); }
+    )K"), k::log::compiler_error, unresolved);
+    REQUIRE_THROWS_MATCHES(compile("new_unknown_template_argument.k", R"K(
+        module new_unknown_template_argument;
+        template<typename T> struct Box { Box(value: T) {} }
+        use() { new Box<Missing>(1); }
+    )K"), k::log::compiler_error, unresolved);
+    REQUIRE_THROWS_MATCHES(compile("new_invalid_nested_template_argument.k", R"K(
+        module new_invalid_nested_template_argument;
+        struct Plain {}
+        template<typename T> struct Box { Box() {} }
+        use() { new Box<Plain<int>>(); }
+    )K"), k::log::compiler_error, unresolved);
+    REQUIRE_THROWS_AS(compile("local_nontemplate_arguments.k", R"K(
+        module local_nontemplate_arguments;
+        struct Plain { Plain() {} }
+        use() { value: Plain<int>; }
+    )K"), k::log::compiler_error);
+    REQUIRE_THROWS_AS(compile("temporary_nontemplate_arguments.k", R"K(
+        module temporary_nontemplate_arguments;
+        struct Plain { Plain(value: int) {} }
+        use() { Plain<int>(1); }
+    )K"), k::log::compiler_error);
+}
+
 TEST_CASE("import member template — dependency preludes retain hosted and free overloads",
           "[import][template][member-template][ffi][private-dependency][regression]") {
     constexpr std::string_view library = R"K(

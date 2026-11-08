@@ -3850,7 +3850,7 @@ void type_reference_resolver::visit_variable_statement(variable_statement& var)
             }
         } else {
         auto unres_type = std::dynamic_pointer_cast<unresolved_type>(var.get_type());
-        if (unres_type) {
+        if (unres_type && !unres_type->has_template_args()) {
             std::shared_ptr<type> resolved;
             if (unres_type->type_id().has_root_prefix()) {
                 resolved = resolve_type_from_root(unres_type->type_id().without_root_prefix());
