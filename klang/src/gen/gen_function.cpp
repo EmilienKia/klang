@@ -1454,7 +1454,7 @@ void implementation_generator::visit_function(function &function) {
     llvm::Function* func = ensure_function_declared(function);
 
     auto previous_function = std::exchange(_current_function, function.shared_as<model::function>());
-    auto current_function_guard = llvm::make_scope_exit([&]() {
+    auto current_function_guard = k::make_scope_exit([&]() {
         _current_function = std::move(previous_function);
     });
     begin_function_debug_scope(function, func);
@@ -1462,7 +1462,7 @@ void implementation_generator::visit_function(function &function) {
         end_function_debug_scope();
     });
     auto previous_caught_metadata = std::exchange(_caught_exception_metadata, {});
-    auto caught_metadata_guard = llvm::make_scope_exit([&]() {
+    auto caught_metadata_guard = k::make_scope_exit([&]() {
         _caught_exception_metadata = std::move(previous_caught_metadata);
     });
 

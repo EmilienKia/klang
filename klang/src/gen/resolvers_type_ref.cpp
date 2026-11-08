@@ -33,9 +33,9 @@
 #include "../model/constant_evaluator.hpp"
 #include "../model/tools/kdi_type_converter.hpp"
 #include "../common/operator_names.hpp"
+#include "../common/llvm_scope_exit.hpp"
 #include "../parse/ast.hpp"
 #include <kdi.hpp>
-#include <llvm/ADT/ScopeExit.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <queue>
 #include <set>
@@ -131,7 +131,7 @@ std::shared_ptr<type> build_model_type_from_kdi_signature(const kdi::kdi_type& s
     }
 
     ctx->push_template_param_scope(param_names);
-    auto guard = llvm::make_scope_exit([&] { ctx->pop_template_param_scope(); });
+    auto guard = k::make_scope_exit([&] { ctx->pop_template_param_scope(); });
 
     return k::model::kdi_type_to_model_type(
         sig_type, owner, ctx, kdi_type_conversion::template_signature);
@@ -1772,7 +1772,7 @@ type_reference_resolver::ctad_resolution_result type_reference_resolver::resolve
     const bool imported_generic = template_info && template_info->is_generic
         && template_info->is_imported_signature_only;
     bool committed_usage = false;
-    auto clear_failed_usage = llvm::make_scope_exit([&] {
+    auto clear_failed_usage = k::make_scope_exit([&] {
         if (!imported_generic || committed_usage) return;
         _generic_constructor_usages.erase(&context_elem);
         if (auto site = dynamic_cast<const variable_definition*>(&context_elem))

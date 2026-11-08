@@ -24,6 +24,7 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "../common/llvm_scope_exit.hpp"
 #include "../common/operator_names.hpp"
 
 #include "../model/imported.hpp"
@@ -34,7 +35,6 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Verifier.h>
-#include <llvm/ADT/ScopeExit.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 
 #include <limits>
@@ -1403,7 +1403,7 @@ void implementation_generator::visit_enumeration(enumeration& en) {
     auto* previous_scope = std::exchange(_current_debug_scope, nullptr);
     auto previous_debug_loc = _builder->getCurrentDebugLocation();
     auto* previous_value = _value;
-    auto restore = llvm::make_scope_exit([&]() {
+    auto restore = k::make_scope_exit([&]() {
         _cleanup_lpad_stack = std::move(previous_cleanup);
         _landing_pad_stack = std::move(previous_catches);
         _caught_exception_metadata = std::move(previous_caught_metadata);
