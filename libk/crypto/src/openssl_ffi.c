@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <openssl/async.h>
 #include <openssl/err.h>
 #include <openssl/core_names.h>
 #include <openssl/evp.h>
@@ -671,7 +672,7 @@ fail:
 typedef struct {
     OSSL_LIB_CTX *libctx;
     cap_digest_snapshot *snapshot;
-    int hmac;
+    int kind;
     int status;
     atomic_uint references;
     atomic_int done;
@@ -686,13 +687,18 @@ static void cap_digest_job_release(cap_digest_job *job) {
 
 static void *cap_digest_worker(void *arg) {
     cap_digest_job *job = arg;
-    OSSL_LIB_CTX *previous = OSSL_LIB_CTX_set0_default(job->libctx);
+    OSSL_LIB_CTX *previous;
+
+    if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL) != 0) {
+        goto done;
+    }
+    previous = OSSL_LIB_CTX_set0_default(job->libctx);
 
     if (previous != NULL) {
         int selected = OSSL_LIB_CTX_set0_default(NULL) == job->libctx;
         if (cap_digest_errors(0, 0) == 0 && selected) {
-            job->snapshot = job->hmac ? cap_hmac_discover(&job->status)
-                                      : cap_digest_discover(&job->status);
+            job->snapshot = job->kind == 1 ? cap_hmac_discover(&job->status)
+                                             : cap_digest_discover(&job->status);
         }
         if (OSSL_LIB_CTX_set0_default(previous) != job->libctx) {
             __k_cap_digest_free(job->snapshot);
@@ -702,12 +708,13 @@ static void *cap_digest_worker(void *arg) {
     }
     OPENSSL_thread_stop_ex(job->libctx);
     OPENSSL_thread_stop();
+done:
     atomic_store_explicit(&job->done, 1, memory_order_release);
     cap_digest_job_release(job);
     return NULL;
 }
 
-static void *cap_digest_new(int *status, int hmac) {
+static void *cap_digest_new_impl(int *status, int kind) {
     cap_digest_job *job;
     cap_digest_snapshot *snapshot;
     pthread_t thread;
@@ -717,7 +724,7 @@ static void *cap_digest_new(int *status, int hmac) {
     }
     *status = -3;
     if (ERR_peek_last_error() == 0) {
-        return hmac ? cap_hmac_discover(status) : cap_digest_discover(status);
+        return kind == 1 ? cap_hmac_discover(status) : cap_digest_discover(status);
     }
 
     /*
@@ -735,7 +742,7 @@ static void *cap_digest_new(int *status, int hmac) {
         return NULL;
     }
     job->status = -3;
-    job->hmac = hmac;
+    job->kind = kind;
     atomic_init(&job->references, 2);
     atomic_init(&job->done, 0);
     if (pthread_create(&thread, NULL, cap_digest_worker, job) != 0) {
@@ -754,6 +761,37 @@ static void *cap_digest_new(int *status, int hmac) {
     job->snapshot = NULL;
     *status = job->status;
     cap_digest_job_release(job);
+    return snapshot;
+}
+
+static void *cap_digest_new(int *status, int kind) {
+    void *snapshot;
+    int old_cancel_state;
+
+    if (status == NULL) {
+        return NULL;
+    }
+    *status = -3;
+    /*
+     * An inline provider can pause an active ASYNC job. Cancellation state is
+     * thread-local, so changing it across that pause would affect the scheduler.
+     * Keep the original inline behavior; the isolated-worker path cannot pause
+     * the caller's job and remains cancellation-protected.
+     */
+    if (ASYNC_get_current_job() != NULL && ERR_peek_last_error() == 0) {
+        return cap_digest_new_impl(status, kind);
+    }
+    if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancel_state) != 0) {
+        return NULL;
+    }
+    /* A worker borrows the caller's context; keep it alive until work finishes. */
+    snapshot = cap_digest_new_impl(status, kind);
+    pthread_cleanup_push(__k_cap_digest_free, snapshot);
+    pthread_setcancelstate(old_cancel_state, NULL);
+    if (old_cancel_state == PTHREAD_CANCEL_ENABLE) {
+        pthread_testcancel();
+    }
+    pthread_cleanup_pop(0);
     return snapshot;
 }
 

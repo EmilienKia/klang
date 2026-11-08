@@ -254,6 +254,10 @@ sequences are `digestAlgorithms()`, `hmacDigestAlgorithms()`,
 Their values are string aliases:
 they can include supported extensions absent from the standard enums, and
 standard enum entries need not be available on every installation.
+Discovery normally uses the calling thread when its OpenSSL error queue is
+empty. Existing errors may force worker execution to preserve that queue, which
+can cause discovery to fail for thread-affine providers. The nondefault-context
+thread lifetime and cleanup requirements described above apply to discovery too.
 
 The global symmetric lists are **unions**, not a list of compatible
 combinations. Use `symmetricModes(algorithm, keyBits)` and

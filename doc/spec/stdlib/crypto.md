@@ -370,6 +370,11 @@ return owned `Sequence` values containing the corresponding string aliases.
 Names may include supported extensions that have no entry in the standard enums.
 `hmacDigestAlgorithms()` returns digest names actually witnessed with HMAC and
 a fixed 32-byte probe key. Other keys can be subject to provider restrictions.
+With an empty caller OpenSSL error queue, discovery normally uses the calling
+thread. Existing errors may force worker execution to preserve the queue and
+its marks, which can cause discovery to fail for thread-affine providers.
+Applications using nondefault contexts must also observe OpenSSL's per-thread
+context cleanup requirements for discovery.
 
 The global symmetric mode and padding sequences are unions, not a Cartesian
 product. `symmetricModes(algorithm, keyBits)` and

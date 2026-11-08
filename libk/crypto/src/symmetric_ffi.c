@@ -11,6 +11,7 @@
 #define _FILE_OFFSET_BITS 64
 #include "ccm_engine.h"
 
+#include <openssl/async.h>
 #include <openssl/crypto.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -467,7 +468,7 @@ static int probe_failure_status(unsigned long previous_error, int discovery) {
 
 static EVP_CIPHER *fetch_cipher(const char *name, int discovery,
                                 unsigned long previous_error, int *status) {
-    /* Discovery runs on an isolated worker, so its entire error queue can be inspected. */
+    /* Discovery runs with an initially empty error queue. */
     if (discovery && ERR_peek_error() != 0) return NULL;
     EVP_CIPHER *cipher = EVP_CIPHER_fetch(NULL, name, NULL);
     if (!discovery) {
@@ -1494,9 +1495,11 @@ static void *capability_worker(void *arg) {
     return NULL;
 }
 
-void *__k_cap_symmetric_new(int *status) {
+static void *capability_new_impl(int *status) {
     if (!status) return NULL;
     *status = OPERATION;
+    if (ERR_peek_error() == 0) return build_symmetric_capabilities(status);
+
     OSSL_LIB_CTX *context = OSSL_LIB_CTX_set0_default(NULL);
     if (!context) return NULL;
     capability_work work = {
@@ -1523,6 +1526,23 @@ void *__k_cap_symmetric_new(int *status) {
     pthread_mutex_destroy(&work.mutex);
     *status = work.status;
     return work.result;
+}
+
+void *__k_cap_symmetric_new(int *status) {
+    void *result;
+    int old_cancel_state;
+    if (!status) return NULL;
+    *status = OPERATION;
+    if (ASYNC_get_current_job() != NULL && ERR_peek_error() == 0)
+        return capability_new_impl(status);
+    if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancel_state) != 0)
+        return NULL;
+    result = capability_new_impl(status);
+    pthread_cleanup_push(__k_cap_symmetric_free, result);
+    pthread_setcancelstate(old_cancel_state, NULL);
+    if (old_cancel_state == PTHREAD_CANCEL_ENABLE) pthread_testcancel();
+    pthread_cleanup_pop(0);
+    return result;
 }
 
 unsigned int __k_cap_symmetric_count(const void *handle) {

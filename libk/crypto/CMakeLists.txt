@@ -284,7 +284,7 @@ libk_crypto_add_test(libk-crypto-hmac-tests 120
 target_include_directories(libk-crypto-hmac-tests PRIVATE ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(libk-crypto-hmac-tests PRIVATE ${OPENSSL_CRYPTO_LIBRARY})
 libk_crypto_add_test(libk-crypto-hkdf-tests 120
-    tests/test-hkdf.cpp)
+    tests/test-hkdf.cpp tests/test-hkdf-capabilities.cpp)
 target_include_directories(libk-crypto-hkdf-tests PRIVATE ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(libk-crypto-hkdf-tests PRIVATE ${OPENSSL_CRYPTO_LIBRARY})
 libk_crypto_add_test(libk-crypto-symmetric-tests 120
