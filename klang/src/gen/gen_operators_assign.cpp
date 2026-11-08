@@ -1603,6 +1603,9 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         auto& llvm_ctx = _builder->getContext();
         auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
 
+        call_argument_cleanup_scope incoming(*this, true);
+        right = incoming.track(target_type, right);
+
         // Step 3: For owner assignment: emit owner_move + null the source
         // Disarm the old owner before destruction, which can throw.
         auto own_type = std::dynamic_pointer_cast<owner_type>(target_type);
@@ -1618,6 +1621,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
             new_ptr = llvm::ConstantPointerNull::get(ptr_ty);
         }
         _builder->CreateStore(new_ptr, left);
+        incoming.transfer();
         _value = left;
         return;
     }

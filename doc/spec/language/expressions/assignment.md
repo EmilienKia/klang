@@ -124,6 +124,11 @@ source to the destination.  The source owner is set to `null` after the transfer
 destination already held an object, that object is **deleted first** (destructor called +
 `free` issued).
 
+If destroying the previous object throws after the incoming owner has been acquired,
+the destination remains null and the incoming owner is destroyed during unwinding.
+A moved-from source remains null. If evaluating the right-hand side throws before
+an incoming owner is acquired, the assignment has not yet destroyed the destination.
+
 ```k
 a : Foo! = new Foo(1);   // a owns Foo(1)
 b : Foo!;                // b is null

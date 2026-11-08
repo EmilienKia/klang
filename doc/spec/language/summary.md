@@ -1557,6 +1557,8 @@ namespace lang {
 
 - **Scope-based deletion**: non-null owner on scope exit → auto-delete.
 - **Assignment**: the previous object is destroyed before transfer.
+- If destroying the previous object throws after acquiring the incoming owner,
+  the destination stays null and the incoming owner is cleaned up during unwinding.
 - **`= null`**: destroys the object and sets the owner to null.
 - **Unassigned return**: warning `0x0E05`, object destroyed immediately.
 

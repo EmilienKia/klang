@@ -651,6 +651,117 @@ TEST_CASE("Exception: by-value argument copies unwind before callee entry and cl
     }
 }
 
+TEST_CASE("Owner reassignment cleans the incoming value when destruction throws",
+          "[gen][exceptions][owner][assignment][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module owner_reassignment_unwind;
+        oldDrops: int = 0;
+        incomingDrops: int = 0;
+
+        struct Probe {
+            id: int;
+            Probe(value: int): id(value) {}
+            ~Probe() {
+                if (id == 1) { ++oldDrops; throw FatalError(718); }
+                ++incomingDrops;
+            }
+        }
+
+        moved(): int {
+            oldDrops = 0;
+            incomingDrops = 0;
+            target: Probe! = new Probe(1);
+            source: Probe! = new Probe(2);
+            caught: bool = false;
+            try { target = source; }
+            catch (e: FatalError&) { caught = e.getCode() == 718; }
+            return caught && target == null && source == null &&
+                oldDrops == 1 && incomingDrops == 1 ? 42 : -1;
+        }
+
+        temporary(): int {
+            oldDrops = 0;
+            incomingDrops = 0;
+            target: Probe! = new Probe(1);
+            caught: bool = false;
+            try { target = new Probe(2); }
+            catch (e: FatalError&) { caught = e.getCode() == 718; }
+            return caught && target == null &&
+                oldDrops == 1 && incomingDrops == 1 ? 42 : -1;
+        }
+
+        failedSource(): Probe! { throw FatalError(719); }
+
+        sourceThrows(): int {
+            oldDrops = 0;
+            incomingDrops = 0;
+            target: Probe! = new Probe(2);
+            caught: bool = false;
+            try { target = failedSource(); }
+            catch (e: FatalError&) { caught = e.getCode() == 719; }
+            if (!caught || target == null || incomingDrops != 0) return -1;
+            target = null;
+            return incomingDrops == 1 ? 42 : -2;
+        }
+
+        successful(): int {
+            oldDrops = 0;
+            incomingDrops = 0;
+            target: Probe! = new Probe(2);
+            source: Probe! = new Probe(3);
+            target = source;
+            if (source != null || target == null || incomingDrops != 1) return -1;
+            target = target;
+            if (target == null || incomingDrops != 1) return -2;
+            target = null;
+            return target == null && incomingDrops == 2 ? 42 : -3;
+        }
+    )SRC");
+    REQUIRE(jit);
+    for (const auto* name : {"moved", "temporary", "sourceThrows", "successful"}) {
+        INFO(name);
+        auto run = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(run);
+        int result = 0;
+        REQUIRE_NOTHROW(result = run());
+        CHECK(result == 42);
+    }
+}
+
+TEST_CASE("Owner reassignment unwinds an upcast incoming owner",
+          "[gen][exceptions][owner][assignment][upcast][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module owner_reassignment_upcast_unwind;
+        baseDrops: int = 0;
+        derivedDrops: int = 0;
+        class Base {
+            id: int;
+            Base(value: int): id(value) {}
+            ~Base() {
+                ++baseDrops;
+                if (id == 1) throw FatalError(718);
+            }
+        }
+        class Derived : public Base {
+            Derived(): Base(2) {}
+            ~Derived() { ++derivedDrops; }
+        }
+        test(): int {
+            target: Base! = new Base(1);
+            source: Derived! = new Derived();
+            caught: bool = false;
+            try { target = source; }
+            catch (e: FatalError&) { caught = e.getCode() == 718; }
+            return caught && target == null && source == null &&
+                baseDrops == 2 && derivedDrops == 1 ? 42 : -1;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(run);
+    CHECK(run() == 42);
+}
+
 TEST_CASE("Exception: throwing destruction clears moved owners and reaches the local handler",
           "[gen][exceptions][owner][lambda][destructor-throw][regression]") {
     auto jit = gen_jit(R"SRC(

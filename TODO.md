@@ -100,37 +100,11 @@
       before repairing the injection in
       `klang/src/gen/gen_constructor.cpp`.
 
-- [ ] **Fix owner reassignment when destruction throws.** Source inspection
-      shows that `klang/src/gen/gen_operators_assign.cpp` evaluates a moved
-      incoming owner before destroying the destination without guarding it if
-      that destructor throws. The move clears the source in
-      `klang/src/gen/gen_expr_memory.cpp`. The reproduction below fails:
-      the exception is caught, both owners are null and the old destructor
-      ran once, but the incoming destructor did not run exactly once.
-      Determine whether it leaks or is destroyed more than once, then preserve
-      exactly-once cleanup on success and failure.
-      ```k
-      module owner_throw_repro;
-      oldDrops: int = 0;
-      incomingDrops: int = 0;
-      struct Probe {
-          id: int;
-          Probe(i: int): id(i) {}
-          ~Probe() {
-              if (id == 1) { ++oldDrops; throw FatalError(718); }
-              ++incomingDrops;
-          }
-      }
-      test(): int {
-          target: Probe! = new Probe(1);
-          source: Probe! = new Probe(2);
-          caught: bool = false;
-          try { target = source; }
-          catch (e: FatalError&) { caught = e.getCode() == 718; }
-          return caught && target == null && source == null &&
-              oldDrops == 1 && incomingDrops == 1 ? 42 : -1;
-      }
-      ```
+- [x] **Guard incoming owners during reassignment.** If the old owner's
+      destructor throws, the moved or newly allocated incoming owner is
+      cleaned up during unwinding. Regression tests cover the source and
+      destination states, normal and self-assignment, a throwing RHS, and an
+      upcast incoming owner.
 
 - [ ] **Check standalone virtual-base constructor contracts.** In
       `klang/src/gen/gen_constructor.cpp`, base-initializer injection skips a
@@ -456,8 +430,8 @@
       const-qualified fields, arrays, temporaries, and imported wrappers with
       private layouts. In particular, do not raw-copy an unconstructed
       aggregate that may contain indirectly initialized owned state.
-      The general owner-reassignment unwind bug above blocks safe handling of
-      throwing owner replacement.
+      Throwing owner replacement still requires coverage for these distinct
+      union ownership paths.
 
 - [ ] **Language FFI reference still confuses UTF-32 characters with C byte strings.**
       `doc/spec/language/functions/ffi.md`, sections 2-5, describes K
@@ -1870,8 +1844,8 @@
     capability discovery and documentation are implemented. The full
     incremental build, 27 HKDF tests, focused compiler/KDI regressions and
     the guide example have passed; PRK ownership is not yet fully safe.
-  - [ ] Fix the owner-reassignment unwind bug and complete union ownership
-    and imported-layout handling listed in the language bugs above.
+  - [ ] Complete union ownership and imported-layout handling listed in the
+    language bugs above.
   - [ ] Rebuild affected artifacts and validate the final compiler, KDI, HKDF
     and guide changes, including array and exceptional-cleanup regressions.
     The previously unavailable union-array detailed rerun has not passed and
