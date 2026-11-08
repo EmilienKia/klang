@@ -2197,6 +2197,122 @@ TEST_CASE("imported generic template parameters reject invalid nested KDI types"
     )K", false, false), k::log::compiler_error, invalid_type);
 }
 
+TEST_CASE("forward method calls resolve complete exception contracts",
+          "[import][throws][resolution][regression]") {
+    auto compile = [](const char* filename, const char* source) {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        compiler->set_file_resolver(resolver);
+        compiler->parse_source(filename, source, false, false);
+    };
+
+    REQUIRE_NOTHROW(compile("forward_contract_caught.k", R"K(
+        module forward_contract_caught;
+        class First : public Exception {}
+        class Second : public Exception {}
+        class Worker {
+            static use(runner: Runner*) {
+                try { runner->run(); }
+                catch (error: First&) {}
+                catch (error: Second&) {}
+            }
+        }
+        interface Runner { run(): void throws(First, Second); }
+    )K"));
+    REQUIRE_NOTHROW(compile("forward_contract_declared.k", R"K(
+        module forward_contract_declared;
+        class First : public Exception {}
+        class Second : public Exception {}
+        class Worker {
+            static use(runner: Runner*) throws(First, Second) { runner->run(); }
+        }
+        interface Runner { run(): void throws(First, Second); }
+    )K"));
+
+    auto unhandled = Catch::Matchers::Predicate<k::log::compiler_error>(
+        [](const auto& error) {
+            return error.get_diagnostic().message.find("neither caught nor declared") != std::string::npos;
+        }, "rejects an unhandled exception from a later method");
+    REQUIRE_THROWS_MATCHES(compile("forward_contract_unhandled.k", R"K(
+        module forward_contract_unhandled;
+        class First : public Exception {}
+        class Second : public Exception {}
+        class Worker {
+            static use(runner: Runner*) {
+                try { runner->run(); }
+                catch (error: First&) {}
+            }
+        }
+        interface Runner { run(): void throws(First, Second); }
+    )K"), k::log::compiler_error, unhandled);
+
+    auto missing = Catch::Matchers::Predicate<k::log::compiler_error>(
+        [](const auto& error) {
+            return error.get_diagnostic().code
+                    == static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND)
+                && std::string(error.what()).find("Cannot resolve type 'Missing'") != std::string::npos;
+        }, "rejects an unresolved entry in a later method's exception contract");
+    REQUIRE_THROWS_MATCHES(compile("forward_contract_missing.k", R"K(
+        module forward_contract_missing;
+        class First : public Exception {}
+        class Worker {
+            static use(runner: Runner*) {
+                try { runner->run(); }
+                catch (error: First&) {}
+            }
+        }
+        interface Runner { run(): void throws(First, Missing); }
+    )K"), k::log::compiler_error, missing);
+}
+
+TEST_CASE("forward and resolved throws contracts use the callee lexical scope",
+          "[import][throws][resolution][regression]") {
+    auto compile = [](const char* filename, const char* source) {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        compiler->set_file_resolver(resolver);
+        compiler->parse_source(filename, source, false, false);
+    };
+    REQUIRE_NOTHROW(compile("forward_contract_shadowed.k", R"K(
+        module forward_contract_shadowed;
+        namespace outer { class Failure : public Exception {} }
+        namespace inner {
+            class Failure : public Exception {}
+            class Before {
+                static use(runner: Runner*) {
+                    try { runner->run(); } catch (error: inner::Failure&) {}
+                }
+            }
+            interface Runner { run(): void throws(Failure); }
+            class After {
+                static use(runner: Runner*) {
+                    try { runner->run(); } catch (error: inner::Failure&) {}
+                }
+            }
+        }
+    )K"));
+
+    auto unhandled = Catch::Matchers::Predicate<k::log::compiler_error>(
+        [](const auto& error) {
+            return error.get_diagnostic().message.find("neither caught nor declared") != std::string::npos;
+        }, "rejects a catch for a different homonymous exception");
+    REQUIRE_THROWS_MATCHES(compile("forward_contract_wrong_shadow.k", R"K(
+        module forward_contract_wrong_shadow;
+        namespace outer { class Failure : public Exception {} }
+        namespace inner {
+            class Failure : public Exception {}
+            class Before {
+                static use(runner: Runner*) {
+                    try { runner->run(); } catch (error: outer::Failure&) {}
+                }
+            }
+            interface Runner { run(): void throws(Failure); }
+        }
+    )K"), k::log::compiler_error, unhandled);
+}
+
 TEST_CASE("constructor uses reject discarded explicit template arguments",
           "[import][template][new][regression]") {
     auto compile = [](const char* filename, const char* source) {

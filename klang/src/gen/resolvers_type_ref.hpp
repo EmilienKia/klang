@@ -473,12 +473,18 @@ protected:
      */
     void check_throw_contract(const std::shared_ptr<type>& thrown_type, const lex::opt_any_lexeme& lexeme);
 
+    std::vector<std::shared_ptr<type>> resolve_raw_function_throws(
+        const function& fn, const lex::opt_any_lexeme& lexeme);
+
     /**
      * Validate that all exception types declared by a called function are handled
      * (either caught by enclosing try-catch or declared in the caller's throws clause).
      * Emits ERR_UNCAUGHT_EXCEPTION for each unhandled type.
      */
     void check_call_contract(const function& called_func, const lex::opt_any_lexeme& lexeme);
+    void check_call_exception_types(const function& called_func,
+                                    const std::vector<std::shared_ptr<type>>& exceptions,
+                                    const lex::opt_any_lexeme& lexeme);
 
     void visit_unit(unit&) override;
 

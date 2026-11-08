@@ -2448,6 +2448,49 @@ void type_reference_resolver::check_throw_contract(
                 {current_func->get_short_name(), thrown_agg->get_short_name()});
 }
 
+std::vector<std::shared_ptr<type>> type_reference_resolver::resolve_raw_function_throws(
+    const function& fn, const lex::opt_any_lexeme& lexeme)
+{
+    std::vector<std::shared_ptr<type>> exceptions;
+    exceptions.reserve(fn.get_throws_spec_raw().size());
+    for (const auto& raw_name : fn.get_throws_spec_raw()) {
+        auto throws_type = resolve_type_by_name(k::name::from(raw_name), fn);
+        if (!throws_type) {
+            auto agg = scope_lookup::lookup_structure_or_import(
+                _unit, _context, std::const_pointer_cast<element>(fn.shared_as<const element>()), raw_name);
+            if (agg) {
+                throws_type = agg->get_struct_type();
+                if (!throws_type) {
+                    auto st = std::make_shared<struct_type>(agg->get_short_name(), agg);
+                    _context->add_struct(st);
+                    agg->set_struct_type(st);
+                    throws_type = std::move(st);
+                }
+            }
+        }
+        if (!throws_type || type::contains_unresolved(throws_type)) {
+            throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND),
+                lexeme, "Cannot resolve type '{}' in throws clause of function '{}'",
+                {raw_name, fn.get_short_name()});
+        }
+
+        auto agg = get_exception_aggregate(type::canonical(throws_type));
+        auto root = _unit.get_root_namespace();
+        auto k_ns = root ? root->get_child_namespace("k") : nullptr;
+        auto throwable = k_ns ? k_ns->get_aggregate("Throwable") : nullptr;
+        if (!throwable) {
+            throwable = _unit.get_or_create_imported_aggregate(k::name(false, {"k", "Throwable"}), _context);
+        }
+        if (!agg || (throwable && agg != throwable && !agg->is_derived_from(throwable))) {
+            throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_NOT_EXCEPTION_TYPE),
+                lexeme, "Type '{}' in throws clause of function '{}' does not derive from ::k::Throwable",
+                {raw_name, fn.get_short_name()});
+        }
+        exceptions.push_back(std::move(throws_type));
+    }
+    return exceptions;
+}
+
 void type_reference_resolver::check_call_contract(
     const function& called_func,
     const lex::opt_any_lexeme& lexeme)
@@ -2459,10 +2502,42 @@ void type_reference_resolver::check_call_contract(
     // Only check if the called function has a throws spec
     if (!called_func.has_throws_spec()) return;
 
+    const auto& raw_types = called_func.get_throws_spec_raw();
+    const auto& resolved_types = called_func.get_throws_spec();
+    if (!raw_types.empty() && raw_types.size() != resolved_types.size()) {
+        // A call can precede the callee's type-reference visit.
+        auto exceptions = resolve_raw_function_throws(called_func, lexeme);
+        exceptions.insert(exceptions.end(), resolved_types.begin(), resolved_types.end());
+        check_call_exception_types(called_func, exceptions, lexeme);
+        return;
+    }
+
+    check_call_exception_types(called_func, resolved_types, lexeme);
+}
+
+void type_reference_resolver::check_call_exception_types(
+    const function& called_func,
+    const std::vector<std::shared_ptr<type>>& exceptions,
+    const lex::opt_any_lexeme& lexeme)
+{
+    if (_function_stack.empty() || !_function_stack.back()) {
+        if (!exceptions.empty()) {
+            throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_UNCAUGHT_EXCEPTION),
+                lexeme, "Cannot check exception contract of '{}' outside a function",
+                {called_func.get_fq_name()});
+        }
+        return;
+    }
+    auto& current_func = _function_stack.back();
+
     // For each exception type declared by the called function, check if it's handled
-    for (const auto& exc_type : called_func.get_throws_spec()) {
-        auto exc_agg = get_exception_aggregate(exc_type);
-        if (!exc_agg) continue;
+    for (const auto& exc_type : exceptions) {
+        auto exc_agg = get_exception_aggregate(type::canonical(exc_type));
+        if (!exc_agg) {
+            throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND),
+                lexeme, "Cannot resolve exception type '{}' in contract of '{}'",
+                {exc_type ? exc_type->to_string() : std::string("<unknown>"), called_func.get_fq_name()});
+        }
 
         // Caught by enclosing try-catch?
         if (is_exception_caught_by_try_catch(exc_agg)) continue;
