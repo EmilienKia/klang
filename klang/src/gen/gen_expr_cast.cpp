@@ -508,9 +508,8 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
 
             // No casting operator found: fall back to ref<T> → T load
             if (type::is_reference(source_type)) {
-                auto deref = load_value_expression::make_shared(sub_expr->shared_as<expression>());
+                auto deref = adapt_reference_load_value(sub_expr->shared_as<expression>());
                 expr.assign(deref);
-                deref->set_type(source_type->get_subtype());
             } else if (type::is_drain(source_type)
                        && type::are_equal(type::canonical(type::remove_const(source_type->get_subtype())),
                                           type::canonical(type::remove_const(target_type)))) {

@@ -317,6 +317,251 @@ TEST_CASE("KDI completes late aliases in imported function and method contracts"
     }
 }
 
+TEST_CASE("KDI preserves deleted aggregate copy operations", "[import][copy][delete][regression]") {
+    TmpKdi lib(R"K(
+        module noncopyapi;
+        public final class PrivateKey {
+        private:
+            handle: int* = null;
+            PrivateKey(other: const PrivateKey&) -> delete;
+            operator =(other: const PrivateKey&) -> delete;
+        public:
+            PrivateKey() {}
+            ~PrivateKey() {}
+        }
+        public final class PublicKey {
+        public:
+            PublicKey() {}
+            PublicKey(other: const PublicKey&) -> delete;
+            operator =(other: const PublicKey&) -> delete;
+            operator =(value: int): PublicKey& { return this; }
+        }
+        public struct Value {
+            Value() {}
+            Value(other: const Value&) -> delete;
+            operator =(other: const Value&) -> delete;
+        }
+        public final class Mixed {
+        private:
+            Mixed(other: const Mixed&) -> delete;
+        public:
+            Mixed() {}
+            Mixed(other: Mixed&) {}
+        }
+        public final class BothDeleted {
+        private:
+            BothDeleted(other: BothDeleted&) -> delete;
+            BothDeleted(other: const BothDeleted&) -> delete;
+        public:
+            BothDeleted() {}
+        }
+        public final class Movable {
+        private:
+            Movable(other: const Movable&) -> delete;
+        public:
+            Movable() {}
+            Movable(other: Movable#) {}
+        }
+    )K");
+    auto metadata = kdi::kdi_read_cbor_file(lib.kdi_path);
+    for (const auto& name : {"PrivateKey", "PublicKey", "Value"}) {
+        auto it = std::find_if(metadata.unit.root_ns.aggregates.begin(),
+            metadata.unit.root_ns.aggregates.end(),
+            [&](const auto& agg) { return agg.name == name; });
+        REQUIRE(it != metadata.unit.root_ns.aggregates.end());
+        const bool is_private = std::string(name) == "PrivateKey";
+        auto ctor = std::find_if(it->constructors.begin(), it->constructors.end(),
+            [](const auto& c) { return c.is_copy_constructor; });
+        REQUIRE(ctor != it->constructors.end());
+        CHECK(ctor->is_deleted);
+        CHECK(ctor->is_private == is_private);
+        if (is_private) CHECK(ctor->visibility == kdi::kdi_visibility::protected_);
+        auto method = std::find_if(it->methods.begin(), it->methods.end(),
+            [](const auto& m) { return m.is_operator && m.is_deleted; });
+        REQUIRE(method != it->methods.end());
+        CHECK(method->is_private == is_private);
+        if (is_private) CHECK(method->visibility == kdi::kdi_visibility::protected_);
+    }
+    for (const auto& name : {"Mixed", "BothDeleted"}) {
+        auto it = std::find_if(metadata.unit.root_ns.aggregates.begin(),
+            metadata.unit.root_ns.aggregates.end(),
+            [&](const auto& agg) { return agg.name == name; });
+        REQUIRE(it != metadata.unit.root_ns.aggregates.end());
+        CHECK(std::count_if(it->constructors.begin(), it->constructors.end(),
+            [](const auto& ctor) { return ctor.is_copy_constructor; }) == 2);
+        CHECK(std::count_if(it->constructors.begin(), it->constructors.end(),
+            [](const auto& ctor) { return ctor.is_copy_constructor && ctor.is_deleted && ctor.is_private; })
+            == (std::string(name) == "Mixed" ? 1 : 2));
+    }
+
+    for (const auto& name : {"PrivateKey", "PublicKey", "Value"}) {
+        for (const auto& body : {"copy: noncopyapi::TYPE = p;",
+                                 "copy: noncopyapi::TYPE(p);",
+                                 "copy: noncopyapi::TYPE; copy = p;"}) {
+          for (const auto& qualifier : {"const ", ""}) {
+            std::string statement(body);
+            statement.replace(statement.find("TYPE"), 4, name);
+            std::string source = "module noncopyconsumer; import noncopyapi; "
+                "test(p: " + std::string(qualifier) + "noncopyapi::" + std::string(name) + "&): int { "
+                + statement + " return 0; }";
+            auto compiler = k::compiler::create();
+            auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+            resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+            compiler->set_file_resolver(resolver);
+            INFO(name);
+            INFO(qualifier);
+            INFO(statement);
+            REQUIRE_THROWS_MATCHES(compiler->parse_source("noncopyconsumer.k", source),
+                k::log::compiler_error,
+                Catch::Matchers::Predicate<k::log::compiler_error>(
+                    [](const auto& error) {
+                        return error.get_diagnostic().message.find("deleted") != std::string::npos;
+                    }, "deleted copy operation"));
+          }
+        }
+    }
+
+    for (const auto* body : {
+             "test(p: const noncopyapi::PrivateKey&): int { value: Storage(p); return 0; }",
+             "test(p: noncopyapi::PrivateKey&): int { value: Storage(p); return 0; }",
+             "test(p: const noncopyapi::PrivateKey&): int { use(Storage(p)); return 0; }",
+             "test(p: const noncopyapi::PrivateKey&): int { useKey(noncopyapi::PrivateKey(p)); return 0; }",
+             "test(p: const noncopyapi::PrivateKey&): int { useKey((noncopyapi::PrivateKey) p); return 0; }",
+             "test(value: Storage&): int { copy: noncopyapi::PrivateKey = (noncopyapi::PrivateKey) value; return 0; }",
+             "test(value: Storage&): int { copy: noncopyapi::PrivateKey = value; return 0; }",
+             "test(value: Storage&): int { return useKey(value); }",
+             "test(p: noncopyapi::PrivateKey&): int { useKey(#p); return 0; }",
+             "test(p: noncopyapi::PrivateKey#): int { useKey(p); return 0; }",
+             "test(p: noncopyapi::PrivateKey&): noncopyapi::PrivateKey { return #p; }",
+             "test(p: noncopyapi::PrivateKey&): int { useKey((noncopyapi::PrivateKey) #p); return 0; }",
+             "test(p: noncopyapi::PrivateKey&): int { value: Storage(#p); return 0; }",
+             "test(p: noncopyapi::PrivateKey&): int { d: noncopyapi::PrivateKey# = #p; value: Storage(d); return 0; }",
+             "test(p: noncopyapi::PrivateKey&): int { use(Storage(#p)); return 0; }"}) {
+        std::string source = R"K(
+            module unioncopyconsumer;
+            import noncopyapi;
+            union Storage { key: noncopyapi::PrivateKey; number: int; }
+            use(value: Storage) {}
+            useKey(value: noncopyapi::PrivateKey): int { return 0; }
+        )K";
+        source += body;
+        auto union_compiler = k::compiler::create();
+        auto union_resolver = std::make_shared<k::path_lookup_file_resolver>();
+        union_resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+        union_compiler->set_file_resolver(union_resolver);
+        INFO(body);
+        REQUIRE_THROWS_MATCHES(union_compiler->parse_source("unioncopyconsumer.k", source),
+            k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>(
+                [](const auto& error) {
+                    return error.get_diagnostic().message.find("deleted") != std::string::npos;
+                }, "deleted union alternative copy"));
+    }
+
+    {
+        auto union_compiler = k::compiler::create();
+        auto union_resolver = std::make_shared<k::path_lookup_file_resolver>();
+        union_resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+        union_compiler->set_file_resolver(union_resolver);
+        REQUIRE_NOTHROW(union_compiler->parse_source("unionreference.k", R"K(
+            module unionreference;
+            import noncopyapi;
+            union Storage { key: noncopyapi::PrivateKey; number: int; }
+            test(value: Storage&): int {
+                key: noncopyapi::PrivateKey& = (noncopyapi::PrivateKey&) value;
+                return 0;
+            }
+        )K"));
+    }
+
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+    compiler->set_file_resolver(resolver);
+    REQUIRE_NOTHROW(compiler->parse_source("noncopyconsumer.k", R"K(
+        module noncopyconsumer; import noncopyapi;
+        test(): int { key: noncopyapi::PublicKey; key = 7; return 0; }
+    )K", false, false));
+
+    auto mixed_compiler = k::compiler::create();
+    auto mixed_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    mixed_resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+    mixed_compiler->set_file_resolver(mixed_resolver);
+    REQUIRE_NOTHROW(mixed_compiler->parse_source("mixedconsumer.k", R"K(
+        module mixedconsumer; import noncopyapi;
+        struct Holder {
+            value: noncopyapi::Mixed;
+            Holder(p: noncopyapi::Mixed&) : value(p) {}
+        }
+        consume(value: noncopyapi::Mixed): int { return 0; }
+        test(p: noncopyapi::Mixed&): int {
+            copy: noncopyapi::Mixed = p;
+            holder: Holder(p);
+            return consume(p);
+        }
+    )K"));
+    CHECK_FALSE(mixed_compiler->has_compilation_error());
+
+    auto movable_compiler = k::compiler::create();
+    auto movable_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    movable_resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+    movable_compiler->set_file_resolver(movable_resolver);
+    REQUIRE_NOTHROW(movable_compiler->parse_source("movableconsumer.k", R"K(
+        module movableconsumer; import noncopyapi;
+        consume(value: noncopyapi::Movable) {}
+        test(p: noncopyapi::Movable&) { consume(#p); }
+    )K"));
+
+    auto mixed_union_compiler = k::compiler::create();
+    auto mixed_union_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    mixed_union_resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+    mixed_union_compiler->set_file_resolver(mixed_union_resolver);
+    REQUIRE_NOTHROW(mixed_union_compiler->parse_source("mixedunion.k", R"K(
+        module mixedunion; import noncopyapi;
+        union Storage { value: noncopyapi::Mixed; number: int; }
+        test(p: noncopyapi::Mixed&): int {
+            storage: Storage(p);
+            copy: noncopyapi::Mixed = (noncopyapi::Mixed) storage;
+            return 0;
+        }
+    )K"));
+
+    auto const_compiler = k::compiler::create();
+    auto const_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    const_resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+    const_compiler->set_file_resolver(const_resolver);
+    REQUIRE_THROWS_MATCHES(const_compiler->parse_source("mixedconst.k", R"K(
+        module mixedconst; import noncopyapi;
+        test(p: const noncopyapi::Mixed&): int { copy: noncopyapi::Mixed = p; return 0; }
+    )K"), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>(
+            [](const auto& error) {
+                return error.get_diagnostic().message.find("deleted") != std::string::npos;
+            }, "selected deleted copy constructor"));
+
+    // Older KDI producers could export a public deleted constructor without
+    // setting its copy flag. Its resolved signature must still prohibit copying.
+    for (auto& agg : metadata.unit.root_ns.aggregates) {
+        if (agg.name != "PublicKey") continue;
+        for (auto& ctor : agg.constructors) ctor.is_copy_constructor = false;
+    }
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+    auto legacy_compiler = k::compiler::create();
+    auto legacy_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    legacy_resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+    legacy_compiler->set_file_resolver(legacy_resolver);
+    REQUIRE_THROWS_MATCHES(legacy_compiler->parse_source("legacyconsumer.k", R"K(
+        module legacyconsumer; import noncopyapi;
+        test(p: const noncopyapi::PublicKey&): int {
+            copy: noncopyapi::PublicKey = p; return 0;
+        }
+    )K"), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>(
+            [](const auto& error) {
+                return error.get_diagnostic().message.find("deleted") != std::string::npos;
+            }, "deleted copy operation"));
+}
+
 TEST_CASE("Imported opaque Counter rejects tutorial copy probes", "[import][copy][delete][regression]") {
     for (const auto* kind : {"final class", "struct"}) {
         std::string producer = std::string(R"K(
