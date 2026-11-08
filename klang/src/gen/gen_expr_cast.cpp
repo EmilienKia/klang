@@ -479,6 +479,10 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                 auto deref = load_value_expression::make_shared(sub_expr->shared_as<expression>());
                 expr.assign(deref);
                 deref->set_type(source_type->get_subtype());
+            } else if (type::is_drain(source_type)
+                       && type::are_equal(type::canonical(type::remove_const(source_type->get_subtype())),
+                                          type::canonical(type::remove_const(target_type)))) {
+                expr.assign(adapt_reference_load_value(sub_expr->shared_as<expression>()));
             }
         }
     }

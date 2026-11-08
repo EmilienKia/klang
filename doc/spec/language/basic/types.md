@@ -629,6 +629,10 @@ test() : int {
    prefer the reference overload and drains prefer the drain overload.
 6. **Primitive no-op** — draining a primitive type is permitted but provides no benefit
    (a copy is always performed).
+7. **Conversion to an aggregate value** — constructing a value from a drain
+   selects a viable drain constructor when one matches; otherwise it uses a
+   viable copy constructor. A selected deleted or inaccessible constructor is
+   an error. The source must remain valid in either case.
 
 **Mangling:** Drain types use the `D` modifier in mangled names (e.g. `Di` for `int#`).
 

@@ -23,7 +23,7 @@
  *   to steal the internal resources of the referenced object.
  */
 
-#include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_all.hpp>
 #include "helpers.hpp"
 
 // =============================================================================
@@ -359,4 +359,146 @@ TEST_CASE("Drain struct — simulated move constructor pattern", "[gen][drain]")
     REQUIRE(fn_drained() == 0);  // source was drained
 }
 
+TEST_CASE("Drain to value rejects a deleted copy in non-union value contexts",
+          "[gen][drain][copy][delete][regression]") {
+    for (const auto* body : {
+             "test(value: Key&): int { consume(#value); return 0; }",
+             "test(value: Key#): int { consume(value); return 0; }",
+             "test(value: Key&): Key { return #value; }",
+             "test(value: Key&): int { copy: Key = (Key) #value; return 0; }"}) {
+        std::string source = R"K(
+            module drain_deleted_copy;
+            class Key {
+            private:
+                handle: int* = null;
+                Key(other: const Key&) -> delete;
+            public:
+                Key() {}
+                ~Key() {}
+            }
+            consume(value: Key) {}
+        )K";
+        source += body;
+        INFO(body);
+        REQUIRE_THROWS_MATCHES(gen_jit_throws(source), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>(
+                [](const auto& error) {
+                    return error.get_diagnostic().message.find("deleted") != std::string::npos;
+                }, "selected deleted copy constructor"));
+    }
+}
 
+TEST_CASE("Drain to value selects a resource transfer constructor",
+          "[gen][drain][move][regression]") {
+    auto jit = gen_jit(R"K(
+        module drain_value_move;
+        releases: int = 0;
+        drops: int = 0;
+        moves: int = 0;
+        class Resource {
+        public:
+            owns: int = 1;
+            Resource() {}
+            Resource(other: const Resource&) -> delete;
+            Resource(other: Resource#) : owns(other.owns) { other.owns = 0; ++moves; }
+            ~Resource() { if (owns != 0) ++releases; ++drops; }
+        }
+        consume(value: Resource): int { return value.owns; }
+        forward(value: Resource#): int { return consume(value); }
+        test(): int {
+            releases = 0; drops = 0; moves = 0;
+            {
+                first: Resource;
+                if (consume(#first) != 1 || first.owns != 0) return -1;
+                second: Resource;
+                if (forward(#second) != 1 || second.owns != 0) return -2;
+            }
+            if (moves != 2 || releases != 2 || drops != 4) return -3;
+            return 42;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Drain to value uses the selected copy without draining the source",
+          "[gen][drain][copy][overload][regression]") {
+    auto jit = gen_jit(R"K(
+        module drain_value_copy;
+        copies: int = 0;
+        class Value {
+        public:
+            number: int = 42;
+            Value() {}
+            Value(other: const Value&) -> delete;
+            Value(other: Value&) : number(other.number) { ++copies; }
+        }
+        consume(value: Value): int { return value.number; }
+        test(): int {
+            source: Value;
+            first: int = consume(#source);
+            second: int = consume((Value) #source);
+            if (copies != 2 || source.number != 42) return -1;
+            return first + second - 42;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Drain to value does not bypass a private transfer constructor",
+          "[gen][drain][move][visibility][regression]") {
+    REQUIRE_THROWS_MATCHES(gen_jit_throws(R"K(
+        module drain_private_move;
+        class Resource {
+        private:
+            Resource(other: Resource#) {}
+        public:
+            Resource() {}
+            Resource(other: const Resource&) {}
+        }
+        consume(value: Resource) {}
+        test(value: Resource&): int { consume(#value); return 0; }
+    )K"), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>(
+            [](const auto& error) {
+                const auto& diagnostic = error.get_diagnostic();
+                return diagnostic.code == 0x080Cu
+                    && diagnostic.args.size() >= 2
+                    && diagnostic.args[0] == "private"
+                    && diagnostic.args[1] == "Resource";
+            }, "private selected drain constructor"));
+}
+
+TEST_CASE("Drain to value transfers an owned array exactly once",
+          "[gen][drain][move][owner][regression]") {
+    auto jit = gen_jit(R"K(
+        module drain_owned_value;
+        moves: int = 0;
+        class Resource {
+            data: int[]!;
+        public:
+            Resource() : data(new int[1]) { data[0] = 42; }
+            Resource(other: const Resource&) -> delete;
+            Resource(other: Resource#) : data(other.data) { ++moves; }
+            ~Resource() {}
+            const empty(): bool { return !data; }
+            const get(): int { return data[0]; }
+        }
+        consume(value: Resource): int { return value.get(); }
+        test(): int {
+            source: Resource;
+            result: int = consume(#source);
+            if (!source.empty() || moves != 1) return -1;
+            return result;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}

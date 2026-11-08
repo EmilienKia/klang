@@ -175,6 +175,9 @@ b : Resource(#a);     // drain constructor — steals a's resources
   must be used explicitly.
 - A drain (`T#`) **is** implicitly convertible to a reference (`T&`), link (`T+`),
   view (`T?`), or pointer (`T*`).
+- Constructing an aggregate value from a drain selects a viable drain constructor
+  or, if none matches, a copy constructor. Deleted or inaccessible selected
+  constructors are errors.
 - After draining, the source object must remain in a **valid, reusable state** (typically
   equivalent to default construction).
 - When both reference and drain overloads exist for a function, the drain overload is

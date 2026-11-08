@@ -166,6 +166,8 @@ All observer indirection types share the same memory size (one pointer) and call
 - Immutable binding, non-null, drain permission.
 - Is **not** implicitly created from a reference: the `#` operator is explicitly required.
 - **Is** implicitly convertible to `T&`, `T+`, `T?`, `T*`.
+- Converting to an aggregate value uses a viable drain constructor or copy
+  constructor; a selected deleted or inaccessible constructor is an error.
 - After draining, the source object must remain in a valid state (typically default-constructed).
 
 ### 3.3 Null

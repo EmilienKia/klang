@@ -295,15 +295,13 @@ void implementation_generator::visit_load_value_expression(load_value_expression
     if (load_type) {
         llvm::Value* src_ptr = _value;
 
-        // ── Lvalue struct copy (Site 3): if the source is a non-temporary lvalue
-        //    of a non-trivially copyable struct type with a copy constructor, call
-        //    the copy constructor into a staging alloca so the callee receives a
-        //    proper copy (not a bitwise alias of the original object).
+        // Construct a value from an lvalue or drain in staging storage. A drain
+        // constructor may transfer resources; a copy constructor must not alias them.
         auto st_type_nc = std::dynamic_pointer_cast<struct_type>(
             type::remove_const(type::canonical(load_type)));
         if (st_type_nc) {
             auto sub_type = expr.sub_expr()->get_type();
-            bool src_is_lvalue_ref = type::is_reference(sub_type);
+            bool src_is_lvalue_ref = type::is_reference(sub_type) || type::is_drain(sub_type);
             // A prvalue constructed directly into its destination is deliberately
             // untracked: the destination owns it, and copying it would strand the
             // original object's resources when that same destination is overwritten.

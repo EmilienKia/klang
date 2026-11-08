@@ -3223,7 +3223,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         // drain<T> → drain<T>: identity
         if (type::is_drain(tgt_nc)) {
             auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
-            if (src_sub_nc == tgt_sub_nc) return CAST_NONE;
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc)) return CAST_NONE;
             // Struct upcast: drain<Derived> → drain<Base>
             auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
             auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
@@ -3235,8 +3235,12 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         }
         // drain<T> → ref<T>: implicit (drain can always be used as a reference)
         if (type::is_reference(tgt_nc)) {
-            auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
-            if (src_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+            auto tgt_sub = std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype();
+            auto tgt_sub_nc = type::remove_const(tgt_sub);
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc)) {
+                if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
+                return type::is_const(tgt_sub) && !type::is_const(src_sub) ? CAST_WIDENING : CAST_REF_CONV;
+            }
             if (types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) return CAST_REF_CONV;
             // Struct upcast: drain<Derived> → ref<Base>
             auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
@@ -3260,7 +3264,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             return CAST_IMPOSSIBLE;
         }
         // drain<T> → value T: load through drain (like ref → value)
-        if (src_sub_nc == tgt_nc) return CAST_REF_CONV;
+        if (same_conversion_type(src_sub_nc, tgt_nc)) return CAST_REF_CONV;
 
         // drain<T> → different primitive: load + cast
         auto prim_sub = std::dynamic_pointer_cast<primitive_type>(src_sub_nc);
@@ -5051,7 +5055,42 @@ std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(
         }
         return deref;
     } else if(type::is_drain(type)) {
-        auto deref = load_value_expression::make_shared(expr);
+        auto source = expr;
+        std::shared_ptr<constructor> value_ctor;
+        auto value_type = type::canonical(type::remove_const(type->get_subtype()));
+        auto st = std::dynamic_pointer_cast<struct_type>(value_type);
+        auto agg = st ? st->get_struct() : nullptr;
+        if (agg) {
+            std::vector<std::shared_ptr<constructor>> candidates;
+            for (const auto& ctor : agg->constructors()) {
+                if (!ctor) continue;
+                if (agg->is_copy_constructor(*ctor)) {
+                    candidates.push_back(ctor);
+                    continue;
+                }
+                if (ctor->get_parameter_size() != 1 || !ctor->get_parameter(0)) continue;
+                auto param = type::canonical(type::remove_const(ctor->get_parameter(0)->get_type()));
+                if (!type::is_drain(param)) continue;
+                auto drained = type::canonical(type::remove_const(param->get_subtype()));
+                if (type::are_equal(drained, value_type)) candidates.push_back(ctor);
+            }
+            if (!candidates.empty()) {
+                auto access_site = expr->parent<element>();
+                auto [selected, adapted] = get_best_matching_constructor(
+                    candidates, {expr}, true, expr->first_lexeme());
+                check_constructor_visibility(*selected, access_site ? *access_site : *expr);
+                check_call_contract(*selected, expr->first_lexeme());
+                value_ctor = selected;
+                source = adapted.front();
+            } else if (aggregate_type_has_resource_field(value_type)) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE),
+                    expr->first_lexeme(),
+                    "Type '{}' is not copyable from a drain: a copy or drain constructor is required",
+                    {value_type->to_string()});
+            }
+        }
+        auto deref = load_value_expression::make_shared(source);
+        std::dynamic_pointer_cast<load_value_expression>(deref)->set_value_constructor(value_ctor);
         deref->set_type(k::model::type::remove_const(type->get_subtype()));
         if (expr->is_constant()) {
             deref->set_constant_value(expr->get_constant_value());

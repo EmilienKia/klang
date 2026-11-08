@@ -692,7 +692,7 @@ type_reference_resolver::adapt_from_drain(
     // drain<T> → drain<T>: identity
     if (type::is_drain(type_nc)) {
         auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
-        if (src_sub_nc == tgt_sub_nc) return expr;
+        if (same_conversion_type(src_sub_nc, tgt_sub_nc)) return expr;
         // Struct upcast: drain<Derived> → drain<Base>
         auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
         auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
@@ -707,8 +707,10 @@ type_reference_resolver::adapt_from_drain(
     // Step 2: drain<T> → ref<T>: implicit borrow (drain can always be used as a reference)
     // drain<T> → ref<T>: implicit cast (drain is a superset of reference)
     if (type::is_reference(type_nc)) {
-        auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
-        if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
+        auto tgt_sub = std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype();
+        auto tgt_sub_nc = type::remove_const(tgt_sub);
+        if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return {};
+        if (same_conversion_type(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
             auto cast = cast_expression::make_shared(expr, type_nc);
             cast->set_type(type_nc);
             return cast;
@@ -737,10 +739,8 @@ type_reference_resolver::adapt_from_drain(
     }
     // Step 4: drain<T> → T: load through drain
     // drain<T> → value T: load through drain (like ref → value)
-    if (src_sub_nc == type_nc) {
-        auto loaded = load_value_expression::make_shared(expr);
-        loaded->set_type(src_sub_nc);
-        return loaded;
+    if (type::are_equal(type::canonical(src_sub_nc), type::canonical(type_nc))) {
+        return adapt_reference_load_value(expr);
     }
     // Step 5: drain<T> → different primitive: load + cast
     // drain<primA> → primB: load first, then cast
@@ -1086,8 +1086,10 @@ type_reference_resolver::adapt_from_reference(
     }
     // ref<drain<T>> → T/ref<T>/link<T>/...: load the drain, then adapt it
     if (type::is_drain(ref_subtype)) {
+        auto parent = expr->parent<element>();
         auto loaded = load_value_expression::make_shared(expr);
         loaded->set_type(ref_subtype);
+        loaded->set_parent(parent);
         return adapt_type(loaded, type_nc);
     }
     // Step 3: ref<T> → lnk<T>/view<T>: borrow as link or view
