@@ -91,6 +91,98 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **Preserve default owner member initializers.** A member declaration
+      such as `owned: Resource! = new Resource();` in a class with a user
+      constructor currently emits the initializer as a discarded expression;
+      the compiler warns that the owner is immediately destroyed. This was
+      observed while running the const-union ownership regression. Cover
+      default initialization and explicit constructor initializer overrides
+      before repairing the injection in
+      `klang/src/gen/gen_constructor.cpp`.
+
+- [ ] **Fix owner reassignment when destruction throws.** Source inspection
+      shows that `klang/src/gen/gen_operators_assign.cpp` evaluates a moved
+      incoming owner before destroying the destination without guarding it if
+      that destructor throws. The move clears the source in
+      `klang/src/gen/gen_expr_memory.cpp`. The reproduction below fails:
+      the exception is caught, both owners are null and the old destructor
+      ran once, but the incoming destructor did not run exactly once.
+      Determine whether it leaks or is destroyed more than once, then preserve
+      exactly-once cleanup on success and failure.
+      ```k
+      module owner_throw_repro;
+      oldDrops: int = 0;
+      incomingDrops: int = 0;
+      struct Probe {
+          id: int;
+          Probe(i: int): id(i) {}
+          ~Probe() {
+              if (id == 1) { ++oldDrops; throw FatalError(718); }
+              ++incomingDrops;
+          }
+      }
+      test(): int {
+          target: Probe! = new Probe(1);
+          source: Probe! = new Probe(2);
+          caught: bool = false;
+          try { target = source; }
+          catch (e: FatalError&) { caught = e.getCode() == 718; }
+          return caught && target == null && source == null &&
+              oldDrops == 1 && incomingDrops == 1 ? 42 : -1;
+      }
+      ```
+
+- [ ] **Check standalone virtual-base constructor contracts.** In
+      `klang/src/gen/gen_constructor.cpp`, base-initializer injection skips a
+      virtual base when the class has no `__vbase_X__` storage. Nevertheless,
+      `implementation_generator::emit_constructor_pre_block` in
+      `klang/src/gen/gen_function.cpp` allocates standalone storage for a class
+      with `__vbptr_X__` but no `__vbase_X__`, selects the first non-copy
+      zero-argument constructor, and emits a direct LLVM `call` without
+      `check_call_contract` or an unwind-aware cleanup path. It also silently
+      omits the call if no LLVM declaration is found.
+
+      Source-level reproduction to add as a compiler regression (not run):
+      ```k
+      module virtual_base_contract;
+      class Failure : public Exception {}
+      class Root { Root() throws(Failure) { throw Failure(); } }
+      class Left : public Root { Left() {} }
+      class Right : public Root { Right() {} }
+      class Diamond : public Left, public Right {
+          Diamond() throws(Failure) {}
+      }
+      use() { value: Left; }
+      ```
+      The diamond prepass can promote the `Left`/`Right` edges to `Root` to
+      virtual, leaving `Left` with a pointer but no collector field; constructing
+      `Left` then executes `Root()` despite `Left()` neither catching nor
+      declaring `Failure`. `Diamond`'s separately injected collector initializer
+      does not check the standalone call in `Left`. Validate this reproduction
+      and fix selection and contract checking in the semantic pass, then pass
+      the selected constructor and appropriate unwind handling to codegen.
+      No imported-generic reachability has been established.
+
+- [x] **Preserve imported KDI generic-reference arguments.**
+      The converter retains nested arguments through substitution, resolution
+      and re-export, including signature components and template-parameter
+      metadata referring to aliases materialised later. Invalid nested types
+      receive an explicit diagnostic; legacy `void` value placeholders remain
+      unrecoverable.
+- [ ] **Complete constructor exception-contract coverage.** Imported generic
+      constructors now use per-site type bindings and their facade contracts
+      for the tested variable, member, temporary, allocation and array paths.
+      Unknown contracts and unresolvable or ambiguous signatures are diagnosed.
+      Verify the separate standalone virtual-base path described above and
+      constructor selection in slot intrinsics; their interaction with
+      imported generics is not established.
+- [ ] **Validate imported union layouts.**
+      `klang/src/model/tools/kdi_importer.cpp` accepts unions without layout
+      metadata and synthesizes a fallback layout. Verify that current producers
+      and consumers agree on size, alignment, discriminant and lifecycle state,
+      including nested and private union-containing wrappers. Old and new union
+      lifecycle ABIs are not compatible; rebuild affected libraries, KDI
+      descriptors and consumers together rather than mixing artifacts.
 - [ ] **Investigate foreach cleanup during exception unwinding.** Static review
       found that `visit_foreach_statement` in `klang/src/gen/gen_statements.cpp`
       registers the iterator and loop variable on `_cleanup_vars_stack`, but
@@ -347,6 +439,25 @@
       shared/object/archive consumers and cleanup/error cases pass. It notes
       the diagnostic limitation, so these pre-existing compiler issues do
       not block the documentation.
+
+- [ ] **Preserve ownership when copying unions and draining values.**
+      Direct deleted-copy checks, drain-to-value conversion, and selected
+      union and scalar-wrapper lifecycle paths have fixes and focused passing
+      regressions. Complete discriminant-aware construction, copy, assignment
+      and destruction without rejecting copies of active copyable alternatives.
+      Preserve exactly-once cleanup, self-assignment, checked exceptions, and
+      inactive state after a failed transition.
+
+      Source inspection indicates that indirect mutation of a default first
+      owner alternative may bypass its live-state tracking, while extraction
+      of an owner through a union value cast or argument adaptation may
+      duplicate ownership; these cases still need reproductions and fixes.
+      Cover nested and multiple-union wrappers, inherited alternatives,
+      const-qualified fields, arrays, temporaries, and imported wrappers with
+      private layouts. In particular, do not raw-copy an unconstructed
+      aggregate that may contain indirectly initialized owned state.
+      The general owner-reassignment unwind bug above blocks safe handling of
+      throwing owner replacement.
 
 - [ ] **Language FFI reference still confuses UTF-32 characters with C byte strings.**
       `doc/spec/language/functions/ffi.md`, sections 2-5, describes K
@@ -1272,6 +1383,15 @@
   contract `throws(k::Exception)` and tests alias canonicalization in its callable
   component instead, so this does not block the scoped dependency export changes.
 
+- [ ] **Strong typedefs in imported `throws` contracts bypass call checks
+  (static finding, not run).** `get_exception_aggregate()` in
+  `klang/src/gen/gen_statements.cpp` accepts `struct_type` but does not unwrap
+  `alias_type`; `check_call_contract()` skips entries it cannot identify.
+  Reproduce with a KDI constructor `throws_spec` containing an `alias` reference
+  to a typedef of an exception, then call it from a function declaring only an
+  unrelated exception. The import must preserve the typedef, but the call
+  checker must still recognize its underlying exception type.
+
 - [ ] **Visibility of ordinary function addresses (static finding, not run).**
   `type_reference_resolver::visit_symbol_expression` in
   `klang/src/gen/gen_expressions.cpp` builds callable types for resolved functions
@@ -1504,6 +1624,13 @@
   `compiler_linker.cpp`, which currently always shells out to the host `clang`/`ar`).
 
 #### Current bugs and gaps to fix
+
+- [ ] **Capability discovery is not cancellation-safe inside OpenSSL async jobs.**
+  The existing inline discovery path in `libk/crypto/src/openssl_ffi.c` can
+  run provider callbacks on an active OpenSSL async job. Cancellation during
+  that work may interrupt it or leak native resources. Preserve async provider
+  behavior while making cleanup safe; add a pausing-provider cancellation
+  regression. This edge case was identified by source inspection.
 
 - [ ] **Implicit return upcast from a const aggregate's pointer field loses value-level const normalization.**
   Fresh `ffi-final-gen-casts-rerun.log` records `00E01` for
@@ -1738,7 +1865,19 @@
 
 - [ ] Secure random bytes for salts, tokens, and application-managed nonces.
 - [x] HMAC generation and constant-time verification, including stream adapters.
-- [ ] HKDF for deriving purpose-specific symmetric keys.
+- [ ] Complete HKDF for deriving purpose-specific symmetric keys.
+  - Provider-backed extract, expand, combined derivation, key integration,
+    capability discovery and documentation are implemented. The full
+    incremental build, 27 HKDF tests, focused compiler/KDI regressions and
+    the guide example have passed; PRK ownership is not yet fully safe.
+  - [ ] Fix the owner-reassignment unwind bug and complete union ownership
+    and imported-layout handling listed in the language bugs above.
+  - [ ] Rebuild affected artifacts and validate the final compiler, KDI, HKDF
+    and guide changes, including array and exceptional-cleanup regressions.
+    The previously unavailable union-array detailed rerun has not passed and
+    remains unverified.
+  - [ ] Synchronize the language and crypto documentation with verified
+    behavior, then remove the PRK ownership warning and close this entry.
 - [ ] Password-based key derivation: Argon2id, scrypt, and PBKDF2 compatibility.
 - [ ] Asymmetric key pairs: generation, public/private keys, and metadata.
 - [ ] Digital signatures and verification: Ed25519, ECDSA, and RSA-PSS.
