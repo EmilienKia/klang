@@ -631,6 +631,8 @@ void implementation_generator::visit_conditional_expression(conditional_expressi
             if (tmp.array_type) {
                 emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
                     tmp.alloca, tmp.array_type);
+            } else if (tmp.union_type) {
+                emit_union_cleanup(tmp.alloca, *tmp.union_type);
             } else if (tmp.destructor) {
                 _builder->CreateCall(tmp.destructor, {tmp.alloca});
             }

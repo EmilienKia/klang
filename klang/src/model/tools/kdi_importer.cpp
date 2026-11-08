@@ -832,6 +832,40 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
     _pending_generic_returns.clear();
     _pending_generic_template_params.clear();
     _pending_generic_overloads.clear();
+    // Older union descriptors may use a 32-bit tag. Do not silently rebuild
+    // those types with the lifecycle layout: their payload offsets can differ.
+    const auto validate_union_layout = [this](const kdi::kdi_union& un) {
+        const auto body = un.llvm_def.find('{');
+        if (body == std::string::npos) return;
+        const auto field = un.llvm_def.find_first_not_of(" \t\r\n", body + 1);
+        const auto separator = field == std::string::npos
+            ? std::string::npos : un.llvm_def.find_first_not_of(" \t\r\n", field + 3);
+        if (field != std::string::npos
+            && un.llvm_def.compare(field, 3, "i64") == 0
+            && separator != std::string::npos && un.llvm_def[separator] == ',') return;
+        auto diag = k::log::diagnostic::make_error(
+            static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT),
+            "Imported union '{}' has an incompatible lifecycle ABI; rebuild its library and KDI descriptor",
+            {un.fq_name.empty() ? un.name : un.fq_name});
+        _logger.report(diag);
+        throw k::log::compiler_error(std::move(diag));
+    };
+    std::function<void(const kdi::kdi_aggregate&)> validate_aggregate;
+    validate_aggregate = [&](const kdi::kdi_aggregate& agg) {
+        for (const auto& un : agg.nested_unions) validate_union_layout(un);
+        for (const auto& nested : agg.nested) validate_aggregate(nested);
+    };
+    std::function<void(const kdi::kdi_namespace&)> validate_namespace;
+    validate_namespace = [&](const kdi::kdi_namespace& ns) {
+        for (const auto& un : ns.unions) validate_union_layout(un);
+        for (const auto& agg : ns.aggregates) validate_aggregate(agg);
+        for (const auto& child : ns.namespaces) validate_namespace(child);
+    };
+    for (const auto& tdep : _transitive_kdis)
+        if (tdep) validate_namespace(tdep->unit.root_ns);
+    for (const auto& imp : _unit.get_imports())
+        if (imp.kdi) validate_namespace(imp.kdi->unit.root_ns);
+
     // ── Step B1: collect all llvm_def strings from every loaded KDI ─────────
     // Parse them together in one LLVM IR module so that forward-references
     // between types (e.g. %Derived referencing %Base) are resolved immediately,

@@ -908,6 +908,10 @@ type_reference_resolver::adapt_from_reference(
                         auto poly_st = poly_base->get_struct_type();
                         auto tgt_st = std::dynamic_pointer_cast<struct_type>(bare_tgt);
                         if (tgt_st == poly_st || (tgt_st && tgt_st->get_struct() && poly_base->is_derived_from(tgt_st->get_struct()))) {
+                            if (!type::is_reference(type_nc) && tgt_st && tgt_st->get_struct()
+                                && !std::dynamic_pointer_cast<temporary_construction_expression>(expr)) {
+                                return adapt_union_value_copy(expr, tgt_st, type::is_const(ref_src_early->get_subtype()));
+                            }
                             auto cast = cast_expression::make_shared(expr, type_nc, true);
                             cast->set_type(type_nc);
                             return cast;
@@ -925,6 +929,15 @@ type_reference_resolver::adapt_from_reference(
                     }
                 }
                 if (matches.size() == 1) {
+                    if (!type::is_reference(type_nc)
+                        && !std::dynamic_pointer_cast<temporary_construction_expression>(expr)) {
+                        auto tgt_st = std::dynamic_pointer_cast<struct_type>(bare_tgt);
+                        if (tgt_st && tgt_st->get_struct()) {
+                            return adapt_union_value_copy(expr, tgt_st,
+                                type::is_const(ref_src_early->get_subtype())
+                                || matches[0]->is_const || type::is_const(matches[0]->resolved_type));
+                        }
+                    }
                     auto cast = cast_expression::make_shared(expr, type_nc, true);
                     cast->set_type(type_nc);
                     return cast;

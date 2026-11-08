@@ -94,15 +94,24 @@ union Payload {
 A union value occupies:
 
 ```
-{ uint32_t discriminant; [max_size × i8] storage }
+{ uint64_t tag_and_lifecycle; [max_size × i8] storage }
 ```
 
-- **discriminant** — a 32-bit unsigned integer identifying the active alternative.
+- The low 32 bits identify the active alternative; the remaining bits are
+  reserved for lifecycle state.
 - **storage** — a byte array sized to the largest alternative (considering
   alignment). All alternatives share this storage region (overlapping, like a
   C `union`).
 
-The total size is therefore `4 + padding + max(sizeof(alternative_i))`.
+The payload offset and total size follow the target LLVM data layout. The
+current lifecycle implementation requires a little-endian target. Its lifecycle
+state is incompatible with earlier code even when that code uses an identical
+64-bit layout. Rebuild affected libraries, their KDI descriptors, and consumers
+together; regenerating a descriptor alone does not update the library.
+
+The importer rejects explicit non-64-bit-tag layouts, but does not yet identify
+older 64-bit lifecycle semantics or descriptors without a layout. Acceptance of
+a descriptor therefore does not establish binary compatibility.
 
 ---
 
@@ -142,6 +151,12 @@ again. A later member assignment may activate an alternative normally.
 
 Assignment to an already-active struct or class alternative uses its assignment
 operator, when provided, rather than constructing over a live object.
+Copying a live payload must respect the selected copy constructor's checked
+exceptions, including when a union copy dispatches to that payload. A copy of
+a `const` alternative uses const-source copy semantics even if the containing
+union is mutable. Union copy checks the contracts of potentially active
+alternatives; at runtime it copies only the active payload. A default-unconstructed
+first class or struct alternative is not copied as a live object.
 
 ---
 

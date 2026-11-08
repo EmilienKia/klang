@@ -495,6 +495,11 @@ protected:
     void check_call_exception_types(const function& called_func,
                                     const std::vector<std::shared_ptr<type>>& exceptions,
                                     const lex::opt_any_lexeme& lexeme);
+    void check_union_lifecycle_constructor_contract(
+        const constructor& ctor, const lex::opt_any_lexeme& lexeme);
+    void check_union_payload_copy_contract(
+        const std::shared_ptr<type>& payload, bool source_const,
+        const lex::opt_any_lexeme& lexeme);
 
     void visit_unit(unit&) override;
 
@@ -782,6 +787,9 @@ protected:
      * @return The given arg if already not a reference or the newly loaded-value expr if is a reference.
      */
     std::shared_ptr<expression> adapt_reference_load_value(const std::shared_ptr<expression>& expr);
+    std::shared_ptr<expression> adapt_union_value_copy(
+        const std::shared_ptr<expression>& source,
+        const std::shared_ptr<type>& target, bool const_source);
 
     /**
      * Adapt an expression to ensure it maps to a given type, by casting it.

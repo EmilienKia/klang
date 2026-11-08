@@ -2190,7 +2190,10 @@ llvm::Value* implementation_generator::call_argument_cleanup_scope::track(
     auto bare_type = type::canonical(type::remove_const(value_type));
     bool needs_cleanup = type::is_owner(bare_type);
     if (auto st = std::dynamic_pointer_cast<struct_type>(bare_type)) {
-        needs_cleanup = st->get_struct() && st->get_struct()->get_destructor();
+        auto agg = st->get_struct();
+        auto un = agg ? nullptr : find_union_by_struct_type(_gen._unit.get_root_namespace(), st);
+        needs_cleanup = (agg && agg->get_destructor())
+            || (un && un->has_nontrivial_destructor_alternative());
     }
     if (auto ct = std::dynamic_pointer_cast<callable_type>(bare_type)) {
         needs_cleanup = ct->is_owner();
@@ -2213,6 +2216,17 @@ llvm::Value* implementation_generator::call_argument_cleanup_scope::track(
     _gen._builder->CreateStore(_gen._builder->getTrue(), live);
     _entries.push_back({storage, live, bare_type});
     return value;
+}
+
+void implementation_generator::call_argument_cleanup_scope::track_storage(
+    const std::shared_ptr<type>& value_type, llvm::Value* storage) {
+    if (!_enabled || !value_type || !storage) return;
+    auto* func = _gen._builder->GetInsertBlock()->getParent();
+    llvm::IRBuilder<> entry_builder(&func->getEntryBlock(), func->getEntryBlock().begin());
+    auto* live = entry_builder.CreateAlloca(entry_builder.getInt1Ty(), nullptr, "partial_value_live");
+    entry_builder.CreateStore(entry_builder.getFalse(), live);
+    _gen._builder->CreateStore(_gen._builder->getTrue(), live);
+    _entries.push_back({storage, live, value_type});
 }
 
 void implementation_generator::call_argument_cleanup_scope::transfer() {
@@ -2257,11 +2271,18 @@ implementation_generator::call_argument_cleanup_scope::~call_argument_cleanup_sc
             emit_owned_callable_cleanup_if_nonnull(_gen._builder.get(), _gen.get_module(), it->storage,
                 _gen._context->get_or_create_callable_llvm_type(), "argument_callable",
                 _gen.make_virtual_call_emitter());
+        } else if (type::is_sized_array(it->value_type)) {
+            _gen.emit_union_payload_cleanup(it->storage, it->value_type, false);
         } else if (auto st = std::dynamic_pointer_cast<struct_type>(it->value_type)) {
             auto agg = st->get_struct();
-            auto dtor = _gen._context->_functions.find(agg->get_destructor()->shared_as<function>());
-            if (dtor != _gen._context->_functions.end()) {
-                _gen.create_call_or_invoke(dtor->second->getFunctionType(), dtor->second, {it->storage});
+            if (agg && agg->get_destructor()) {
+                auto dtor = _gen._context->_functions.find(agg->get_destructor()->shared_as<function>());
+                if (dtor != _gen._context->_functions.end()) {
+                    _gen.create_call_or_invoke(dtor->second->getFunctionType(), dtor->second, {it->storage});
+                }
+            } else if (!agg) {
+                auto un = find_union_by_struct_type(_gen._unit.get_root_namespace(), st);
+                if (un) _gen.emit_union_cleanup(it->storage, *un);
             }
         }
         _gen._builder->CreateBr(next_bb);
@@ -2323,7 +2344,10 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         auto arg_type = arg->get_type() ? type::canonical(type::remove_const(arg->get_type())) : nullptr;
         if (type::is_owner(arg_type)) needs_argument_cleanup = true;
         if (auto st = std::dynamic_pointer_cast<struct_type>(arg_type)) {
-            if (st->get_struct() && st->get_struct()->get_destructor()) needs_argument_cleanup = true;
+            auto agg = st->get_struct();
+            auto un = agg ? nullptr : find_union_by_struct_type(_unit.get_root_namespace(), st);
+            if ((agg && agg->get_destructor())
+                || (un && un->has_nontrivial_destructor_alternative())) needs_argument_cleanup = true;
         }
         if (auto ct = std::dynamic_pointer_cast<callable_type>(arg_type)) {
             if (ct->is_owner()) needs_argument_cleanup = true;
@@ -2376,6 +2400,10 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                     }
                 }
             }
+        } else if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), ret_st);
+                   un && un->has_nontrivial_destructor_alternative()) {
+            if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(sret_ptr_val))
+                _expression_temporaries.push_back({alloca, nullptr, nullptr, un});
         }
     };
 

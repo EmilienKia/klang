@@ -35,6 +35,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <unordered_set>
 #include <vector>
 
 namespace k::model::gen {
@@ -933,6 +934,53 @@ inline std::shared_ptr<union_type_def> find_union_by_struct_type(
         }
     }
     return nullptr;
+}
+
+// Only one union leaf and otherwise trivial scalar fields can be copied without
+// bookkeeping for previously completed resource-bearing subobjects.
+inline std::shared_ptr<union_type_def> scalar_union_wrapper(
+    const std::shared_ptr<aggregate>& agg, const std::shared_ptr<ns>& root) {
+    std::unordered_set<const aggregate*> active;
+    std::function<std::shared_ptr<union_type_def>(const std::shared_ptr<aggregate>&, bool)> classify;
+    classify = [&](const std::shared_ptr<aggregate>& current, bool nested)
+            -> std::shared_ptr<union_type_def> {
+        if (!current || current->is_imported() || !current->is_struct() || current->is_inner()
+            || current->has_bases() || current->has_virtual_bases()
+            || !active.insert(current.get()).second) return nullptr;
+        auto finish = [&](std::shared_ptr<union_type_def> result) {
+            active.erase(current.get());
+            return result;
+        };
+        if (nested) {
+            for (const auto& ctor : current->constructors()) {
+                if (ctor && current->is_copy_constructor(*ctor) && !ctor->is_compiler_generated())
+                    return finish(nullptr);
+            }
+            for (const auto& op : current->get_functions("__operator_aS_")) {
+                if (op && !op->is_compiler_generated()) return finish(nullptr);
+            }
+        }
+        std::shared_ptr<union_type_def> result;
+        for (const auto& [name, var] : current->variables()) {
+            auto member = std::dynamic_pointer_cast<member_variable_definition>(var);
+            if (!member) continue;
+            if (name.rfind("__", 0) == 0) return finish(nullptr);
+            auto field_type = type::canonical(type::remove_const(member->get_type()));
+            auto field_struct = std::dynamic_pointer_cast<struct_type>(field_type);
+            if (field_struct) {
+                if (result) return finish(nullptr);
+                auto child = field_struct->get_struct();
+                if (child && (current->is_instantiation() || child->is_instantiation()))
+                    return finish(nullptr);
+                result = child ? classify(child, true) : find_union_by_struct_type(root, field_struct);
+                if (!result) return finish(nullptr);
+            } else if (auto enumeration = std::dynamic_pointer_cast<enum_type>(field_type)) {
+                if (enumeration->is_object_backed()) return finish(nullptr);
+            } else if (!type::is_primitive(field_type)) return finish(nullptr);
+        }
+        return finish(result);
+    };
+    return classify(agg, false);
 }
 
 /**

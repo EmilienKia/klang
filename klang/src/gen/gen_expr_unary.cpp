@@ -310,7 +310,21 @@ void implementation_generator::visit_load_value_expression(load_value_expression
                                            || (construction_destination && src_ptr == construction_destination));
             if (src_is_lvalue_ref && !src_is_prvalue_temp) {
                 auto agg = st_type_nc->get_struct();
-                if (agg && (expr.get_value_constructor() || agg->get_copy_constructor())) {
+                if (!agg) {
+                    if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), st_type_nc)) {
+                        auto* fn = _builder->GetInsertBlock()->getParent();
+                        llvm::IRBuilder<> entry(&fn->getEntryBlock(), fn->getEntryBlock().begin());
+                        auto* llvm_type = _context->get_llvm_type(st_type_nc);
+                        auto* staging = entry.CreateAlloca(llvm_type, nullptr, "union_value_copy");
+                        const bool source_const = sub_type->get_subtype()
+                            && type::is_const(sub_type->get_subtype());
+                        emit_union_copy(staging, src_ptr, *un, *un, false, source_const);
+                        _value = _builder->CreateLoad(llvm_type, staging, "union_copy_value");
+                        return;
+                    }
+                }
+                if (agg && (expr.get_value_constructor() || agg->get_copy_constructor()
+                            || scalar_union_wrapper(agg, _unit.get_root_namespace()))) {
                     // Call copy constructor: dest = new staging alloca, src = lvalue ptr
                     llvm::Type* llvm_st = _context->get_llvm_type(st_type_nc);
                     llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
@@ -327,7 +341,9 @@ void implementation_generator::visit_load_value_expression(load_value_expression
                         create_call_or_invoke(it->second->getFunctionType(), it->second, {staging, src_ptr});
                     } else {
                         emit_value_copy_or_move(staging, src_ptr, st_type_nc,
-                            /*destroy_dest_first=*/false, expr.first_lexeme(), "by-value copy");
+                            /*destroy_dest_first=*/false, expr.first_lexeme(), "by-value copy",
+                            false, true, nullptr,
+                            sub_type->get_subtype() && type::is_const(sub_type->get_subtype()));
                     }
                     // Load the struct value from staging so it can be passed by value.
                     // A call's argument cleanup scope owns successful copies until

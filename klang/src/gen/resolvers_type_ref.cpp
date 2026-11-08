@@ -5016,6 +5016,21 @@ type_reference_resolver::get_best_matching_function(
     return {b->func, b->adapted_args, b->is_unified, b->this_for_unified};
 }
 
+std::shared_ptr<expression> type_reference_resolver::adapt_union_value_copy(
+    const std::shared_ptr<expression>& source, const std::shared_ptr<type>& target, bool const_source) {
+    auto parent = source->parent<element>();
+    std::shared_ptr<type> referred = target;
+    if (const_source) referred = target->get_const();
+    auto reference_cast = cast_expression::make_shared(source, referred->get_reference(), true);
+    reference_cast->set_parent(parent);
+    auto adapted = adapt_reference_load_value(reference_cast);
+    if (auto load = std::dynamic_pointer_cast<load_value_expression>(adapted)) {
+        if (auto selected = load->get_value_constructor())
+            check_union_lifecycle_constructor_contract(*selected, source->first_lexeme());
+    }
+    return adapted;
+}
+
 std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(const std::shared_ptr<expression>& expr) {
     if (!expr) return nullptr;
     auto type = expr->get_type();
@@ -5031,7 +5046,17 @@ std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(
         auto value_type = type::canonical(type::remove_const(type->get_subtype()));
         auto st = std::dynamic_pointer_cast<struct_type>(value_type);
         auto agg = st ? st->get_struct() : nullptr;
+        if (st && !agg && !std::dynamic_pointer_cast<temporary_construction_expression>(expr)
+            && find_union_by_struct_type(_unit.get_root_namespace(), st)) {
+            check_union_payload_copy_contract(st, type::is_const(type->get_subtype()), expr->first_lexeme());
+        }
         auto first_copy = agg ? agg->get_copy_constructor() : nullptr;
+        if (agg && (!first_copy || first_copy->is_compiler_generated())
+            && !std::dynamic_pointer_cast<temporary_construction_expression>(expr)
+            && scalar_union_wrapper(agg, _unit.get_root_namespace())) {
+            check_union_payload_copy_contract(st, type::is_const(type->get_subtype()),
+                                              expr->first_lexeme());
+        }
         if (first_copy && !first_copy->is_compiler_generated()
             && !std::dynamic_pointer_cast<temporary_construction_expression>(expr)) {
             auto access_site = expr->parent<element>();

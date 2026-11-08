@@ -700,6 +700,11 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
                     }
                     return;
                 }
+                if (!std::dynamic_pointer_cast<temporary_construction_expression>(ctor_args[0])
+                    && scalar_union_wrapper(struct_model, _unit.get_root_namespace())) {
+                    check_union_payload_copy_contract(st_type,
+                        type::is_const(arg_type_nc->get_subtype()), ctx.var_lexeme);
+                }
                 bool has_cc = copy_ctor != nullptr;
                 // Check for a resource-referencing field (owner/pointer/link/view,
                 // recursively through nested struct members) — such a field makes

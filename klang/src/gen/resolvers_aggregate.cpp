@@ -1513,6 +1513,59 @@ resolve_one_type(const std::shared_ptr<type>& t,
 void aggregate_type_resolver::resolve() {
     trace("[aggregate_type_resolver::resolve] begin");
     visit_unit(_unit);
+
+    // Member and union types may have been declared after their containers.
+    // Complete destructor propagation only after the whole unit is resolved.
+    std::vector<std::shared_ptr<aggregate>> aggregates;
+    std::function<void(const std::shared_ptr<aggregate>&)> collect_aggregate;
+    collect_aggregate = [&](const std::shared_ptr<aggregate>& agg) {
+        if (!agg || agg->is_imported() || agg->is_template() || agg->is_instantiation()) return;
+        aggregates.push_back(agg);
+        for (const auto& child : agg->get_children()) {
+            if (auto nested = std::dynamic_pointer_cast<aggregate>(child))
+                collect_aggregate(nested);
+        }
+    };
+    std::function<void(const std::shared_ptr<ns>&)> collect_namespace;
+    collect_namespace = [&](const std::shared_ptr<ns>& current) {
+        if (!current) return;
+        for (const auto& child : current->get_children()) {
+            if (auto nested_ns = std::dynamic_pointer_cast<ns>(child))
+                collect_namespace(nested_ns);
+            else if (auto agg = std::dynamic_pointer_cast<aggregate>(child))
+                collect_aggregate(agg);
+        }
+    };
+    collect_namespace(_unit.get_root_namespace());
+    bool changed;
+    do {
+        changed = false;
+        for (const auto& agg : aggregates) {
+            if (agg->get_destructor()) continue;
+            auto un = scalar_union_wrapper(agg, _unit.get_root_namespace());
+            if (!un) continue;
+            bool needs_dtor = un->has_nontrivial_destructor_alternative();
+            if (!needs_dtor) {
+                for (const auto& [name, var] : agg->variables()) {
+                    auto member = std::dynamic_pointer_cast<member_variable_definition>(var);
+                    if (!member) continue;
+                    auto st = std::dynamic_pointer_cast<struct_type>(
+                        type::canonical(type::remove_const(member->get_type())));
+                    if (st && st->get_struct() && st->get_struct()->get_destructor()) {
+                        needs_dtor = true;
+                        break;
+                    }
+                }
+            }
+            if (!needs_dtor) continue;
+            auto dtor = agg->create_destructor();
+            dtor->set_compiler_generated(true);
+            symbol_resolver sr(*this, _context, _unit);
+            dtor->accept(sr);
+            dtor->accept(*this);
+            changed = true;
+        }
+    } while (changed);
     trace("[aggregate_type_resolver::resolve] done");
 }
 
@@ -1664,7 +1717,8 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
         for (auto& [name, var] : st.variables()) {
             auto mv = std::dynamic_pointer_cast<member_variable_definition>(var);
             if (!mv || name.rfind("__", 0) == 0) continue;
-            auto member_type = std::dynamic_pointer_cast<struct_type>(type::remove_const(mv->get_type()));
+            auto member_type = std::dynamic_pointer_cast<struct_type>(
+                type::canonical(type::remove_const(mv->get_type())));
             if (!member_type || member_type->get_struct()) continue;
             if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), member_type)) {
                 needs_dtor = un->has_nontrivial_destructor_alternative();

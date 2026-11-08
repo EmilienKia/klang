@@ -418,7 +418,39 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
             expr.set_null_is_fatal(target_is_nonnull(target_type) || !is_address_of_union);
             return true;
         }()) {
-            // Valid union cast
+            // A value cast of an lvalue union copies its active alternative;
+            // reference and addresser casts continue to borrow its storage.
+            auto target_aggregate = std::dynamic_pointer_cast<struct_type>(
+                type::canonical(type::remove_const(target_type)));
+            const bool temporary_union =
+                std::dynamic_pointer_cast<temporary_construction_expression>(sub_expr)
+                || (!type::is_reference(source_type)
+                    && type::is_struct(type::remove_const(source_type)));
+            if (target_aggregate && target_aggregate->get_struct() && !temporary_union) {
+                auto union_type = source_type;
+                bool const_source = type::is_const(union_type);
+                if (type::is_reference(union_type)) union_type = union_type->get_subtype();
+                const_source = const_source || type::is_const(union_type);
+                union_type = type::remove_const(union_type);
+                if (type::is_pointer(union_type) || type::is_link(union_type) || type::is_view(union_type)) {
+                    union_type = union_type->get_subtype();
+                    const_source = const_source || type::is_const(union_type);
+                    union_type = type::remove_const(union_type);
+                }
+                if (auto union_st = std::dynamic_pointer_cast<struct_type>(union_type)) {
+                    if (auto union_def = find_union_by_struct_type(_unit.get_root_namespace(), union_st)) {
+                        for (const auto* alt : union_def->all_alternatives_ptrs()) {
+                            if (alt && alt->resolved_type &&
+                                type::are_equal(type::remove_const(alt->resolved_type), target_aggregate)) {
+                                const_source = const_source || alt->is_const || type::is_const(alt->resolved_type);
+                                break;
+                            }
+                        }
+                    }
+                }
+                auto loaded = adapt_union_value_copy(sub_expr, target_aggregate, const_source);
+                expr.assign(loaded);
+            }
         }
 
         // Step 2: Check for casting operator overload on the source struct type

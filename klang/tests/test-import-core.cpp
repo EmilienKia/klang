@@ -46,6 +46,46 @@
 
 namespace fs = std::filesystem;
 
+TEST_CASE("Import rejects a legacy union lifecycle layout",
+          "[import][union][abi][regression]") {
+    TmpKdi lib(R"K(
+        module legacyunionabi;
+        public union Value { number: int; text: byte; }
+    )K", true);
+    auto metadata = kdi::kdi_read_cbor_file(lib.kdi_path);
+    auto un = std::find_if(metadata.unit.root_ns.unions.begin(), metadata.unit.root_ns.unions.end(),
+        [](const auto& entry) { return entry.name == "Value"; });
+    REQUIRE(un != metadata.unit.root_ns.unions.end());
+    const auto body = un->llvm_def.find('{');
+    REQUIRE(body != std::string::npos);
+    const auto tag = un->llvm_def.find("i64", body);
+    REQUIRE(tag != std::string::npos);
+
+    auto make_compiler = [&]() {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("legacyunionabi", lib.kdi_path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        compiler->set_file_resolver(resolver);
+        return compiler;
+    };
+    const auto consumer = R"K(
+        module legacyunionabi_consumer;
+        import legacyunionabi;
+        use(value: legacyunionabi::Value&) {}
+    )K";
+    REQUIRE_NOTHROW(make_compiler()->parse_source("union_abi_current.k", consumer, false, false));
+
+    un->llvm_def.replace(tag, 3, "i32");
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+    auto incompatible = Catch::Matchers::Predicate<k::log::compiler_error>(
+        [](const auto& error) {
+            return error.get_diagnostic().message.find("incompatible lifecycle ABI") != std::string::npos;
+        }, "rejects the legacy union layout");
+    REQUIRE_THROWS_MATCHES(make_compiler()->parse_source("union_abi_legacy.k", consumer, false, false),
+                           k::log::compiler_error, incompatible);
+}
+
 TEST_CASE("KDI preserves imported default and copy constructor exception contracts",
           "[import][constructor][exceptions][regression]") {
     TmpKdi lib(R"K(

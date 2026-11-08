@@ -1334,22 +1334,31 @@ A discriminated (tagged) union holds one active alternative at a time. A hidden
 
 | Operation | Behaviour |
 |-----------|-----------|
-| Default construction | Constructs alternative 0; storage is zero-initialized. |
+| Default construction | Selects alternative 0 and zero-initializes storage without constructing a class/struct payload. |
 | Explicit member assignment (`u.alt = x`) | Constructs an inactive class/struct payload after destroying the old alternative; assigns an already-active payload. Updates discriminant only after successful construction. |
 | Member access (`u.alt`) | Runtime-checks the discriminant; mismatch traps by default. In classic `if-let`, mismatch soft-fails to the false branch. |
 | Destruction | Switch on discriminant; calls destructor of active alternative if non-trivial. |
 
 A failed alternative construction leaves no live payload to destroy. A later
-member assignment may activate a new alternative.
+member assignment may activate a new alternative. Copying a live payload must
+respect its copy constructor's checked-exception contract. A `const`
+alternative is copied from a const source even in a mutable union. Copy
+contract checking considers potentially active alternatives, while the
+runtime copy dispatches only to the active payload.
 
 ### 19b.3 Memory Layout
 
 ```
-{ uint32 discriminant, [max_size x i8] storage }
+{ uint64 tag_and_lifecycle, [max_size x i8] storage }
 ```
 
 Storage is sized to the largest alternative (including all inherited alternatives
-when the union has a parent).
+when the union has a parent). The low 32 bits of the first word hold the
+discriminant; the remaining bits are reserved for lifecycle state. The current
+implementation requires little-endian targets. Its lifecycle state is
+incompatible with earlier code even when the physical layout is unchanged.
+Rebuild affected libraries, KDI descriptors and consumers together; the
+importer does not yet detect every incompatible descriptor.
 
 ### 19b.4 Inheritance
 

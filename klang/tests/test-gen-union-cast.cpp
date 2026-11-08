@@ -18,6 +18,100 @@
 #include <catch2/catch_all.hpp>
 #include "helpers.hpp"
 
+TEST_CASE("Union value casts copy their alternative while references borrow",
+          "[gen][union][cast][copy][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_cast_copy;
+        copies: int = 0;
+        class Value {
+        public:
+            value: int = 42;
+            Value() {}
+            Value(other: const Value&) -> delete;
+            Value(other: Value&) : value(other.value) { ++copies; }
+        }
+        union Storage { empty: byte; value: Value; }
+        test(): int {
+            source: Value;
+            storage: Storage(source);
+            ref: Value& = (Value&) storage;
+            copy: Value = (Value) storage;
+            return ref.value + copy.value + copies - 44;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Implicit union alternative initialization copies a copyable class",
+          "[gen][union][cast][copy][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_implicit_copy;
+        copies: int = 0;
+        class Value {
+        public:
+            value: int = 42;
+            Value() {}
+            Value(other: const Value&) : value(other.value) { ++copies; }
+        }
+        union Storage { empty: byte; value: Value; }
+        copyFrom(storage: const Storage&): int {
+            copy: Value = storage;
+            return copy.value;
+        }
+        test(): int {
+            source: Value;
+            storage: Storage(source);
+            first: Value = storage;
+            second: int = copyFrom(storage);
+            if (copies != 3) return -1;
+            return first.value + second - 42;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Union alternative copies retain constructor friendship",
+          "[gen][union][cast][copy][friend][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_copy_friend;
+        class Value {
+            friend allowed;
+        private:
+            Value(other: const Value&) {}
+        public:
+            Value() {}
+        }
+        union Storage { empty: byte; value: Value; }
+        allowed(value: const Value&): int {
+            storage: Storage(value);
+            copy: Value = (Value) storage;
+            return 42;
+        }
+        test(): int { value: Value; return allowed(value); }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+    REQUIRE_THROWS(gen_jit_throws(R"K(
+        module union_copy_private;
+        class Value {
+        private:
+            Value(other: const Value&) {}
+        public:
+            Value() {}
+        }
+        union Storage { empty: byte; value: Value; }
+        denied(value: const Value&): int { storage: Storage(value); return 0; }
+    )K"));
+}
+
 TEST_CASE("Union cast: explicit cast by value and reference", "[gen][union][cast]") {
     auto jit = gen_jit(R"SRC(
         module gen_union_cast_01;

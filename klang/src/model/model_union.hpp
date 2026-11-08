@@ -276,10 +276,15 @@ public:
      */
     bool has_nontrivial_destructor_alternative() const {
         for (const auto* alt_ptr : all_alternatives_ptrs()) {
-            if (auto st = std::dynamic_pointer_cast<struct_type>(alt_ptr->resolved_type)) {
+            auto alt_type = type::canonical(type::remove_const(type::canonical(alt_ptr->resolved_type)));
+            if (type::is_owner(alt_type) || type::is_sized_array(alt_type)) return true;
+            if (auto callable = std::dynamic_pointer_cast<callable_type>(alt_type)) {
+                if (callable->is_owner()) return true;
+            }
+            if (auto st = std::dynamic_pointer_cast<struct_type>(alt_type)) {
                 if (auto agg = st->get_struct()) {
                     if (agg->get_destructor()) return true;
-                }
+                } else return true;
             }
         }
         return false;

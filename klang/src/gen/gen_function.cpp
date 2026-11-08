@@ -1453,6 +1453,10 @@ void implementation_generator::visit_function(function &function) {
     // declaration on-demand for template instantiations reachable only now.
     llvm::Function* func = ensure_function_declared(function);
 
+    auto previous_function = std::exchange(_current_function, function.shared_as<model::function>());
+    auto current_function_guard = llvm::make_scope_exit([&]() {
+        _current_function = std::move(previous_function);
+    });
     begin_function_debug_scope(function, func);
     auto debug_scope_guard = k::make_scope_exit([&]() {
         end_function_debug_scope();
@@ -1645,7 +1649,10 @@ void implementation_generator::visit_function(function &function) {
             if (type::is_reference(pt) || type::is_pointer(pt) || type::is_link(pt)
                 || type::is_view(pt) || type::is_owner(pt)) continue;
             if (auto st_type = std::dynamic_pointer_cast<struct_type>(pt)) {
-                if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
+                auto agg = st_type->get_struct();
+                auto un = agg ? nullptr : find_union_by_struct_type(_unit.get_root_namespace(), st_type);
+                if ((agg && agg->get_destructor())
+                    || (un && un->has_nontrivial_destructor_alternative())) {
                     struct_params.push_back(param);
                     auto* flag = _builder->CreateAlloca(
                         llvm::Type::getInt1Ty(_context->llvm_context()), nullptr,
@@ -1916,19 +1923,15 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
                 auto other_ptr = _builder->CreateLoad(other_ref_type, other_alloca_it->second, "other_ref");
                 auto st_llvm_type = _context->get_llvm_type(st->get_struct_type());
 
-                // Copy each field by field index using GEP + memcpy approach:
-                // We use a simple aggregate load/store (only valid for simple types).
-                // For structs with nested struct members, we'd need to call their copy ctors —
-                // but since we only generate this for trivially-copyable cases,
-                // a bitwise copy (memcpy semantics) is correct.
-                // Use llvm.memcpy intrinsic: copy sizeof(Struct) bytes from other to this.
-                auto& dl = _context->_module->getDataLayout();
-                uint64_t size = dl.getTypeAllocSize(st_llvm_type);
-                _builder->CreateMemCpy(
-                    this_ptr, llvm::MaybeAlign(),
-                    other_ptr, llvm::MaybeAlign(),
-                    _builder->getInt64(size)
-                );
+                if (!emit_scalar_union_wrapper_copy(this_ptr, other_ptr, st, false, false)) {
+                    auto& dl = _context->_module->getDataLayout();
+                    uint64_t size = dl.getTypeAllocSize(st_llvm_type);
+                    _builder->CreateMemCpy(
+                        this_ptr, llvm::MaybeAlign(),
+                        other_ptr, llvm::MaybeAlign(),
+                        _builder->getInt64(size)
+                    );
+                }
             }
         }
         // No user block to visit for a generated copy constructor — return immediately.
@@ -2051,14 +2054,15 @@ bool implementation_generator::emit_copy_assignment_operator(function& function,
             auto other_ref_type = _context->get_llvm_type(st->get_struct_type()->get_reference());
             auto other_ptr = _builder->CreateLoad(other_ref_type, other_alloca_it->second, "other_ref");
             auto st_llvm_type = _context->get_llvm_type(st->get_struct_type());
-            // Memberwise copy using memcpy
-            auto& dl = _context->_module->getDataLayout();
-            uint64_t size = dl.getTypeAllocSize(st_llvm_type);
-            _builder->CreateMemCpy(
-                this_ptr, llvm::MaybeAlign(),
-                other_ptr, llvm::MaybeAlign(),
-                _builder->getInt64(size)
-            );
+            if (!emit_scalar_union_wrapper_copy(this_ptr, other_ptr, st, true, true)) {
+                auto& dl = _context->_module->getDataLayout();
+                uint64_t size = dl.getTypeAllocSize(st_llvm_type);
+                _builder->CreateMemCpy(
+                    this_ptr, llvm::MaybeAlign(),
+                    other_ptr, llvm::MaybeAlign(),
+                    _builder->getInt64(size)
+                );
+            }
         }
     }
     // Return this (ref to struct)

@@ -359,13 +359,16 @@ TEST_CASE("Drain struct — simulated move constructor pattern", "[gen][drain]")
     REQUIRE(fn_drained() == 0);  // source was drained
 }
 
-TEST_CASE("Drain to value rejects a deleted copy in non-union value contexts",
+TEST_CASE("Drain to value rejects a deleted copy in every value context",
           "[gen][drain][copy][delete][regression]") {
     for (const auto* body : {
              "test(value: Key&): int { consume(#value); return 0; }",
              "test(value: Key#): int { consume(value); return 0; }",
              "test(value: Key&): Key { return #value; }",
-             "test(value: Key&): int { copy: Key = (Key) #value; return 0; }"}) {
+             "test(value: Key&): int { copy: Key = (Key) #value; return 0; }",
+             "test(value: Key&): int { slot: Slot(#value); return 0; }",
+             "test(value: Key&): int { d: Key# = #value; slot: Slot(d); return 0; }",
+             "test(value: Key&): int { useSlot(Slot(#value)); return 0; }"}) {
         std::string source = R"K(
             module drain_deleted_copy;
             class Key {
@@ -376,7 +379,9 @@ TEST_CASE("Drain to value rejects a deleted copy in non-union value contexts",
                 Key() {}
                 ~Key() {}
             }
+            union Slot { empty: byte; key: Key; }
             consume(value: Key) {}
+            useSlot(value: Slot) {}
         )K";
         source += body;
         INFO(body);
@@ -495,6 +500,40 @@ TEST_CASE("Drain to value transfers an owned array exactly once",
             result: int = consume(#source);
             if (!source.empty() || moves != 1) return -1;
             return result;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Drain moves a class into a union alternative",
+          "[gen][drain][union][move][regression]") {
+    auto jit = gen_jit(R"K(
+        module drain_union_move;
+        releases: int = 0;
+        moves: int = 0;
+        class Resource {
+        public:
+            owns: int = 1;
+            Resource() {}
+            Resource(other: const Resource&) -> delete;
+            Resource(other: Resource#) : owns(other.owns) { other.owns = 0; ++moves; }
+            ~Resource() { if (owns != 0) ++releases; }
+        }
+        union Slot { empty: byte; value: Resource; }
+        test(): int {
+            releases = 0; moves = 0;
+            {
+                source: Resource;
+                {
+                    slot: Slot(#source);
+                    if (source.owns != 0 || moves != 1 || releases != 0) return -1;
+                }
+                if (releases != 1) return -2;
+            }
+            return releases == 1 ? 42 : -3;
         }
     )K");
     REQUIRE(jit);

@@ -18,11 +18,13 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "resolvers_scope_lookup.hpp"
 
 #include "../model/imported.hpp"
 #include "../model/mangler.hpp"
 #include "../errors.hpp"
 
+#include <functional>
 #include <limits>
 #include <set>
 
@@ -244,6 +246,8 @@ void implementation_generator::emit_expression_temporaries_cleanup(const lex::op
         if (it->array_type) {
             emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
                 it->alloca, it->array_type, make_virtual_call_emitter());
+        } else if (it->union_type) {
+            emit_union_cleanup(it->alloca, *it->union_type);
         } else if (it->destructor) {
             create_call_or_invoke(it->destructor->getFunctionType(), it->destructor, {it->alloca});
         }
@@ -275,7 +279,7 @@ void implementation_generator::emit_scope_variable_cleanup(
         if (var_it == _context->_variables.end()) continue;
         llvm::AllocaInst* alloca = var_it->second;
 
-        auto vt = var_stmt->get_type();
+        auto vt = type::canonical(type::remove_const(var_stmt->get_type()));
         if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
             if (auto agg = st_type->get_struct()) {
                 auto dtor = agg->get_destructor();
@@ -316,7 +320,24 @@ void implementation_generator::emit_scope_variable_cleanup(
                 }
             } else {
                 auto udef = find_union_for_struct_type(_unit, st_type);
-                if (udef) emit_union_cleanup(alloca, *udef);
+                if (!udef) continue;
+                auto flag_it = _dtor_flags.find(var_stmt);
+                if (use_dtor_flags && flag_it != _dtor_flags.end()) {
+                    auto* func = _builder->GetInsertBlock()->getParent();
+                    auto* destroy = llvm::BasicBlock::Create(llvm_ctx, "union_cleanup", func);
+                    auto* done = llvm::BasicBlock::Create(llvm_ctx, "union_cleanup_done", func);
+                    auto* live = _builder->CreateLoad(_builder->getInt1Ty(), flag_it->second);
+                    _builder->CreateCondBr(live, destroy, done);
+                    _builder->SetInsertPoint(destroy);
+                    _builder->CreateStore(_builder->getFalse(), flag_it->second);
+                    emit_union_cleanup(alloca, *udef);
+                    _builder->CreateBr(done);
+                    _builder->SetInsertPoint(done);
+                } else {
+                    if (flag_it != _dtor_flags.end())
+                        _builder->CreateStore(_builder->getFalse(), flag_it->second);
+                    emit_union_cleanup(alloca, *udef);
+                }
             }
         } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
             emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
@@ -374,10 +395,11 @@ void implementation_generator::emit_active_parameter_cleanup(const std::string& 
         for (auto it = params.rbegin(); it != params.rend(); ++it) {
             auto& param = *it;
             auto st_type = std::dynamic_pointer_cast<struct_type>(param->get_type());
-            if (!st_type || !st_type->get_struct() || !st_type->get_struct()->get_destructor()) continue;
-            auto dtor = st_type->get_struct()->get_destructor();
-            auto dtor_it = _context->_functions.find(dtor->shared_as<k::model::function>());
-            if (dtor_it == _context->_functions.end()) continue;
+            if (!st_type) continue;
+            auto agg = st_type->get_struct();
+            auto un = agg ? nullptr : find_union_for_struct_type(_unit, st_type);
+            auto dtor = agg ? agg->get_destructor() : nullptr;
+            if (!dtor && !un) continue;
             auto param_it = _context->_parameter_variables.find(param);
             if (param_it == _context->_parameter_variables.end()) continue;
             auto* fn = _builder->GetInsertBlock()->getParent();
@@ -392,7 +414,13 @@ void implementation_generator::emit_active_parameter_cleanup(const std::string& 
                 _builder->CreateStore(
                     llvm::ConstantInt::getFalse(_context->llvm_context()), flag_it->second);
             }
-            create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {param_it->second});
+            if (dtor) {
+                if (auto* llvm_dtor = _context->lookup_llvm_function(dtor)) {
+                    create_call_or_invoke(llvm_dtor->getFunctionType(), llvm_dtor, {param_it->second});
+                }
+            } else {
+                emit_union_cleanup(param_it->second, *un);
+            }
             _builder->CreateBr(done);
             _builder->SetInsertPoint(done);
         }
@@ -504,19 +532,13 @@ void implementation_generator::visit_block(block& blk) {
     std::vector<std::shared_ptr<variable_statement>> dtor_vars;
     for (auto& stmt : blk.get_statements()) {
         if (auto var_stmt = std::dynamic_pointer_cast<variable_statement>(stmt)) {
-            auto vt = var_stmt->get_type();
+            auto vt = type::canonical(type::remove_const(var_stmt->get_type()));
             // Struct with destructor
             if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
-                if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
+                auto agg = st_type->get_struct();
+                auto un = agg ? nullptr : find_union_for_struct_type(_unit, st_type);
+                if ((agg && agg->get_destructor()) || (un && un->has_nontrivial_destructor_alternative())) {
                     dtor_vars.push_back(var_stmt);
-                }
-                // Union with non-trivial alternative(s)
-                else if (!st_type->get_struct()) {
-                    if (auto udef = find_union_for_struct_type(_unit, st_type)) {
-                        if (udef->has_nontrivial_destructor_alternative()) {
-                            dtor_vars.push_back(var_stmt);
-                        }
-                    }
                 }
             }
             // Owner type — always needs cleanup (destroy + free on scope exit)
@@ -2556,6 +2578,78 @@ void type_reference_resolver::check_call_exception_types(
     }
 }
 
+void type_reference_resolver::check_union_lifecycle_constructor_contract(
+    const constructor& ctor, const lex::opt_any_lexeme& lexeme) {
+    if (ctor.is_throws_spec_unknown()) {
+        throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_UNCAUGHT_EXCEPTION),
+            lexeme, "Union lifecycle constructor '{}' has an unknown exception contract; regenerate its KDI descriptor",
+            {ctor.get_fq_name()});
+    }
+    check_call_contract(ctor, lexeme);
+}
+
+void type_reference_resolver::check_union_payload_copy_contract(
+    const std::shared_ptr<type>& payload, bool source_const,
+    const lex::opt_any_lexeme& lexeme) {
+    std::set<const struct_type*> visited_mutable;
+    std::set<const struct_type*> visited_const;
+    std::function<void(const std::shared_ptr<type>&, bool)> check =
+        [&](const auto& value, bool value_const) {
+        auto bare = type::canonical(type::remove_const(type::canonical(value)));
+        if (auto array = std::dynamic_pointer_cast<sized_array_type>(bare)) {
+            check(array->get_subtype(), value_const);
+            return;
+        }
+        auto st = std::dynamic_pointer_cast<struct_type>(bare);
+        auto& visited = value_const ? visited_const : visited_mutable;
+        if (!st || !visited.insert(st.get()).second) return;
+        auto agg = st->get_struct();
+        if (!agg) {
+            if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), st)) {
+                for (const auto* alt : un->all_alternatives_ptrs()) {
+                    if (alt) {
+                        const bool alt_const = value_const || alt->is_const
+                            || type::is_const(type::canonical(alt->resolved_type));
+                        check(alt->resolved_type, alt_const);
+                    }
+                }
+            }
+            return;
+        }
+
+        auto wrapper_copy = agg->get_copy_constructor();
+        if ((!wrapper_copy || wrapper_copy->is_compiler_generated())) {
+            if (auto un = scalar_union_wrapper(agg, _unit.get_root_namespace())) {
+                check(un->get_struct_type(), value_const);
+                return;
+            }
+        }
+
+        std::shared_ptr<constructor> selected;
+        bool selected_const = true;
+        for (const auto& ctor : agg->constructors()) {
+            if (!ctor || !agg->is_copy_constructor(*ctor) || ctor->get_parameter_size() != 1
+                || !ctor->get_parameter(0)) continue;
+            auto param = type::canonical(ctor->get_parameter(0)->get_type());
+            if (!type::is_reference(param)) continue;
+            const bool param_const = type::is_const(param->get_subtype());
+            if (value_const && !param_const) continue;
+            if (!selected || (selected_const && !param_const)) {
+                selected = ctor;
+                selected_const = param_const;
+            }
+        }
+        if (!selected || selected->is_deleted()) return;
+        std::vector<std::shared_ptr<function>> access_stack;
+        if (!_function_stack.empty() && _function_stack.back())
+            access_stack.push_back(_function_stack.back());
+        if (!scope_lookup::is_struct_member_accessible(selected->get_visibility(), *agg, agg, access_stack)
+            && !scope_lookup::is_friend_of(*agg, access_stack, _unit)) return;
+        check_union_lifecycle_constructor_contract(*selected, lexeme);
+    };
+    check(payload, source_const);
+}
+
 //
 // If-then-else
 //
@@ -4024,10 +4118,13 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
         build.CreateStore(llvm::ConstantAggregateZero::get(type), alloca);
     }
 
-    // Create construction flag for struct-with-dtor variables (for exception unwinding safety)
+    // Create construction flags before any exception can reach this scope.
     bool has_dtor_flag = false;
-    if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
-        if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
+    if (auto st_type = std::dynamic_pointer_cast<struct_type>(k::model::type::remove_const(var_type))) {
+        auto agg = st_type->get_struct();
+        auto un = agg ? nullptr : find_union_for_struct_type(_unit, st_type);
+        if ((agg && agg->get_destructor())
+            || (un && un->has_nontrivial_destructor_alternative())) {
             auto* i1_ty = llvm::Type::getInt1Ty(build.getContext());
             auto* flag_alloca = build.CreateAlloca(i1_ty, nullptr, var.get_short_name() + ".constructed");
             // Cleared in the entry block for the same reason as owner slots above.
@@ -4134,136 +4231,190 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
 
 }
 
+llvm::Value* implementation_generator::union_live_state_ptr(llvm::Value* storage, union_type_def& udef) {
+    auto* layout = llvm::dyn_cast<llvm::StructType>(udef.get_struct_type()->get_llvm_type());
+    if (!layout || layout->getNumElements() < 2 || !layout->getElementType(0)->isIntegerTy(64)
+        || !_context->module().getDataLayout().isLittleEndian()) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), {},
+            "Union '{}' has an incompatible lifecycle layout", {udef.get_short_name()});
+    }
+    return _builder->CreateConstGEP1_64(_builder->getInt8Ty(), storage, 4, "union_live_state");
+}
+
+void implementation_generator::set_union_live_state(llvm::Value* storage, union_type_def& udef, bool live) {
+    _builder->CreateStore(_builder->getInt32(live ? 1 : 0), union_live_state_ptr(storage, udef));
+}
+
+void implementation_generator::emit_union_copy_failure() {
+    auto root = _unit.get_root_namespace();
+    auto k_namespace = root && root->get_short_name() == "k" ? root
+        : (root ? root->get_child_namespace("k") : nullptr);
+    auto fatal = k_namespace ? k_namespace->get_aggregate("FatalError") : nullptr;
+    if (!fatal) {
+        fatal = _unit.get_or_create_imported_aggregate(k::name(false, {"k", "FatalError"}), _context);
+    }
+    std::shared_ptr<constructor> ctor;
+    if (fatal) {
+        for (const auto& candidate : fatal->constructors()) {
+            if (candidate && candidate->get_parameter_size() == 1
+                && type::are_equal(candidate->get_parameter(0)->get_type(),
+                                   _context->from_type(primitive_type::INT))) {
+                ctor = candidate;
+                break;
+            }
+        }
+    }
+    if (!fatal || !ctor) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F031), {},
+            "Cannot emit the union-copy runtime error: k::FatalError(int) is unavailable");
+    }
+    auto* llvm_ctor = _context->lookup_llvm_function(ctor);
+    if (!llvm_ctor) {
+        if (auto imported = std::dynamic_pointer_cast<imported_aggregate>(fatal)) {
+            const auto* descriptor = imported->get_kdi_aggregate();
+            const auto& constructors = fatal->constructors();
+            for (size_t i = 0; descriptor && i < constructors.size()
+                    && i < descriptor->constructors.size(); ++i) {
+                if (constructors[i] != ctor) continue;
+                const auto& imported_ctor = descriptor->constructors[i];
+                if (!imported_ctor.llvm_def.empty() && !imported_ctor.mangled_name.empty()) {
+                    llvm_ctor = _context->declare_llvm_function_from_def(
+                        imported_ctor.llvm_def, imported_ctor.mangled_name);
+                }
+                break;
+            }
+        }
+        if (!llvm_ctor) llvm_ctor = ensure_function_declared(*ctor);
+    }
+    _context->_functions[ctor] = llvm_ctor;
+
+    // "UCOP": an unchecked failure to copy the active union alternative.
+    auto code = value_expression::from_value(static_cast<int>(0x55434f50));
+    auto temporary = temporary_construction_expression::make_shared(fatal->get_struct_type(), {code});
+    temporary->set_type(fatal->get_struct_type()->get_reference());
+    temporary->set_constructor(ctor);
+    auto stmt = std::make_shared<throw_statement>(std::shared_ptr<statement>{});
+    stmt->set_expression(temporary);
+
+    auto* fn = _builder->GetInsertBlock()->getParent();
+    llvm::IRBuilder<> entry(&fn->getEntryBlock(), fn->getEntryBlock().begin());
+    auto* exception_storage = entry.CreateAlloca(_context->get_llvm_type(fatal->get_struct_type()),
+                                                  nullptr, "union_copy_error");
+    auto* saved_destination = _sret_destination;
+    _sret_destination = exception_storage;
+    visit_throw_statement(*stmt);
+    _sret_destination = saved_destination;
+    _builder->CreateUnreachable();
+}
+
+void implementation_generator::emit_union_payload_cleanup(
+    llvm::Value* storage, const std::shared_ptr<type>& payload_type, bool protect_remaining) {
+    auto bare = type::canonical(type::remove_const(type::canonical(payload_type)));
+    if (auto owner = std::dynamic_pointer_cast<owner_type>(bare)) {
+        emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+            storage, owner->get_owned_type(), "union_owner", make_virtual_call_emitter());
+    } else if (auto callable = std::dynamic_pointer_cast<callable_type>(bare)) {
+        if (callable->is_owner()) {
+            emit_owned_callable_cleanup_if_nonnull(_builder.get(), get_module(), storage,
+                _context->get_or_create_callable_llvm_type(), "union_callable", make_virtual_call_emitter());
+        }
+    } else if (auto array = std::dynamic_pointer_cast<sized_array_type>(bare)) {
+        call_argument_cleanup_scope remaining(*this, protect_remaining);
+        remaining.track_storage(bare, storage);
+        auto* array_type = array->get_llvm_struct_type();
+        auto* data_type = array->get_llvm_data_array_type();
+        auto* count_ptr = _builder->CreateStructGEP(
+            array_type, storage, sized_array_type::FIELD_SIZE, "union_array_count");
+        auto* data_ptr = _builder->CreateStructGEP(
+            array_type, storage, sized_array_type::FIELD_DATA, "union_array_data");
+        auto* func = _builder->GetInsertBlock()->getParent();
+        auto* test = llvm::BasicBlock::Create(**_context, "union_array_cleanup_test", func);
+        auto* destroy = llvm::BasicBlock::Create(**_context, "union_array_cleanup_element", func);
+        auto* done = llvm::BasicBlock::Create(**_context, "union_array_cleanup_done", func);
+        _builder->CreateBr(test);
+        _builder->SetInsertPoint(test);
+        auto* count = _builder->CreateLoad(_builder->getInt32Ty(), count_ptr);
+        _builder->CreateCondBr(_builder->CreateICmpNE(count, _builder->getInt32(0)), destroy, done);
+        _builder->SetInsertPoint(destroy);
+        auto* index = _builder->CreateSub(count, _builder->getInt32(1));
+        _builder->CreateStore(index, count_ptr);
+        auto* element = _builder->CreateInBoundsGEP(data_type, data_ptr,
+            {_builder->getInt32(0), index}, "union_array_element");
+        emit_union_payload_cleanup(element, array->get_subtype(), protect_remaining);
+        _builder->CreateBr(test);
+        _builder->SetInsertPoint(done);
+        remaining.transfer();
+    } else if (auto st = std::dynamic_pointer_cast<struct_type>(bare)) {
+        if (auto agg = st->get_struct()) {
+            if (auto dtor = agg->get_destructor()) {
+                if (auto* llvm_dtor = _context->lookup_llvm_function(dtor)) {
+                    if (agg->has_vtable())
+                        emit_virtual_destructor_call(_builder.get(), *agg, storage, make_virtual_call_emitter());
+                    else
+                        create_call_or_invoke(llvm_dtor->getFunctionType(), llvm_dtor, {storage});
+                }
+            }
+        } else if (auto nested = find_union_for_struct_type(_unit, st)) {
+            emit_union_cleanup(storage, *nested);
+        }
+    }
+}
+
 void implementation_generator::emit_union_cleanup(llvm::Value* storage, union_type_def& udef) {
-    // Layout: { i32 discriminant, [N x i8] storage }
+    if (!udef.has_nontrivial_destructor_alternative()) return;
     auto* union_llvm_type = udef.get_struct_type()->get_llvm_type();
     auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, storage, 0, "union_dtor_disc_ptr");
     auto* disc_val = _builder->CreateLoad(llvm::Type::getInt32Ty(**_context), disc_ptr, "union_dtor_disc");
 
     auto* cur_fn = _builder->GetInsertBlock()->getParent();
     auto* merge_bb = llvm::BasicBlock::Create(**_context, "union_dtor_done", cur_fn);
-
-    // Count how many alternatives in the FULL CHAIN actually need destruction
-    std::vector<std::pair<size_t, std::shared_ptr<function>>> alt_dtors;
-    for (const auto* alt_ptr : udef.all_alternatives_ptrs()) {
-        if (auto st = std::dynamic_pointer_cast<struct_type>(alt_ptr->resolved_type)) {
-            if (auto agg = st->get_struct()) {
-                if (auto dtor = agg->get_destructor()) {
-                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-                    if (dtor_it != _context->_functions.end()) {
-                        alt_dtors.emplace_back(alt_ptr->index, dtor);
-                    }
-                }
-            }
-        }
-    }
-
-    if (alt_dtors.empty()) {
-        // No alternatives actually have destructors — just branch to merge
-        _builder->CreateBr(merge_bb);
-        _builder->SetInsertPoint(merge_bb);
-        return;
-    }
-
-    auto* switch_inst = _builder->CreateSwitch(disc_val, merge_bb, alt_dtors.size());
-
-    for (auto& [alt_idx, dtor] : alt_dtors) {
+    auto* dispatch_bb = llvm::BasicBlock::Create(**_context, "union_dtor_dispatch", cur_fn);
+    auto* live = _builder->CreateLoad(_builder->getInt32Ty(), union_live_state_ptr(storage, udef));
+    auto* default_unconstructed = _builder->CreateAnd(
+        _builder->CreateICmpEQ(disc_val, _builder->getInt32(0)),
+        _builder->CreateICmpEQ(live, _builder->getInt32(0)));
+    _builder->CreateCondBr(default_unconstructed, merge_bb, dispatch_bb);
+    _builder->SetInsertPoint(dispatch_bb);
+    auto alternatives = udef.all_alternatives_ptrs();
+    auto* switch_inst = _builder->CreateSwitch(disc_val, merge_bb, alternatives.size());
+    for (const auto* alt : alternatives) {
         auto* case_bb = llvm::BasicBlock::Create(**_context,
-            "union_dtor_alt" + std::to_string(alt_idx), cur_fn);
+            "union_dtor_alt" + std::to_string(alt->index), cur_fn);
         switch_inst->addCase(
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(**_context), alt_idx),
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(**_context), alt->index),
             case_bb);
 
         _builder->SetInsertPoint(case_bb);
-        // Disarm before any potentially throwing destructor; this alternative
-        // must not be revisited by a later cleanup path.
         _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
+        set_union_live_state(storage, udef, false);
         auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, storage, 1, "union_dtor_storage");
-        if (dtor->is_virtual()) {
-            auto* vptr_val = _builder->CreateLoad(llvm::PointerType::get(**_context, 0), storage_ptr, "union_dtor_vptr");
-            auto* is_null = _builder->CreateICmpEQ(
-                vptr_val,
-                llvm::ConstantPointerNull::get(llvm::PointerType::get(**_context, 0)),
-                "union_dtor_vptr_null");
-            auto* dtor_call_bb = llvm::BasicBlock::Create(**_context, "union_dtor_call", cur_fn);
-            _builder->CreateCondBr(is_null, merge_bb, dtor_call_bb);
-            _builder->SetInsertPoint(dtor_call_bb);
-        }
-        auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-        create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {storage_ptr});
+        emit_union_payload_cleanup(storage_ptr, alt->resolved_type);
         _builder->CreateBr(merge_bb);
     }
-
     _builder->SetInsertPoint(merge_bb);
 }
 
-
 void implementation_generator::emit_union_cleanup_on_reassign(llvm::Value* union_base, union_type_def& udef, size_t new_alt_idx) {
-    // Destroy the currently-active alternative (if it has a destructor and it
-    // differs from the new one being assigned).
+    if (!udef.has_nontrivial_destructor_alternative()) return;
     auto* union_llvm_type = udef.get_struct_type()->get_llvm_type();
     auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 0, "union_reassign_disc_ptr");
     auto* disc_val = _builder->CreateLoad(llvm::Type::getInt32Ty(**_context), disc_ptr, "union_reassign_disc");
-
-    // Collect alternatives in the FULL CHAIN that have destructors and are NOT the new alternative
-    std::vector<std::pair<size_t, std::shared_ptr<function>>> alt_dtors;
-    for (const auto* alt_ptr : udef.all_alternatives_ptrs()) {
-        if (alt_ptr->index == new_alt_idx) continue;
-        if (auto st = std::dynamic_pointer_cast<struct_type>(alt_ptr->resolved_type)) {
-            if (auto agg = st->get_struct()) {
-                if (auto dtor = agg->get_destructor()) {
-                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-                    if (dtor_it != _context->_functions.end()) {
-                        alt_dtors.emplace_back(alt_ptr->index, dtor);
-                    }
-                }
-            }
-        }
-    }
-
-    if (alt_dtors.empty()) {
-        // No alternatives with destructors to clean up — nothing to do
-        return;
-    }
-
     auto* cur_fn = _builder->GetInsertBlock()->getParent();
     auto* merge_bb = llvm::BasicBlock::Create(**_context, "union_reassign_done", cur_fn);
-
-    // If the discriminant already matches the new target, skip destruction
     auto* already_new = _builder->CreateICmpEQ(disc_val,
         llvm::ConstantInt::get(llvm::Type::getInt32Ty(**_context), new_alt_idx), "union_already_new");
     auto* need_cleanup_bb = llvm::BasicBlock::Create(**_context, "union_reassign_cleanup", cur_fn);
-    _builder->CreateCondBr(already_new, merge_bb, need_cleanup_bb);
+    auto* alt = udef.get_alternative_by_global_index(new_alt_idx);
+    auto alt_type = alt ? type::canonical(type::remove_const(alt->resolved_type)) : nullptr;
+    auto callable = std::dynamic_pointer_cast<callable_type>(alt_type);
+    if (type::is_owner(alt_type) || (callable && callable->is_owner()))
+        _builder->CreateBr(need_cleanup_bb);
+    else
+        _builder->CreateCondBr(already_new, merge_bb, need_cleanup_bb);
 
     _builder->SetInsertPoint(need_cleanup_bb);
-    auto* switch_inst = _builder->CreateSwitch(disc_val, merge_bb, alt_dtors.size());
-
-    for (auto& [alt_idx, dtor] : alt_dtors) {
-        auto* case_bb = llvm::BasicBlock::Create(**_context,
-            "union_reassign_dtor_alt" + std::to_string(alt_idx), cur_fn);
-        switch_inst->addCase(
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(**_context), alt_idx),
-            case_bb);
-
-        _builder->SetInsertPoint(case_bb);
-        auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 1, "union_reassign_storage");
-        // Disarm the old alternative before invoking a destructor that may throw.
-        _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
-        if (dtor->is_virtual()) {
-            auto* vptr_val = _builder->CreateLoad(llvm::PointerType::get(**_context, 0), storage_ptr, "reassign_vptr");
-            auto* is_null = _builder->CreateICmpEQ(
-                vptr_val,
-                llvm::ConstantPointerNull::get(llvm::PointerType::get(**_context, 0)),
-                "reassign_vptr_null");
-            auto* dtor_call_bb = llvm::BasicBlock::Create(**_context, "reassign_dtor_call", cur_fn);
-            _builder->CreateCondBr(is_null, merge_bb, dtor_call_bb);
-            _builder->SetInsertPoint(dtor_call_bb);
-        }
-        auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-        create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {storage_ptr});
-        _builder->CreateBr(merge_bb);
-    }
-
+    emit_union_cleanup(union_base, udef);
+    _builder->CreateBr(merge_bb);
     _builder->SetInsertPoint(merge_bb);
 }
 

@@ -364,7 +364,8 @@ reject a generic signature if it cannot export that contract. Constructor
 Legacy descriptors without the field do not establish an empty contract.
 Regenerate their KDI and use an updated compiler to preserve constructor throws.
 The current compiler model retains legacy unknown contracts but call-contract
-checks do not reject them for ordinary calls. Older readers ignore the new field; neither
+checks do not reject them for ordinary calls, while union lifecycle operations
+reject unknown constructor contracts. Older readers ignore the new field; neither
 ordinary imports with an omitted contract nor older readers are exception-safe
 for a throwing constructor. The schema remains `0.1` and
 this extension is not fail-closed.

@@ -203,6 +203,7 @@ protected:
     llvm::DIScope* _current_debug_scope = nullptr;
 
     std::stack<std::shared_ptr<aggregate>> _struct_stack;
+    std::shared_ptr<function> _current_function;
 
     /** Stack of active cleanup BasicBlocks, one per block with destructible local variables. */
     std::stack<llvm::BasicBlock*> _cleanup_blocks;
@@ -228,6 +229,7 @@ protected:
         llvm::AllocaInst* alloca = nullptr;
         llvm::Function* destructor = nullptr;
         std::shared_ptr<sized_array_type> array_type;
+        std::shared_ptr<union_type_def> union_type;
     };
 
     /**
@@ -327,7 +329,7 @@ protected:
     class call_argument_cleanup_scope {
         implementation_generator& _gen;
         struct entry {
-            llvm::AllocaInst* storage;
+            llvm::Value* storage;
             llvm::AllocaInst* live;
             std::shared_ptr<type> value_type;
         };
@@ -340,6 +342,7 @@ protected:
         call_argument_cleanup_scope(implementation_generator& gen, bool enabled);
         ~call_argument_cleanup_scope() noexcept(false);
         llvm::Value* track(const std::shared_ptr<type>& value_type, llvm::Value* value);
+        void track_storage(const std::shared_ptr<type>& value_type, llvm::Value* storage);
         void transfer();
     };
 
@@ -892,7 +895,8 @@ public:
                                  const char* copy_context,
                                  bool named_result_assignment = false,
                                  bool allow_move = true,
-                                 const std::shared_ptr<constructor>& selected_copy = nullptr);
+                                 const std::shared_ptr<constructor>& selected_copy = nullptr,
+                                 bool source_const = false);
 
     /**
      * Emit cleanup (destructor / owner free) for a single condition variable.
@@ -908,6 +912,20 @@ public:
      */
     void emit_union_cleanup(llvm::Value* storage, union_type_def& udef);
     void emit_union_cleanup_on_reassign(llvm::Value* union_base, union_type_def& udef, size_t new_alt_idx);
+    void emit_union_payload_cleanup(llvm::Value* storage, const std::shared_ptr<type>& payload_type,
+                                    bool protect_remaining = true);
+    void emit_union_copy(llvm::Value* dest, llvm::Value* source, union_type_def& dest_def,
+                         union_type_def& source_def,
+                         bool destroy_dest_first, bool source_const);
+    bool emit_union_payload_copy(llvm::Value* dest, llvm::Value* source,
+                                 const std::shared_ptr<type>& payload_type, bool source_const);
+    bool emit_scalar_union_wrapper_copy(llvm::Value* dest, llvm::Value* source,
+                                        const std::shared_ptr<aggregate>& wrapper,
+                                        bool destroy_dest_first, bool source_const,
+                                        bool move = false);
+    void emit_union_copy_failure();
+    llvm::Value* union_live_state_ptr(llvm::Value* storage, union_type_def& udef);
+    void set_union_live_state(llvm::Value* storage, union_type_def& udef, bool live);
 
     void generate();
 

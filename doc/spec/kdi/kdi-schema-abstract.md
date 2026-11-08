@@ -734,7 +734,8 @@ compiler model preserves unknown separately from empty, but existing call-contra
 checks do not reject unknown contracts; legacy imports therefore remain unsafe
 for exception-sensitive ordinary calls. The same limitation applies when a
 new descriptor omits a contract whose exception type cannot be exported.
-Older readers ignore the new field and can
+Union lifecycle operations reject an
+unknown constructor contract. Older readers ignore the new field and can
 likewise miscompile throwing constructor calls even after regeneration.
 Schema version remains `0.1`; this additive extension is not fail-closed.
 
