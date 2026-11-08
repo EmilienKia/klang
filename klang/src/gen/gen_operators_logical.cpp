@@ -190,6 +190,7 @@ void implementation_generator::visit_logical_and_expression(logical_and_expressi
 
     // 4. Evaluate right operand (only reached if left was true)
     _builder->SetInsertPoint(rhs_bb);
+    const auto rhs_temporary_start = _expression_temporaries.size();
     _value = nullptr;
     expr.right()->accept(*this);
     llvm::Value* right = _value;
@@ -207,6 +208,14 @@ void implementation_generator::visit_logical_and_expression(logical_and_expressi
     llvm::PHINode* phi = _builder->CreatePHI(_builder->getInt1Ty(), 2, "land");
     phi->addIncoming(_builder->getFalse(), entry_bb);  // left was false → result is false
     phi->addIncoming(right, rhs_end_bb);               // left was true → result is right
+
+    for (size_t i = rhs_temporary_start; i < _expression_temporaries.size(); ++i) {
+        auto& temporary = _expression_temporaries[i];
+        auto* live = _builder->CreatePHI(_builder->getInt1Ty(), 2, "land.temporary.live");
+        live->addIncoming(_builder->getFalse(), entry_bb);
+        live->addIncoming(temporary.live ? temporary.live : _builder->getTrue(), rhs_end_bb);
+        temporary.live = live;
+    }
 
     _value = phi;
 }
@@ -249,6 +258,7 @@ void implementation_generator::visit_logical_or_expression(logical_or_expression
 
     // 4. Evaluate right operand (only reached if left was false)
     _builder->SetInsertPoint(rhs_bb);
+    const auto rhs_temporary_start = _expression_temporaries.size();
     _value = nullptr;
     expr.right()->accept(*this);
     llvm::Value* right = _value;
@@ -266,6 +276,14 @@ void implementation_generator::visit_logical_or_expression(logical_or_expression
     llvm::PHINode* phi = _builder->CreatePHI(_builder->getInt1Ty(), 2, "lor");
     phi->addIncoming(_builder->getTrue(), entry_bb);   // left was true → result is true
     phi->addIncoming(right, rhs_end_bb);               // left was false → result is right
+
+    for (size_t i = rhs_temporary_start; i < _expression_temporaries.size(); ++i) {
+        auto& temporary = _expression_temporaries[i];
+        auto* live = _builder->CreatePHI(_builder->getInt1Ty(), 2, "lor.temporary.live");
+        live->addIncoming(_builder->getFalse(), entry_bb);
+        live->addIncoming(temporary.live ? temporary.live : _builder->getTrue(), rhs_end_bb);
+        temporary.live = live;
+    }
 
     _value = phi;
 }
@@ -627,15 +645,7 @@ void implementation_generator::visit_conditional_expression(conditional_expressi
             set_debug_location(anchor);
         }
         for (size_t i = _expression_temporaries.size(); i > start_index; --i) {
-            auto& tmp = _expression_temporaries[i - 1];
-            if (tmp.array_type) {
-                emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
-                    tmp.alloca, tmp.array_type);
-            } else if (tmp.union_type) {
-                emit_union_cleanup(tmp.alloca, *tmp.union_type);
-            } else if (tmp.destructor) {
-                _builder->CreateCall(tmp.destructor, {tmp.alloca});
-            }
+            emit_expression_temporary_cleanup(_expression_temporaries[i - 1], true);
         }
         _expression_temporaries.resize(start_index);
         _builder->SetCurrentDebugLocation(previous_debug_loc);
@@ -734,10 +744,10 @@ void implementation_generator::visit_conditional_expression(conditional_expressi
         // For non-sret types: collect branch_value for PHI node
         if (!use_sret) {
             phi_values.push_back(branch_value);
-            phi_blocks.push_back(_builder->GetInsertBlock());
         }
         
         cleanup_temporaries_since(branch_temp_start, expr.first_lexeme());
+        if (!use_sret) phi_blocks.push_back(_builder->GetInsertBlock());
         if (!_builder->GetInsertBlock()->getTerminator()) {
             _builder->CreateBr(merge_bb);
         }

@@ -230,6 +230,7 @@ protected:
         llvm::Function* destructor = nullptr;
         std::shared_ptr<sized_array_type> array_type;
         std::shared_ptr<union_type_def> union_type;
+        llvm::Value* live = nullptr;
     };
 
     /**
@@ -835,6 +836,9 @@ public:
     void visit_designated_struct_init_expression(designated_struct_init_expression&) override;
 
     void visit_cast_expression(cast_expression&) override;
+
+    void emit_expression_temporary_cleanup(const expression_temporary_cleanup& temporary,
+                                           bool direct_call = false);
 
     /**
      * Emit destructor calls for all tracked expression temporaries, in reverse

@@ -233,6 +233,38 @@ struct debug_scope_guard {
 // Expression temporaries cleanup
 //
 
+void implementation_generator::emit_expression_temporary_cleanup(
+    const expression_temporary_cleanup& temporary, bool direct_call) {
+    llvm::BasicBlock* done = nullptr;
+    if (temporary.live) {
+        auto* function = _builder->GetInsertBlock()->getParent();
+        auto* destroy = llvm::BasicBlock::Create(**_context, "temporary.destroy", function);
+        done = llvm::BasicBlock::Create(**_context, "temporary.done", function);
+        _builder->CreateCondBr(temporary.live, destroy, done);
+        _builder->SetInsertPoint(destroy);
+    }
+
+    if (temporary.array_type) {
+        if (direct_call) {
+            emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
+                temporary.alloca, temporary.array_type);
+        } else {
+            emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
+                temporary.alloca, temporary.array_type, make_virtual_call_emitter());
+        }
+    } else if (temporary.union_type) {
+        emit_union_cleanup(temporary.alloca, *temporary.union_type);
+    } else if (temporary.destructor) {
+        if (direct_call) _builder->CreateCall(temporary.destructor, {temporary.alloca});
+        else create_call_or_invoke(temporary.destructor->getFunctionType(),
+                                   temporary.destructor, {temporary.alloca});
+    }
+    if (done) {
+        _builder->CreateBr(done);
+        _builder->SetInsertPoint(done);
+    }
+}
+
 void implementation_generator::emit_expression_temporaries_cleanup(const lex::opt_any_lexeme& anchor_lexeme) {
     if (_expression_temporaries.empty()) return;
 
@@ -242,16 +274,8 @@ void implementation_generator::emit_expression_temporaries_cleanup(const lex::op
     }
 
     // Destroy in reverse creation order
-    for (auto it = _expression_temporaries.rbegin(); it != _expression_temporaries.rend(); ++it) {
-        if (it->array_type) {
-            emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
-                it->alloca, it->array_type, make_virtual_call_emitter());
-        } else if (it->union_type) {
-            emit_union_cleanup(it->alloca, *it->union_type);
-        } else if (it->destructor) {
-            create_call_or_invoke(it->destructor->getFunctionType(), it->destructor, {it->alloca});
-        }
-    }
+    for (auto it = _expression_temporaries.rbegin(); it != _expression_temporaries.rend(); ++it)
+        emit_expression_temporary_cleanup(*it);
     _expression_temporaries.clear();
 
     _builder->SetCurrentDebugLocation(previous_debug_loc);

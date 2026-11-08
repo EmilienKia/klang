@@ -837,6 +837,85 @@ TEST_CASE("Lifecycle Cat5: Deep chaining — two struct intermediaries", "[gen][
 // Category 7: Temporaries in control flow conditions
 // =============================================================================
 
+TEST_CASE("Short-circuit cleanup destroys only evaluated temporaries",
+          "[gen][lifecycle][shortcircuit]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_short_circuit_temporary_cleanup;
+        g_dtors : int = 0;
+
+        struct Probe {
+            Probe() {}
+            ~Probe() { ++g_dtors; }
+            yes() : bool { return true; }
+        }
+
+        make() : Probe { return Probe(); }
+
+        test() : int {
+            i : int = 0;
+            while (i < 2) {
+                if (i == 0 && make().yes()) {}
+                ++i;
+            }
+            if (g_dtors != 1) return 1;
+            i = 0;
+            while (i < 2) {
+                if (i != 0 || make().yes()) {}
+                ++i;
+            }
+            if (g_dtors != 2) return 2;
+            i = 0;
+            while (i < 3) {
+                selected : bool = i < 2 ? (i == 0 && make().yes()) : false;
+                ++i;
+            }
+            if (g_dtors != 3) return 3;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Nested short-circuit temporaries live through the full expression",
+          "[gen][lifecycle][shortcircuit]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_nested_short_circuit_temporary_cleanup;
+        g_dtors : int = 0;
+
+        struct Probe {
+            Probe() {}
+            ~Probe() { ++g_dtors; }
+            yes() : bool { return true; }
+        }
+
+        make() : Probe { return Probe(); }
+        noDestruction() : bool { return g_dtors == 0; }
+
+        test() : int {
+            i : int = 0;
+            while (i < 3) {
+                if (i != 2 && (i == 0 || (make().yes() && noDestruction()))) {}
+                ++i;
+            }
+            if (g_dtors != 1) return 1;
+            i = 0;
+            while (i < 2) {
+                value : int = (i == 0 && make().yes()) ? 10 : 20;
+                ++i;
+            }
+            if (g_dtors != 2) return 2;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
 TEST_CASE("Lifecycle Cat7: Temporary struct in if-condition", "[gen][lifecycle][cat7]") {
     // if (make(x).is_valid()) — temporary created for condition,
     // must be destroyed after condition evaluation (before or after the body).
