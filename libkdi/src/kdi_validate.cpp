@@ -325,20 +325,20 @@ void validate_aggregate(const kdi_aggregate& agg,
         validate_type(agg.methods[i].return_type, mp + ".return_type", types, result);
         validate_params(agg.methods[i].params, mp, types, result);
         validate_throws_placeholders(agg.methods[i].throws_spec, mp, types, result);
-        if (agg.methods[i].mangled_name.empty()) {
+        if (!agg.methods[i].is_deleted && agg.methods[i].mangled_name.empty()) {
             result.add(mp, "mangled_name must not be empty");
         }
-        if (agg.methods[i].llvm_def.empty()) {
+        if (!agg.methods[i].is_deleted && agg.methods[i].llvm_def.empty()) {
             result.add(mp, "llvm_def must not be empty");
         }
     }
     for (size_t i = 0; i < agg.constructors.size(); ++i) {
         auto cp = path + ".constructors[" + std::to_string(i) + "]";
         validate_params(agg.constructors[i].params, cp, types, result);
-        if (agg.constructors[i].mangled_name.empty()) {
+        if (!agg.constructors[i].is_deleted && agg.constructors[i].mangled_name.empty()) {
             result.add(cp, "mangled_name must not be empty");
         }
-        if (agg.constructors[i].llvm_def.empty()) {
+        if (!agg.constructors[i].is_deleted && agg.constructors[i].llvm_def.empty()) {
             result.add(cp, "llvm_def must not be empty");
         }
     }

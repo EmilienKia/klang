@@ -994,12 +994,14 @@ kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const
     }
 
     for (auto& ctor : agg.constructors()) {
-        if (!ctor || !is_exported(ctor->get_visibility())) continue;
+        if (!ctor || (!is_exported(ctor->get_visibility()) && !ctor->is_deleted())) continue;
         kdi::kdi_constructor kc;
-        kc.visibility = to_kdi_vis(ctor->get_visibility());
-        kc.is_copy_constructor = ctor->is_copy_constructor();
+        kc.visibility = ctor->get_visibility() == PRIVATE ? kdi::kdi_visibility::protected_
+                                                          : to_kdi_vis(ctor->get_visibility());
+        kc.is_copy_constructor = agg.is_copy_constructor(*ctor);
         kc.is_defaulted = ctor->is_defaulted();
         kc.is_deleted = ctor->is_deleted();
+        kc.is_private = ctor->get_visibility() == PRIVATE;
         kc.params = to_kdi_signature_params(*ctor, ti);
         kc.doc = to_kdi_doc_function(*ctor);
         sig.constructors.push_back(std::move(kc));
@@ -1010,17 +1012,21 @@ kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const
          if (!fn || std::dynamic_pointer_cast<constructor>(fn) || std::dynamic_pointer_cast<destructor>(fn)) {
              continue;
          }
-         if (!is_exported(fn->get_visibility())) continue;
+         if (!is_exported(fn->get_visibility()) &&
+             !(fn->is_deleted() && fn->is_operator() && fn->get_short_name() == "__operator_aS_")) continue;
          kdi::kdi_method km;
          km.name = fn->get_short_name();
         km.fq_name = fn->get_fq_name();
-        km.visibility = to_kdi_vis(fn->get_visibility());
+        km.visibility = fn->get_visibility() == PRIVATE ? kdi::kdi_visibility::protected_
+                                                        : to_kdi_vis(fn->get_visibility());
         km.is_static = fn->is_static();
         km.is_const_member = fn->is_const_member();
         km.is_virtual = fn->is_virtual();
         km.is_abstract = fn->is_abstract_func();
         km.is_final = fn->is_final_func();
         km.is_operator = fn->is_operator();
+        km.is_deleted = fn->is_deleted();
+        km.is_private = fn->get_visibility() == PRIVATE;
         km.vtable_slot = fn->get_vtable_slot();
         km.return_type = to_kdi_signature_type(std::const_pointer_cast<type>(fn->get_return_type()), ti);
         km.params = to_kdi_signature_params(*fn, ti);
@@ -1846,7 +1852,9 @@ void kdi_builder::visit_union(union_type_def& un) {
 void kdi_builder::visit_function(function& fn) {
     // Skip compiler-generated and internal functions
     if (fn.is_compiler_generated()) return;
-    if (!is_exported(fn.get_visibility())) return;
+    if (!is_exported(fn.get_visibility()) &&
+        !(in_aggregate() && fn.is_deleted() && fn.is_operator()
+          && fn.get_short_name() == "__operator_aS_")) return;
     // Generic-function facades have no symbol of their own (see the erased synthesis).
     if (fn.get_erased_target()) return;
 
@@ -1939,13 +1947,16 @@ void kdi_builder::visit_function(function& fn) {
         kdi::kdi_method km;
         km.name            = fn.get_short_name();
         km.fq_name         = fn.get_fq_name();
-        km.visibility      = to_kdi_vis(fn.get_visibility());
+        km.visibility      = fn.get_visibility() == PRIVATE ? kdi::kdi_visibility::protected_
+                                                            : to_kdi_vis(fn.get_visibility());
         km.is_static       = fn.is_static();
         km.is_const_member = fn.is_const_member();
         km.is_virtual      = fn.is_virtual();
         km.is_abstract     = fn.is_abstract_func();
         km.is_final        = fn.is_final_func();
         km.is_operator     = fn.is_operator();
+        km.is_deleted      = fn.is_deleted();
+        km.is_private      = fn.get_visibility() == PRIVATE;
         km.vtable_slot     = fn.get_vtable_slot();
         km.return_type     = to_kdi_type(std::const_pointer_cast<type>(fn.get_return_type()));
         km.params          = to_kdi_params(fn);
@@ -1989,7 +2000,7 @@ void kdi_builder::visit_function(function& fn) {
 
 void kdi_builder::visit_constructor(constructor& ctor) {
     if (!in_aggregate()) return;
-    if (!is_exported(ctor.get_visibility())) return;
+    if (!is_exported(ctor.get_visibility()) && !ctor.is_deleted()) return;
     // Member-template recipes belong to the primary aggregate template, not
     // concrete ABI constructor records with unresolved template parameters.
     if (ctor.is_template()) return;
@@ -1998,10 +2009,12 @@ void kdi_builder::visit_constructor(constructor& ctor) {
     }
 
     kdi::kdi_constructor kc;
-    kc.visibility          = to_kdi_vis(ctor.get_visibility());
-    kc.is_copy_constructor = ctor.is_copy_constructor();
+    kc.visibility          = ctor.get_visibility() == PRIVATE ? kdi::kdi_visibility::protected_
+                                                              : to_kdi_vis(ctor.get_visibility());
+    kc.is_copy_constructor = ctor.get_owner() && ctor.get_owner()->is_copy_constructor(ctor);
     kc.is_defaulted        = ctor.is_defaulted();
     kc.is_deleted          = ctor.is_deleted();
+    kc.is_private          = ctor.get_visibility() == PRIVATE;
     kc.params              = to_kdi_params(ctor);
     kc.mangled_name        = ctor.get_mangled_name();
     if (auto ctx = ctor.get_context())

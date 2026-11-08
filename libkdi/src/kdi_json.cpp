@@ -535,6 +535,8 @@ static json to_json(const kdi_method& m) {
         {"llvm_def",        m.llvm_def},
     };
     if (m.is_operator) j["is_operator"] = true;
+    if (m.is_deleted) j["is_deleted"] = true;
+    if (m.is_private) j["is_private"] = true;
     if (m.template_origin) j["template_origin"] = to_json(*m.template_origin);
     if (!m.throws_spec.empty()) {
         json ts = json::array();
@@ -555,6 +557,8 @@ static kdi_method from_json_method(const json& j) {
     m.is_abstract     = j.value("is_abstract", false);
     m.is_final        = j.value("is_final", false);
     m.is_operator     = j.value("is_operator", false);
+    m.is_deleted      = j.value("is_deleted", false);
+    m.is_private      = j.value("is_private", false);
     m.vtable_slot     = j.value("vtable_slot", -1);
     m.return_type     = from_json_type(j.at("return_type"));
     m.params          = params_from_json(j.value("params", json::array()));
@@ -583,6 +587,7 @@ static json to_json(const kdi_constructor& c) {
         {"mangled_name_c2",     c.mangled_name_c2},
         {"llvm_def",            c.llvm_def},
     };
+    if (c.is_private) j["is_private"] = true;
     if (c.doc) j["doc"] = to_json(*c.doc);
     return j;
 }
@@ -592,6 +597,7 @@ static kdi_constructor from_json_constructor(const json& j) {
     c.is_copy_constructor = j.value("is_copy_constructor", false);
     c.is_defaulted        = j.value("is_defaulted", false);
     c.is_deleted          = j.value("is_deleted", false);
+    c.is_private          = j.value("is_private", false);
     c.params              = params_from_json(j.value("params", json::array()));
     c.mangled_name        = j.value("mangled_name", "");
     c.mangled_name_c2     = j.value("mangled_name_c2", "");

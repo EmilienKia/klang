@@ -239,7 +239,17 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
             if (is_direct_copy) {
                 // For lvalue copies: reject non-trivial structs that have no copy constructor.
                 if (is_lvalue_copy && st) {
-                    bool has_cc    = st->get_copy_constructor() != nullptr;
+                    auto copy_ctor = st->get_copy_constructor();
+                    if (copy_ctor && !copy_ctor->is_compiler_generated()) {
+                        auto [selected, adapted] = get_best_matching_constructor(
+                            st->constructors(), ctor_args, true, expr.first_lexeme());
+                        check_constructor_visibility(*selected, expr);
+                        check_call_contract(*selected, expr.first_lexeme());
+                        expr.set_constructor(selected);
+                        expr.arguments(adapted);
+                        return;
+                    }
+                    bool has_cc = copy_ctor != nullptr;
                     // Check for a resource-referencing field (owner/pointer/link/view,
                     // recursively through nested struct members) — such a field makes
                     // shallow copy unsafe even without a direct owner-typed field.
@@ -257,7 +267,8 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
             }
         }
 
-        auto [best_constructor, adapted_args] = get_best_matching_constructor(st->constructors(), ctor_args);
+        auto [best_constructor, adapted_args] = get_best_matching_constructor(
+            st->constructors(), ctor_args, false, expr.get_interest_lexeme(), true);
         if (!best_constructor) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_MEMBER_NO_MATCH), expr.get_interest_lexeme(),
                 "No matching constructor found for member initialisation of type '{}': "
@@ -409,6 +420,20 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
             }
         }
         if (is_direct_copy) {
+            if (type::is_reference(arg_type) &&
+                !std::dynamic_pointer_cast<temporary_construction_expression>(expr.argument(0))) {
+                auto copy_ctor = st->get_copy_constructor();
+                if (copy_ctor && !copy_ctor->is_compiler_generated()) {
+                    auto [selected, adapted] = get_best_matching_constructor(
+                        st->constructors(), expr.arguments(), true, expr.first_lexeme());
+                    check_constructor_visibility(*selected, expr);
+                    check_call_contract(*selected, expr.first_lexeme());
+                    expr.set_constructor(selected);
+                    expr.assign_arguments(adapted);
+                    expr.set_type(st_type->get_reference());
+                    return;
+                }
+            }
             expr.set_constructor(nullptr);
             expr.set_type(st_type->get_reference());
             if (!st->is_class() && expr.argument(0) && expr.argument(0)->is_constant()) {
@@ -424,7 +449,8 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
             {st->get_short_name(), std::to_string(expr.size())});
     }
 
-    auto [best_constructor, adapted_args] = get_best_matching_constructor(constructors, expr.arguments());
+    auto [best_constructor, adapted_args] = get_best_matching_constructor(
+        constructors, expr.arguments(), false, expr.first_lexeme(), true);
     if (!best_constructor) {
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_CTOR_ARG_MISMATCH), expr.first_lexeme(),
             "No matching constructor found for temporary construction of '{}' with {} argument(s)",

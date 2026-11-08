@@ -99,10 +99,12 @@ std::string function_signature(const kdi_function& fn) {
 
 std::string method_signature(const kdi_method& method) {
     std::ostringstream out;
+    if (method.is_private) out << "private ";
     if (method.is_static) out << "static ";
     if (method.is_virtual) out << "virtual ";
     if (method.is_abstract) out << "abstract ";
     if (method.is_final) out << "final ";
+    if (method.is_deleted) out << "deleted ";
     if (method.is_const_member) out << "const ";
     if (method.is_operator) out << "operator ";
     out << method.name << params_to_string(method.params) << " : "
@@ -112,6 +114,7 @@ std::string method_signature(const kdi_method& method) {
 
 std::string constructor_signature(const kdi_constructor& ctor, const kdi_aggregate& owner) {
     std::ostringstream out;
+    if (ctor.is_private) out << "private ";
     if (ctor.is_copy_constructor) out << "copy ";
     if (ctor.is_defaulted) out << "default ";
     if (ctor.is_deleted) out << "deleted ";

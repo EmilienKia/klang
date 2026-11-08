@@ -473,6 +473,12 @@ type_reference_resolver::resolve_binary_operator_overload(
     if (!func) return {nullptr, nullptr};
     func = materialize_binary_operator(func);
     if (!func) return {nullptr, nullptr};
+    if (func->is_deleted()) {
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SUBSCRIPT_OVERLOAD_BAD_RETURN),
+            expr.first_lexeme(), "Use of deleted operator '{}' on type '{}'",
+            {get_operator_symbol(op_name),
+             left_expr->get_type() ? left_expr->get_type()->to_string() : "?"});
+    }
     if (left_target_type) left_target_type = func->parameters()[0]->get_type();
     adapt_target_type = func->parameters()[func->is_member() ? 0 : 1]->get_type();
     if (left_target_type) {

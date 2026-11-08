@@ -62,7 +62,8 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
                                                        const lex::opt_any_lexeme& lexeme,
                                                        const char* copy_context,
                                                        bool named_result_assignment,
-                                                       bool allow_move) {
+                                                       bool allow_move,
+                                                       const std::shared_ptr<constructor>& selected_copy) {
     auto nt = type::remove_const(type::canonical(t));
     llvm::Type* struct_llvm = _context->get_llvm_type(nt);
     if (!struct_llvm || struct_llvm->isPointerTy()) {
@@ -75,7 +76,7 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
 
     auto st_type   = std::dynamic_pointer_cast<struct_type>(nt);
     auto agg       = st_type ? st_type->get_struct() : nullptr;
-    bool trivially = is_trivially_copyable(nt);
+    bool trivially = !selected_copy && is_trivially_copyable(nt);
 
     const bool src_is_return_value = named_result_assignment && !src->getType()->isPointerTy();
     if (src_is_return_value) {
@@ -144,6 +145,15 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
         return;
     }
 
+    if (agg) {
+        auto copy_ctor = selected_copy ? selected_copy : agg->get_copy_constructor();
+        if (copy_ctor && copy_ctor->is_deleted()) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE), lexeme,
+                "Type '{}' is not copyable: its copy constructor is deleted",
+                {nt ? nt->to_string() : "?"});
+        }
+    }
+
     if (trivially) {
         _builder->CreateMemCpy(dest, llvm::MaybeAlign(), src, llvm::MaybeAlign(),
                                _builder->getInt64(sz));
@@ -152,7 +162,7 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
 
     // Non-trivial lvalue copy: prefer a user-provided copy constructor.
     if (agg) {
-        if (auto cc = agg->get_copy_constructor()) {
+        if (auto cc = selected_copy ? selected_copy : agg->get_copy_constructor()) {
             auto cc_it = _context->_functions.find(cc->shared_as<k::model::function>());
             if (cc_it != _context->_functions.end()) {
                 create_call_or_invoke(cc_it->second->getFunctionType(), cc_it->second, {dest, src});
@@ -687,20 +697,6 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
         if (st_type) {
             auto agg = st_type->get_struct();
             if (agg) {
-                // Check if the operator is explicitly deleted
-                std::string op_name = get_binary_operator_name(expr);
-                if (!op_name.empty()) {
-                    auto member_funcs = collect_member_operators_from_hierarchy(agg, op_name);
-                    for (auto& f : member_funcs) {
-                        if (f->is_deleted()) {
-                            throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SUBSCRIPT_OVERLOAD_BAD_RETURN), expr.first_lexeme(),
-                                "Use of deleted operator '{}' on type '{}': "
-                                "this operator was explicitly deleted with '-> delete'",
-                                {get_operator_symbol(op_name),
-                                 target_type ? target_type->to_string() : "?"});
-                        }
-                    }
-                }
                 bool is_const_left = type::is_const(target_type);
                 auto [op_func, adapted_right] = resolve_binary_operator_overload(expr, agg, left, right, is_const_left);
                 if (op_func && !(named_result_assignment && op_func->is_compiler_generated()
@@ -777,15 +773,30 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                 throw_error(static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH),
                             expr.first_lexeme(), "Return expression type must be compatible to the expected function return type");
             }
+            if (type::is_reference(source_type) && st_type && st_type->get_struct()) {
+                auto owner = st_type->get_struct();
+                auto first_copy = owner->get_copy_constructor();
+                if (first_copy && !first_copy->is_compiler_generated()) {
+                    std::vector<std::shared_ptr<constructor>> copies;
+                    for (const auto& ctor : owner->constructors()) {
+                        if (ctor && owner->is_copy_constructor(*ctor)) copies.push_back(ctor);
+                    }
+                    auto [selected, adapted] = get_best_matching_constructor(
+                        copies, {right}, true, expr.first_lexeme());
+                    check_constructor_visibility(*selected, expr);
+                    check_call_contract(*selected, expr.first_lexeme());
+                    expr.set_copy_constructor(selected);
+                    if (adapted.front() != right) expr.assign_right(adapted.front());
+                }
+            }
             // Keep an lvalue's address: loading it by value would lose both
             // self-alias detection and copy-constructor lifetime semantics.
             return;
         }
         // If source type is reference, deref it
         if(type::is_reference(source_type)) {
-            right = load_value_expression::make_shared(right);
-            source_type = std::dynamic_pointer_cast<reference_type>(source_type)->get_subtype();
-            right->set_type(source_type);
+            right = adapt_reference_load_value(right);
+            source_type = right->get_type();
             expr.assign_right(right);
         }
         return;
@@ -1331,7 +1342,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         if (struct_llvm && !struct_llvm->isPointerTy()) {
             emit_value_copy_or_move(left, right, target_type, /*destroy_dest_first=*/true,
                                     expr.first_lexeme(), "assignment",
-                                    named_result_assignment);
+                                    named_result_assignment, true, expr.get_copy_constructor());
             _value = left;
             return;
         }

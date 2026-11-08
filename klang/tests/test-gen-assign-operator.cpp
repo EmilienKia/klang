@@ -1045,3 +1045,23 @@ TEST_CASE("Assignment diagnostics warn once for concrete invalid returns using s
     }
     CHECK(template_signatures == 2);
 }
+
+TEST_CASE("Deleted assignment only rejects the selected overload", "[operator][gen][assign][delete][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module assign_deleted_overload;
+        struct Value {
+            n: int;
+            operator =(other: const Value&) -> delete;
+            operator =(n: int): Value& { this.n = n; return this; }
+        }
+        test(): int { v: Value; v = 42; return v.n; }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    REQUIRE(fn() == 42);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 9. Non-member assignment operator must fail
+// ═════════════════════════════════════════════════════════════════════════════

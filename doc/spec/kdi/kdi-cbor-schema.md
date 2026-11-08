@@ -315,14 +315,23 @@ Method = {
   ?"is_virtual"      : bool,
   ?"is_abstract"     : bool,
   ?"is_final"        : bool,
+  ?"is_deleted"      : bool,   -- absent means false; deleted methods have no callable implementation
+  ?"is_private"      : bool,   -- private deleted method metadata; absent means false
   ?"vtable_slot"     : uint,   -- omitted when -1
   "return_type"      : Type,
   "params"           : array[Param],
-  "mangled_name"     : text,
-  "llvm_def"         : text,   -- mandatory LLVM IR prototype (with implicit 'this')
+  "mangled_name"     : text,   -- may be empty when deleted
+  "llvm_def"         : text,   -- empty for deleted methods; otherwise LLVM IR prototype
   ?"doc"             : DocFunction
 }
 ```
+
+`is_private` overrides `visibility`. Producers use `protected` as the legacy
+visibility fallback, but pre-extension 0.1 readers ignore these flags and may
+accept a deleted operation or fail during linking. Regenerate older descriptors
+and use an updated reader to enforce copy restrictions; the extension is not
+fail-closed for old readers. If present, `is_deleted` and `is_private` must be
+booleans; other values must be rejected.
 
 ---
 
@@ -334,13 +343,16 @@ Constructor = {
   ?"is_copy_constructor" : bool,
   ?"is_defaulted"        : bool,
   ?"is_deleted"          : bool,
+  ?"is_private"          : bool,   -- private deleted constructor metadata; absent means false
   "params"               : array[Param],
-  "mangled_name"         : text,     -- C1 variant
-  "mangled_name_c2"      : text,     -- C2 variant
-  "llvm_def"             : text,     -- mandatory LLVM IR prototype of C1 variant
+  "mangled_name"         : text,     -- C1 variant; may be empty when deleted
+  "mangled_name_c2"      : text,     -- C2 variant; may be empty when deleted
+  "llvm_def"             : text,     -- empty for deleted constructors; otherwise C1 prototype
   ?"doc"                 : DocFunction
 }
 ```
+
+Constructor `is_deleted` and `is_private`, if present, must be booleans.
 
 ---
 

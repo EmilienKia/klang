@@ -238,6 +238,8 @@ struct kdi_method {
     bool                     is_abstract     = false;
     bool                     is_final        = false;
     bool                     is_operator     = false;
+    bool                     is_deleted      = false;
+    bool                     is_private      = false; ///< Private deleted declaration metadata.
     int32_t                  vtable_slot     = -1;   ///< -1 = not virtual
     kdi_type                 return_type;
     std::vector<kdi_param>   params;                 ///< excluding 'this'
@@ -257,6 +259,7 @@ struct kdi_constructor {
     bool                     is_copy_constructor = false;
     bool                     is_defaulted        = false;
     bool                     is_deleted          = false;
+    bool                     is_private          = false; ///< Private deleted declaration metadata.
     std::vector<kdi_param>   params;
     std::string              mangled_name;         ///< C1 variant
     std::string              mangled_name_c2;      ///< C2 (base-subobject) variant

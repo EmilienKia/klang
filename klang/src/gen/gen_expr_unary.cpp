@@ -312,15 +312,25 @@ void implementation_generator::visit_load_value_expression(load_value_expression
                                            || (construction_destination && src_ptr == construction_destination));
             if (src_is_lvalue_ref && !src_is_prvalue_temp) {
                 auto agg = st_type_nc->get_struct();
-                if (agg && agg->get_copy_constructor()) {
+                if (agg && (expr.get_value_constructor() || agg->get_copy_constructor())) {
                     // Call copy constructor: dest = new staging alloca, src = lvalue ptr
                     llvm::Type* llvm_st = _context->get_llvm_type(st_type_nc);
                     llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
                     llvm::IRBuilder<> entry_bld(&cur_fn->getEntryBlock(),
                                                 cur_fn->getEntryBlock().begin());
                     auto* staging = entry_bld.CreateAlloca(llvm_st, nullptr, "lval_copy");
-                    emit_value_copy_or_move(staging, src_ptr, st_type_nc,
-                        /*destroy_dest_first=*/false, expr.first_lexeme(), "by-value copy");
+                    if (auto ctor = expr.get_value_constructor()) {
+                        auto it = _context->_functions.find(ctor->shared_as<k::model::function>());
+                        if (it == _context->_functions.end()) {
+                            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F031),
+                                expr.first_lexeme(), "LLVM declaration not found for selected copy constructor of type '{}'",
+                                {st_type_nc->to_string()});
+                        }
+                        create_call_or_invoke(it->second->getFunctionType(), it->second, {staging, src_ptr});
+                    } else {
+                        emit_value_copy_or_move(staging, src_ptr, st_type_nc,
+                            /*destroy_dest_first=*/false, expr.first_lexeme(), "by-value copy");
+                    }
                     // Load the struct value from staging so it can be passed by value.
                     // A call's argument cleanup scope owns successful copies until
                     // entry into the callee. A failed constructor never registers

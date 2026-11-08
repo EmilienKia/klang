@@ -219,7 +219,8 @@ void populate_template_signature_aggregate(aggregate& agg,
         auto fn = agg.define_function(agg.get_short_name(), false);
         auto ctor = std::dynamic_pointer_cast<constructor>(fn);
         if (!ctor) continue;
-        ctor->set_visibility(ctor_sig.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
+        ctor->set_visibility(ctor_sig.is_private ? PRIVATE :
+            (ctor_sig.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC));
         ctor->set_copy_constructor(ctor_sig.is_copy_constructor);
         ctor->set_aliasing(ctor_sig.is_deleted ? function::function_aliasing::DELETE
                                               : (ctor_sig.is_defaulted ? function::function_aliasing::DEFAULT
@@ -236,12 +237,14 @@ void populate_template_signature_aggregate(aggregate& agg,
     for (const auto& method_sig : sig.methods) {
         auto fn = agg.define_function(method_sig.name, method_sig.is_static);
         if (!fn) continue;
-        fn->set_visibility(method_sig.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
+        fn->set_visibility(method_sig.is_private ? PRIVATE :
+            (method_sig.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC));
         fn->set_const_member(method_sig.is_const_member);
         fn->set_virtual(method_sig.is_virtual);
         fn->set_abstract_func(method_sig.is_abstract);
         fn->set_final_func(method_sig.is_final);
         fn->set_operator(method_sig.is_operator);
+        if (method_sig.is_deleted) fn->set_aliasing(function::function_aliasing::DELETE);
         assign_return(fn, method_sig.return_type);
         for (const auto& param : method_sig.params) {
             auto p = fn->append_parameter(param.name, nullptr);

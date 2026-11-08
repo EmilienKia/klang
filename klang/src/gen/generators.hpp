@@ -891,7 +891,8 @@ public:
                                  const lex::opt_any_lexeme& lexeme,
                                  const char* copy_context,
                                  bool named_result_assignment = false,
-                                 bool allow_move = true);
+                                 bool allow_move = true,
+                                 const std::shared_ptr<constructor>& selected_copy = nullptr);
 
     /**
      * Emit cleanup (destructor / owner free) for a single condition variable.

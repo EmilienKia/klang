@@ -183,8 +183,11 @@ public:
  */
 class load_value_expression : public unary_expression {
 protected:
+    std::shared_ptr<constructor> _value_constructor;
     load_value_expression() = default;
 public:
+    void set_value_constructor(std::shared_ptr<constructor> ctor) { _value_constructor = std::move(ctor); }
+    const std::shared_ptr<constructor>& get_value_constructor() const { return _value_constructor; }
     void accept(model_visitor &visitor) override;
     static std::shared_ptr<unary_expression> make_shared(const std::shared_ptr<expression> &sub_expr) {
         std::shared_ptr<load_value_expression> expr{new load_value_expression()};
@@ -195,6 +198,7 @@ public:
         std::shared_ptr<load_value_expression> c{new load_value_expression()};
         c->_type = _type;
         c->_ast_node = _ast_node;
+        c->_value_constructor = _value_constructor;
         if (_sub_expr) c->assign(_sub_expr->clone());
         return c;
     }

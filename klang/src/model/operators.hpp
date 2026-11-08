@@ -283,8 +283,11 @@ public:
 
 class assignation_expression : public binary_expression {
 protected:
+    std::shared_ptr<constructor> _copy_constructor;
     assignation_expression() = default;
 public:
+    void set_copy_constructor(std::shared_ptr<constructor> ctor) { _copy_constructor = std::move(ctor); }
+    const std::shared_ptr<constructor>& get_copy_constructor() const { return _copy_constructor; }
     void accept(model_visitor &visitor) override;
     std::shared_ptr<expression> clone() const override = 0;
 };
@@ -303,6 +306,7 @@ public:
         std::shared_ptr<simple_assignation_expression> c{new simple_assignation_expression()};
         c->_type = _type;
         c->_ast_node = _ast_node;
+        c->_copy_constructor = _copy_constructor;
         if (_left_expr && _right_expr) c->assign(_left_expr->clone(), _right_expr->clone());
         return c;
     }

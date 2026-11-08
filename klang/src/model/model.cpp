@@ -1486,31 +1486,25 @@ bool klass::has_abstract_vtable_slots() const {
     return false;
 }
 
+bool aggregate::is_copy_constructor(const constructor& ctor) const {
+    if (ctor.is_copy_constructor()) return true;
+    if (ctor.get_parameter_size() != 1) return false;
+    auto p0 = ctor.get_parameter(0);
+    if (!p0) return false;
+    auto pt = type::canonical(type::remove_const(p0->get_type()));
+    auto ref = std::dynamic_pointer_cast<reference_type>(pt);
+    if (!ref) return false;
+    auto sub = type::canonical(type::remove_const(ref->get_referenced_type()));
+    if (auto st = std::dynamic_pointer_cast<struct_type>(sub))
+        return st->get_struct() && st->get_struct().get() == this;
+    if (auto unres = std::dynamic_pointer_cast<unresolved_type>(sub))
+        return unres->type_id().to_string() == get_short_name();
+    return false;
+}
+
 std::shared_ptr<constructor> aggregate::get_copy_constructor() const {
-    for (auto& ctor : _constructors) {
-        if (ctor->is_copy_constructor()) return ctor;
-        if (ctor->get_parameter_size() == 1) {
-            auto p0 = ctor->get_parameter(0);
-            if (p0) {
-                auto pt = p0->get_type();
-                if (type::is_const(pt)) pt = type::remove_const(pt);
-                if (auto ref = std::dynamic_pointer_cast<reference_type>(pt)) {
-                    auto sub = ref->get_referenced_type();
-                    if (type::is_const(sub)) sub = type::remove_const(sub);
-                    if (auto st = std::dynamic_pointer_cast<struct_type>(sub)) {
-                        if (st->get_struct() && st->get_struct().get() == this) {
-                            return ctor;
-                        }
-                    }
-                    if (auto unres = std::dynamic_pointer_cast<unresolved_type>(sub)) {
-                        if (unres->type_id().to_string() == get_short_name()) {
-                            return ctor;
-                        }
-                    }
-                }
-            }
-        }
-    }
+    for (auto& ctor : _constructors)
+        if (ctor && is_copy_constructor(*ctor)) return ctor;
     return nullptr;
 }
 

@@ -248,7 +248,7 @@ void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
 
     // constructors
     for (auto& c : agg.constructors) {
-        out << indent(depth + 1) << vis_str(c.visibility) << " ";
+        out << indent(depth + 1) << (c.is_private ? "private" : vis_str(c.visibility)) << " ";
         if (c.is_copy_constructor) out << "copy ";
         if (c.is_defaulted)        out << "default ";
         if (c.is_deleted)          out << "deleted ";
@@ -269,11 +269,12 @@ void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
     }
     // methods
     for (auto& m : agg.methods) {
-        out << indent(depth + 1) << vis_str(m.visibility) << " ";
+        out << indent(depth + 1) << (m.is_private ? "private" : vis_str(m.visibility)) << " ";
         if (m.is_static)       out << "static ";
         if (m.is_virtual)      out << "virtual ";
         if (m.is_abstract)     out << "abstract ";
         if (m.is_final)        out << "final ";
+        if (m.is_deleted)      out << "deleted ";
         if (m.is_const_member) out << "const ";
         out << m.name << params_str(m.params) << " : " << type_str(m.return_type);
         if (m.template_origin) {

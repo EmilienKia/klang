@@ -320,3 +320,26 @@ TEST_CASE("validate: generic template_def with aggregate signature passes", "[va
     REQUIRE(r.is_valid());
 }
 
+TEST_CASE("validate: deleted members require no LLVM declaration or symbol", "[validate][deleted]") {
+    auto file = make_valid_file();
+    kdi_aggregate agg;
+    agg.name = "Key";
+    agg.fq_name = "valid::mod::Key";
+    agg.llvm_def = "%Key = type { i32 }";
+    kdi_constructor ctor;
+    ctor.is_deleted = true;
+    agg.constructors.push_back(ctor);
+    kdi_method method;
+    method.name = "__operator_aS_";
+    method.is_deleted = true;
+    method.return_type = kdi_type::make_void();
+    agg.methods.push_back(method);
+    file.unit.root_ns.aggregates.push_back(agg);
+    CHECK(kdi_validate(file).is_valid());
+
+    file.unit.root_ns.aggregates[0].constructors[0].is_deleted = false;
+    CHECK_FALSE(kdi_validate(file).is_valid());
+    file.unit.root_ns.aggregates[0].constructors[0].is_deleted = true;
+    file.unit.root_ns.aggregates[0].methods[0].is_deleted = false;
+    CHECK_FALSE(kdi_validate(file).is_valid());
+}

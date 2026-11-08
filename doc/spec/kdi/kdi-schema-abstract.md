@@ -676,11 +676,13 @@ KdiMethod {
   is_virtual     : bool
   is_abstract    : bool
   is_final       : bool
+  is_deleted     : bool           -- absent means false
+  is_private     : bool           -- absent means false; private deleted method metadata
   vtable_slot    : int             -- -1 if not virtual
   return_type    : KdiType
   params         : [KdiParam]     -- excluding 'this'
-  mangled_name   : string
-  llvm_def       : string          -- LLVM IR prototype (with implicit 'this'
+  mangled_name   : string          -- may be empty when deleted
+  llvm_def       : string          -- empty when deleted, else prototype (with implicit 'this'
                                    -- as first arg), e.g.
                                    -- "declare i32 @_ZN2ns5Adder3addEi
                                    --   (%struct.ns.Adder* %this, i32)"
@@ -698,15 +700,31 @@ KdiConstructor {
   is_copy_constructor: bool
   is_defaulted       : bool
   is_deleted         : bool
+  is_private         : bool        -- absent means false; private deleted constructor metadata
   params             : [KdiParam]
-  mangled_name       : string      -- C1 variant
-  mangled_name_c2    : string      -- C2 (base-subobject) variant
-  llvm_def           : string      -- LLVM IR prototype of the C1 variant, e.g.
+  mangled_name       : string      -- C1 variant; may be empty when deleted
+  mangled_name_c2    : string      -- C2 variant; may be empty when deleted
+  llvm_def           : string      -- empty when deleted, else C1 prototype, e.g.
                                    -- "declare void @_ZN7CounterC1Ev
                                    --   (%struct.Counter* %this)"
   doc                : KdiDocFunction?
 }
 ```
+
+`is_private` is reserved for private deleted declarations included solely
+to enforce copy restrictions when importing an aggregate. When true it overrides
+`visibility`; readers must not expose the declaration as public API. For older
+readers the `visibility` fallback is `protected`, not `public`. If present,
+constructor and method `is_private` and `is_deleted` fields must be booleans;
+readers must reject other values.
+
+The schema remains 0.1. Readers predating these optional fields ignore method
+deletion and private markers: a protected fallback cannot guarantee rejection
+of a copy, and such readers can accept unsafe operations or fail at link time.
+Older descriptors may omit private deleted declarations or method deletion
+metadata altogether; regenerate them with the updated producer and consume
+them with an updated reader to enforce those restrictions. The additive encoding
+does not provide fail-closed forward compatibility with older readers.
 
 ---
 
@@ -760,7 +778,8 @@ KdiVariable {
   top-level map: `"schema_major"` and `"schema_minor"`.
 * The `llvm_def` field is **mandatory** on `KdiFunction`, `KdiMethod`,
   `KdiConstructor`, `KdiDestructor`, `KdiAggregate`, and `KdiVtable`.
-  It must not be empty.  This field carries the exact LLVM IR text emitted
+  It must not be empty except for a deleted method or constructor, which has
+  no implementation and may also have an empty `mangled_name`. This field carries the exact LLVM IR text emitted
   by the exporting compiler and is authoritative for ABI-faithful import.
 * The `dependencies` field in `KdiHeader` is **optional** (omitted when the
   module has no imports).  When present, it lists the canonical module names

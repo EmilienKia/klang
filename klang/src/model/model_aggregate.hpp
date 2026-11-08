@@ -390,6 +390,7 @@ public:
 
     /** Returns the copy constructor if one exists, nullptr otherwise. */
     std::shared_ptr<constructor> get_copy_constructor() const;
+    bool is_copy_constructor(const constructor& ctor) const;
 
     //
     // Template support

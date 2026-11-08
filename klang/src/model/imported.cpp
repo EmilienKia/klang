@@ -134,6 +134,7 @@ imported_method::imported_method(std::shared_ptr<element> parent,
         _is_abstract_func = kdi_m->is_abstract;
         _is_final_func    = kdi_m->is_final;
         _is_operator      = kdi_m->is_operator;
+        if (kdi_m->is_deleted) _aliasing = function_aliasing::DELETE;
         _vtable_slot      = kdi_m->vtable_slot;
     }
 }
@@ -1181,7 +1182,8 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         auto ic = imported_constructor::make_shared(agg, &kc);
         ic->assign_name(fq_to_abs_kname(kdi_agg->fq_name.empty() ? kdi_agg->name : kdi_agg->fq_name));
         attach_params(*ic, kc.params, *this, ctx);
-        ic->set_visibility(kc.visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED);
+        ic->set_visibility(kc.is_private ? PRIVATE :
+            (kc.visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED));
         ic->set_copy_constructor(kc.is_copy_constructor);
         if (auto doc = make_function_doc(kc.doc)) {
             ic->set_documentation(std::move(doc));
@@ -1223,7 +1225,8 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         auto ret = kdi_type_to_model_type(km.return_type, *this, ctx);
         if (ret) im->set_return_type(ret);
         attach_params(*im, km.params, *this, ctx);
-        im->set_visibility(km.visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED);
+        im->set_visibility(km.is_private ? PRIVATE :
+            (km.visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED));
         if (km.is_virtual)     { im->set_virtual(true); }
         if (km.vtable_slot >= 0) { im->set_vtable_slot(km.vtable_slot); }
         if (km.is_abstract)    { im->set_abstract_func(true); }

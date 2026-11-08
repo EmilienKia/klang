@@ -681,7 +681,21 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
         if (is_direct_copy) {
             // For lvalue copies: reject non-trivial structs that have no copy constructor.
             if (is_lvalue_copy && struct_model) {
-                bool has_cc = struct_model->get_copy_constructor() != nullptr;
+                auto copy_ctor = struct_model->get_copy_constructor();
+                if (copy_ctor && !copy_ctor->is_compiler_generated()) {
+                    auto [selected, adapted] = get_best_matching_constructor(
+                        struct_model->constructors(), ctor_args, true, ctx.var_lexeme);
+                    if (auto var_elem = dynamic_cast<const element*>(&ctx.var))
+                        check_constructor_visibility(*selected, *var_elem);
+                    check_call_contract(*selected, ctx.var_lexeme);
+                    ctx.var.set_var_constructor(selected);
+                    if (ctx.init_expr) {
+                        ctx.init_expr->set_constructor(selected);
+                        ctx.init_expr->arguments(adapted);
+                    }
+                    return;
+                }
+                bool has_cc = copy_ctor != nullptr;
                 // Check for a resource-referencing field (owner/pointer/link/view,
                 // recursively through nested struct members) — such a field makes
                 // shallow copy unsafe even without a direct owner-typed field.
@@ -715,6 +729,7 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
             if (auto var_elem = dynamic_cast<const element*>(&ctx.var)) {
                 check_constructor_visibility(*best_constructor, *var_elem);
             }
+            check_call_contract(*best_constructor, ctx.var_lexeme);
             ctx.var.set_var_constructor(best_constructor);
             if (ctx.init_expr) {
                 ctx.init_expr->set_constructor(best_constructor);

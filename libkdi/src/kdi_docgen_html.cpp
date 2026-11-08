@@ -1347,6 +1347,7 @@ static void write_aggregate_body_html(std::ostringstream& content,
     std::sort(svars.begin(), svars.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
 
     std::vector<kdi_constructor> ctors = agg.constructors;
+    std::erase_if(ctors, [](const auto& ctor) { return ctor.is_private; });
     std::sort(ctors.begin(), ctors.end(), [](const auto& a, const auto& b) {
         if (a.params.size() != b.params.size()) return a.params.size() < b.params.size();
         return a.mangled_name < b.mangled_name;
@@ -1354,7 +1355,7 @@ static void write_aggregate_body_html(std::ostringstream& content,
 
     std::vector<kdi_method> methods = agg.methods;
     methods.erase(std::remove_if(methods.begin(), methods.end(), [](const auto& m) {
-        return m.template_origin.has_value();
+        return m.is_private || m.template_origin.has_value();
     }), methods.end());
     std::sort(methods.begin(), methods.end(), [](const auto& a, const auto& b) {
         if (a.name != b.name) return a.name < b.name;
@@ -1556,6 +1557,7 @@ static void add_aggregate_member_refs_html(std::vector<symbol_ref_html>& refs,
     std::sort(svars.begin(), svars.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
 
     std::vector<kdi_constructor> ctors = agg.constructors;
+    std::erase_if(ctors, [](const auto& ctor) { return ctor.is_private; });
     std::sort(ctors.begin(), ctors.end(), [](const auto& a, const auto& b) {
         if (a.params.size() != b.params.size()) return a.params.size() < b.params.size();
         return a.mangled_name < b.mangled_name;
@@ -1563,7 +1565,7 @@ static void add_aggregate_member_refs_html(std::vector<symbol_ref_html>& refs,
 
     std::vector<kdi_method> methods = agg.methods;
     methods.erase(std::remove_if(methods.begin(), methods.end(), [](const auto& m) {
-        return m.template_origin.has_value();
+        return m.is_private || m.template_origin.has_value();
     }), methods.end());
     std::sort(methods.begin(), methods.end(), [](const auto& a, const auto& b) {
         if (a.name != b.name) return a.name < b.name;

@@ -19,6 +19,7 @@
 #include <catch2/catch_all.hpp>
 #include "kdi.hpp"
 #include "kdi_json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <sstream>
@@ -813,3 +814,104 @@ TEST_CASE("JSON: polymorphic union round-trips", "[json][union][polymorphic]") {
     REQUIRE(run.alternatives[0].name == "dog");
     REQUIRE(run.alternatives[1].name == "cat");
 }
+
+TEST_CASE("JSON preserves deleted private copy metadata and legacy defaults", "[json][copy][regression]") {
+    auto file = make_minimal_file();
+    kdi_aggregate agg;
+    agg.name = "Key";
+    agg.fq_name = "test::json::Key";
+    kdi_constructor ctor;
+    ctor.is_copy_constructor = true;
+    ctor.is_deleted = true;
+    ctor.is_private = true;
+    agg.constructors.push_back(ctor);
+    kdi_method method;
+    method.name = "__operator_aS_";
+    method.is_operator = true;
+    method.is_deleted = true;
+    method.is_private = true;
+    agg.methods.push_back(method);
+    file.unit.root_ns.aggregates.push_back(agg);
+    auto restored = json_round_trip(file);
+    CHECK(restored.unit.root_ns.aggregates[0].constructors[0].is_private);
+    CHECK(restored.unit.root_ns.aggregates[0].constructors[0].is_deleted);
+    CHECK(restored.unit.root_ns.aggregates[0].methods[0].is_private);
+    CHECK(restored.unit.root_ns.aggregates[0].methods[0].is_deleted);
+
+    file.unit.root_ns.aggregates[0].constructors[0].is_private = false;
+    file.unit.root_ns.aggregates[0].methods[0].is_private = false;
+    file.unit.root_ns.aggregates[0].methods[0].is_deleted = false;
+    restored = json_round_trip(file);
+    CHECK_FALSE(restored.unit.root_ns.aggregates[0].constructors[0].is_private);
+    CHECK_FALSE(restored.unit.root_ns.aggregates[0].methods[0].is_private);
+    CHECK_FALSE(restored.unit.root_ns.aggregates[0].methods[0].is_deleted);
+}
+
+TEST_CASE("JSON rejects malformed deletion and privacy flags", "[json][copy][regression]") {
+    auto file = make_minimal_file();
+    kdi_aggregate agg;
+    agg.name = "Key";
+    agg.fq_name = "test::json::Key";
+    agg.constructors.emplace_back();
+    kdi_method method;
+    method.name = "assign";
+    agg.methods.push_back(method);
+    file.unit.root_ns.aggregates.push_back(agg);
+    std::ostringstream out;
+    kdi_write_json(file, out);
+    const auto original = nlohmann::json::parse(out.str());
+    for (const std::string member : {"constructors", "methods"}) {
+        for (const std::string key : {"is_deleted", "is_private"}) {
+            CAPTURE(member, key);
+            for (const auto& invalid : {nlohmann::json(nullptr), nlohmann::json("true"),
+                                        nlohmann::json(1)}) {
+                auto payload = original;
+                payload["unit"]["root_ns"]["aggregates"][0][member][0][key] = invalid;
+                std::istringstream input(payload.dump());
+                CHECK_THROWS(kdi_read_json(input));
+            }
+        }
+    }
+}
+
+TEST_CASE("JSON legacy reader view cannot enforce new method metadata", "[json][copy][compatibility]") {
+    auto file = make_minimal_file();
+    kdi_aggregate agg;
+    agg.name = "Key";
+    agg.fq_name = "test::json::Key";
+    kdi_constructor ctor;
+    ctor.visibility = kdi_visibility::protected_;
+    ctor.is_deleted = true;
+    ctor.is_private = true;
+    agg.constructors.push_back(ctor);
+    kdi_method method;
+    method.name = "__operator_aS_";
+    method.visibility = kdi_visibility::protected_;
+    method.is_deleted = true;
+    method.is_private = true;
+    agg.methods.push_back(method);
+    file.unit.root_ns.aggregates.push_back(agg);
+    std::ostringstream out;
+    kdi_write_json(file, out);
+    auto payload = nlohmann::json::parse(out.str());
+    auto& encoded = payload["unit"]["root_ns"]["aggregates"][0];
+    CHECK(encoded["constructors"][0]["is_private"] == true);
+    CHECK(encoded["methods"][0]["is_deleted"] == true);
+    // Simulate the old reader ignoring the keys it did not understand.
+    encoded["constructors"][0].erase("is_private");
+    encoded["methods"][0].erase("is_private");
+    encoded["methods"][0].erase("is_deleted");
+    std::istringstream input(payload.dump());
+    auto legacy_view = kdi_read_json(input);
+    const auto& old_agg = legacy_view.unit.root_ns.aggregates[0];
+    CHECK(old_agg.constructors[0].is_deleted);
+    CHECK_FALSE(old_agg.constructors[0].is_private);
+    CHECK(old_agg.constructors[0].visibility == kdi_visibility::protected_);
+    CHECK_FALSE(old_agg.methods[0].is_deleted);
+    CHECK_FALSE(old_agg.methods[0].is_private);
+    CHECK(old_agg.methods[0].visibility == kdi_visibility::protected_);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Header round-trip
+// ─────────────────────────────────────────────────────────────────────────────

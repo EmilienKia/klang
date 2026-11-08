@@ -89,8 +89,8 @@ std::set<std::string> kdi_collect_binary_symbols(const std::string& binary_path)
  * Every mangled name that is absent from @p binary_symbols is reported as
  * missing.
  *
- * Symbols that are intentionally empty (abstract functions, compiler-generated
- * destructors marked is_compiler_generated) are silently skipped.
+ * Abstract or deleted methods, deleted constructors, and compiler-generated
+ * destructors are silently skipped.
  */
 kdi_symbol_check_result kdi_check_symbols(const kdi_file& file,
                                           const std::set<std::string>& binary_symbols);

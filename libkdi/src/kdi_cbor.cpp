@@ -241,6 +241,11 @@ bool opt_bool(cbor_item_t* map, const std::string& key, bool def = false) {
     return cbor_ctrl_value(v) == CBOR_CTRL_TRUE;
 }
 
+bool opt_strict_bool(cbor_item_t* map, const std::string& key, const std::string& path) {
+    auto* v = map_get(map, key);
+    return v ? read_bool(v, path + "." + key) : false;
+}
+
 // ─── int (may be negative) ────────────────────────────────────────────────────
 
 cbor_item_t* cbor_int32(int32_t v) {
@@ -716,6 +721,8 @@ cbor_item_t* encode_method(const kdi_method& m) {
     if (m.is_abstract)     map_push(map, "is_abstract",      cbor_bool(true));
     if (m.is_final)        map_push(map, "is_final",         cbor_bool(true));
     if (m.is_operator)     map_push(map, "is_operator",      cbor_bool(true));
+    if (m.is_deleted)      map_push(map, "is_deleted",       cbor_bool(true));
+    if (m.is_private)      map_push(map, "is_private",       cbor_bool(true));
     if (m.vtable_slot >= 0) map_push(map, "vtable_slot",     cbor_build_uint32(static_cast<uint32_t>(m.vtable_slot)));
     map_push(map, "return_type",  encode_type(m.return_type));
     map_push(map, "params",       encode_params(m.params));
@@ -743,6 +750,8 @@ kdi_method decode_method(cbor_item_t* item, const std::string& path) {
     m.is_abstract    = opt_bool(item, "is_abstract");
     m.is_final       = opt_bool(item, "is_final");
     m.is_operator    = opt_bool(item, "is_operator");
+    m.is_deleted     = opt_strict_bool(item, "is_deleted", path);
+    m.is_private     = opt_strict_bool(item, "is_private", path);
     m.vtable_slot    = opt_int32(item, "vtable_slot", -1);
     auto* rt = map_get(item, "return_type");
     if (!rt) throw kdi_parse_error("missing 'return_type' at " + path);
@@ -767,6 +776,7 @@ cbor_item_t* encode_constructor(const kdi_constructor& c) {
     if (c.is_copy_constructor) map_push(m, "is_copy_constructor", cbor_bool(true));
     if (c.is_defaulted)        map_push(m, "is_defaulted",        cbor_bool(true));
     if (c.is_deleted)          map_push(m, "is_deleted",          cbor_bool(true));
+    if (c.is_private)          map_push(m, "is_private",          cbor_bool(true));
     map_push(m, "params",          encode_params(c.params));
     map_push(m, "mangled_name",    cbor_str(c.mangled_name));
     map_push(m, "mangled_name_c2", cbor_str(c.mangled_name_c2));
@@ -780,7 +790,8 @@ kdi_constructor decode_constructor(cbor_item_t* item, const std::string& path) {
     c.visibility         = decode_visibility(item, "visibility", path);
     c.is_copy_constructor= opt_bool(item, "is_copy_constructor");
     c.is_defaulted       = opt_bool(item, "is_defaulted");
-    c.is_deleted         = opt_bool(item, "is_deleted");
+    c.is_deleted         = opt_strict_bool(item, "is_deleted", path);
+    c.is_private         = opt_strict_bool(item, "is_private", path);
     c.params             = decode_params(item, "params", path);
     c.mangled_name       = req_string(item, "mangled_name", path);
     c.mangled_name_c2    = opt_string(item, "mangled_name_c2");

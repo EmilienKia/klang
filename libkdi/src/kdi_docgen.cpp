@@ -1018,7 +1018,7 @@ void write_aggregate_body(std::ostringstream& out,
 
     std::vector<kdi_method> methods = agg.methods;
     methods.erase(std::remove_if(methods.begin(), methods.end(), [](const auto& m) {
-        return m.template_origin.has_value();
+        return m.is_private || m.template_origin.has_value();
     }), methods.end());
     std::sort(methods.begin(), methods.end(), [](const auto& a, const auto& b) {
         if (a.name != b.name) return a.name < b.name;
@@ -1026,6 +1026,7 @@ void write_aggregate_body(std::ostringstream& out,
     });
 
     std::vector<kdi_constructor> constructors = agg.constructors;
+    std::erase_if(constructors, [](const auto& ctor) { return ctor.is_private; });
     std::sort(constructors.begin(), constructors.end(), [](const auto& a, const auto& b) {
         if (a.params.size() != b.params.size()) return a.params.size() < b.params.size();
         return a.mangled_name < b.mangled_name;
@@ -1181,13 +1182,14 @@ void add_aggregate_member_refs(std::vector<symbol_ref>& refs,
     });
     std::vector<kdi_method> methods = agg.methods;
     methods.erase(std::remove_if(methods.begin(), methods.end(), [](const auto& m) {
-        return m.template_origin.has_value();
+        return m.is_private || m.template_origin.has_value();
     }), methods.end());
     std::sort(methods.begin(), methods.end(), [](const auto& a, const auto& b) {
         if (a.name != b.name) return a.name < b.name;
         return a.mangled_name < b.mangled_name;
     });
     std::vector<kdi_constructor> constructors = agg.constructors;
+    std::erase_if(constructors, [](const auto& ctor) { return ctor.is_private; });
     std::sort(constructors.begin(), constructors.end(), [](const auto& a, const auto& b) {
         if (a.params.size() != b.params.size()) return a.params.size() < b.params.size();
         return a.mangled_name < b.mangled_name;

@@ -3668,7 +3668,8 @@ std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::sha
 type_reference_resolver::get_best_matching_constructor(
     const std::vector<std::shared_ptr<constructor>>& constructors,
     const std::vector<std::shared_ptr<expression>>& args,
-    bool throw_on_failure, const lex::opt_any_lexeme& failure_location) {
+    bool throw_on_failure, const lex::opt_any_lexeme& failure_location,
+    bool throw_on_deleted) {
     auto available = constructors;
     if (!constructors.empty() && constructors.front()) {
         if (auto owner = constructors.front()->get_owner()) {
@@ -3686,9 +3687,36 @@ type_reference_resolver::get_best_matching_constructor(
     std::vector<std::shared_ptr<constructor>> candidates;
     std::vector<std::shared_ptr<constructor>> template_candidates;
     std::unordered_map<const constructor*, size_t> template_specificity;
+    // A caller may pass only copy constructors, omitting the member-template
+    // declarations that own cached specializations in that filtered set.
+    // Retain their template ranking so a concrete copy overload still wins.
+    if (!available.empty() && available.front()) {
+        if (auto owner = available.front()->get_owner()) {
+            for (const auto& declaration : owner->constructors()) {
+                if (!declaration || !declaration->is_template()) continue;
+                auto* ti = declaration->get_tpl_info();
+                if (!ti) continue;
+                size_t specificity = 0;
+                for (const auto& param : ti->params) {
+                    if (param.kind != template_param_kind::TYPENAME || param.constraint_type) ++specificity;
+                }
+                for (const auto& [key, instance] : ti->instantiations) {
+                    if (const auto* fn = std::get_if<std::shared_ptr<function>>(&instance)) {
+                        if (auto cached = std::dynamic_pointer_cast<constructor>(*fn);
+                            cached && cached->is_instantiation()
+                            && !std::dynamic_pointer_cast<imported_constructor>(cached)) {
+                            template_specificity[cached.get()] = specificity;
+                        }
+                    }
+                }
+            }
+        }
+    }
     std::unordered_set<std::string> imported_symbols;
+    std::unordered_set<const constructor*> seen_constructors;
     candidates.reserve(available.size());
     for (const auto& ctor : available) {
+        if (ctor && !seen_constructors.insert(ctor.get()).second) continue;
         if (ctor && ctor->is_template()) template_candidates.push_back(ctor);
         else if (ctor) {
             // Repeated exported specializations can describe one ABI callable.
@@ -3836,23 +3864,6 @@ type_reference_resolver::get_best_matching_constructor(
         return {nullptr, {}};
     }
 
-    {
-        std::vector<std::shared_ptr<constructor>> non_deleted;
-        for (auto& ctor : arity_matched) {
-            if (!ctor->is_deleted()) non_deleted.push_back(ctor);
-        }
-        if (non_deleted.empty()) {
-            auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
-                "Use of deleted constructor: a constructor matching {} argument(s) exists but has been explicitly deleted with '-> delete'",
-                {std::to_string(arg_count)});
-            if (failure_location) d.at(*failure_location);
-            report(d);
-            if (throw_on_failure) throw resolution_error(std::move(d));
-            return {nullptr, {}};
-        }
-        arity_matched = std::move(non_deleted);
-    }
-
     struct Candidate {
         std::shared_ptr<constructor> ctor;
         cast_weight score;
@@ -3893,11 +3904,13 @@ type_reference_resolver::get_best_matching_constructor(
             failed_candidates.push_back({ctor, std::move(failed_indices)});
         } else {
             auto specificity = template_specificity.find(ctor.get());
+            const bool member_template_instance = ctor->is_instantiation() && ctor->has_tpl_args()
+                && !std::dynamic_pointer_cast<imported_constructor>(ctor);
             valid_candidates.push_back({
                 ctor,
                 max_weight,
                 defaults_used,
-                specificity != template_specificity.end(),
+                specificity != template_specificity.end() || member_template_instance,
                 specificity == template_specificity.end() ? 0 : specificity->second
             });
         }
@@ -4007,6 +4020,14 @@ type_reference_resolver::get_best_matching_constructor(
     // Adapt only the selected overload: discarded adaptations otherwise reparent
     // shared argument nodes to temporary wrappers that disappear after selection.
     auto best_ctor = best_candidates[0]->ctor;
+    if (best_ctor->is_deleted()) {
+        auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
+            "Use of deleted constructor: the selected constructor has been explicitly deleted with '-> delete'", {});
+        if (failure_location) d.at(*failure_location);
+        report(d);
+        if (throw_on_failure || throw_on_deleted) throw resolution_error(std::move(d));
+        return {nullptr, {}};
+    }
     const auto& params = best_ctor->parameters();
     std::vector<std::shared_ptr<expression>> adapted_args;
     for (size_t i = 0; i < arg_count; ++i) {
@@ -4353,7 +4374,7 @@ type_reference_resolver::get_best_matching_function(
     auto score_with_defaults = [&](const std::vector<std::shared_ptr<expression>>& exprs,
                                    const std::vector<std::shared_ptr<parameter>>& params,
                                    const std::vector<std::shared_ptr<type>>* concrete_param_types,
-                                   size_t offset = 0)
+                                   size_t offset = 0, bool adapt = false)
             -> std::pair<cast_weight, std::vector<std::shared_ptr<expression>>>
     {
         const auto get_param_type = [&](size_t index) -> std::shared_ptr<type> {
@@ -4392,12 +4413,12 @@ type_reference_resolver::get_best_matching_function(
                 auto w = compute_cast_weight(exprs[i], target_type);
                 if (w == CAST_IMPOSSIBLE) return {CAST_IMPOSSIBLE, {}};
                 if (w > max_w) max_w = w;
-                auto a = adapt_type(exprs[i], target_type);
+                auto a = adapt ? adapt_type(exprs[i], target_type) : nullptr;
                 adapted.push_back(a ? a : exprs[i]);
             }
             // Fill defaults for missing fixed params
             for (size_t i = fixed_provided; i < n_fixed; ++i)
-                adapted.push_back(params[offset + i]->get_default_expr()->clone());
+                if (adapt) adapted.push_back(params[offset + i]->get_default_expr()->clone());
 
             // Score varargs trailing arguments
             size_t n_varargs_exprs = (n_exprs > n_fixed) ? (n_exprs - n_fixed) : 0;
@@ -4420,8 +4441,8 @@ type_reference_resolver::get_best_matching_function(
                 }
                 if (w_direct != CAST_IMPOSSIBLE) {
                     if (w_direct > max_w) max_w = w_direct;
-                    auto a = adapt_type(exprs[n_fixed], orig_param_type);
-                    if (!a) a = adapt_type(exprs[n_fixed], varargs_param_type);
+                    auto a = adapt ? adapt_type(exprs[n_fixed], orig_param_type) : nullptr;
+                    if (adapt && !a) a = adapt_type(exprs[n_fixed], varargs_param_type);
                     adapted.push_back(a ? a : exprs[n_fixed]);
                     return {max_w, adapted};
                 }
@@ -4436,7 +4457,7 @@ type_reference_resolver::get_best_matching_function(
                 auto w = compute_cast_weight(exprs[i], varargs_elem_type);
                 if (w == CAST_IMPOSSIBLE) return {CAST_IMPOSSIBLE, {}};
                 if (w > max_w) max_w = w;
-                auto a = adapt_type(exprs[i], varargs_elem_type);
+                auto a = adapt ? adapt_type(exprs[i], varargs_elem_type) : nullptr;
                 adapted.push_back(a ? a : exprs[i]);
             }
 
@@ -4458,11 +4479,11 @@ type_reference_resolver::get_best_matching_function(
             auto w = compute_cast_weight(exprs[i], target_type);
             if (w == CAST_IMPOSSIBLE) return {CAST_IMPOSSIBLE, {}};
             if (w > max_w) max_w = w;
-            auto a = adapt_type(exprs[i], target_type);
+            auto a = adapt ? adapt_type(exprs[i], target_type) : nullptr;
             adapted.push_back(a ? a : exprs[i]);
         }
         for (size_t i = n_exprs; i < n_params; ++i)
-            adapted.push_back(params[offset + i]->get_default_expr()->clone());
+            if (adapt) adapted.push_back(params[offset + i]->get_default_expr()->clone());
         return {max_w, adapted};
     };
 
@@ -4488,18 +4509,7 @@ type_reference_resolver::get_best_matching_function(
                 }
             }
             // Re-read params after dynamic addition
-            const auto& new_params = func->parameters();
-            std::vector<std::shared_ptr<expression>> adapted_args;
-            for (size_t i = 0; i < args.size(); ++i) {
-                // Adapt arguments to match declared parameter types (load from reference, etc.)
-                if (i < new_params.size() && new_params[i]->get_type()) {
-                    auto a = adapt_type(args[i], new_params[i]->get_type());
-                    adapted_args.push_back(a ? a : args[i]);
-                } else {
-                    adapted_args.push_back(args[i]);
-                }
-            }
-            valid.push_back({func, std::move(adapted_args), CAST_NONE, false, nullptr, 0, 0, false});
+            valid.push_back({func, args, CAST_NONE, false, nullptr, 0, 0, false});
             continue;
         }
 
@@ -4559,7 +4569,6 @@ type_reference_resolver::get_best_matching_function(
                     auto [w_rest, adapted_rest] = score_with_defaults(args, params, nullptr, 1);
                     if (w_rest != CAST_IMPOSSIBLE) {
                         cast_weight total = std::max(w_this, w_rest);
-                        auto adapted_this = adapt_type(this_expr, first_param_type);
                         size_t def = (args.size() < params.size() - 1) ? (params.size() - 1) - args.size() : 0;
                         int pref = 3;
                         if (func->is_member() && func->is_static()) {
@@ -4600,7 +4609,7 @@ type_reference_resolver::get_best_matching_function(
                             }
                         }
                         valid.push_back({func, std::move(adapted_rest), total, true,
-                                         adapted_this ? adapted_this : this_expr, pref, def, func_is_tpl});
+                                         this_expr, pref, def, func_is_tpl});
                     }
                 }
             }
@@ -4616,18 +4625,18 @@ type_reference_resolver::get_best_matching_function(
             // Member-call shape-compatible fallback.
             if (fn->is_member() && !fn->is_static() && this_expr
                 && (args.size() <= params.size() || fn->has_varargs())) {
-                    auto [w, adapted] = score_with_defaults(args, params, nullptr, 0);
+                auto [w, ignored] = score_with_defaults(args, params, nullptr, 0);
                 if (w != CAST_IMPOSSIBLE) {
-                    return {fn, adapted, false, nullptr};
+                    return {fn, score_with_defaults(args, params, nullptr, 0, true).second, false, nullptr};
                 }
             }
 
             // Direct/free/static shape-compatible fallback.
             if ((!fn->is_member() || fn->is_static())
                 && (b_args.size() <= params.size() || fn->has_varargs())) {
-                    auto [w, adapted] = score_with_defaults(b_args, params, nullptr, 0);
+                auto [w, ignored] = score_with_defaults(b_args, params, nullptr, 0);
                 if (w != CAST_IMPOSSIBLE) {
-                    return {fn, adapted, false, nullptr};
+                    return {fn, score_with_defaults(b_args, params, nullptr, 0, true).second, false, nullptr};
                 }
             }
         }
@@ -4758,6 +4767,29 @@ type_reference_resolver::get_best_matching_function(
     }
 
     auto* b = best[0];
+    const auto& selected_params = b->func->parameters();
+    const auto concrete_param_types = build_concrete_member_param_types(b->func);
+    const auto* param_types = b->func->is_member() && !b->func->is_static()
+        && !concrete_param_types.empty() ? &concrete_param_types : nullptr;
+    const auto& selected_args = !b->is_unified && (!b->func->is_member() || b->func->is_static()) && direct_args
+        ? *direct_args : args;
+    if (b->func->is_member() && !b->func->is_static() && this_expr
+        && get_intrinsic_name(*b->func).has_value()) {
+        b->adapted_args.clear();
+        for (size_t i = 0; i < selected_args.size(); ++i) {
+            auto adapted = i < selected_params.size() && selected_params[i]->get_type()
+                ? adapt_type(selected_args[i], selected_params[i]->get_type()) : nullptr;
+            b->adapted_args.push_back(adapted ? adapted : selected_args[i]);
+        }
+    } else {
+        auto [score, adapted] = score_with_defaults(selected_args, selected_params, param_types,
+                                                     b->is_unified ? 1 : 0, true);
+        b->adapted_args = std::move(adapted);
+        if (b->is_unified) {
+            auto receiver = adapt_type(this_expr, selected_params[0]->get_type());
+            b->this_for_unified = receiver ? receiver : this_expr;
+        }
+    }
     for (auto& arg : b->adapted_args) {
         if (auto unary = std::dynamic_pointer_cast<unary_expression>(arg)) {
             if (unary->sub_expr()) {
@@ -4778,15 +4810,37 @@ type_reference_resolver::get_best_matching_function(
 }
 
 std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(const std::shared_ptr<expression>& expr) {
+    if (!expr) return nullptr;
     auto type = expr->get_type();
 
-    if(!expr || !type::is_resolved(type)) {
+    if(!type::is_resolved(type)) {
         // Arguments must not be null, expr must have a type and this must be resolved.
         return nullptr;
     }
 
     if(type::is_reference(type)) {
-        auto deref = load_value_expression::make_shared(expr);
+        auto source = expr;
+        std::shared_ptr<constructor> copy_ctor;
+        auto value_type = type::canonical(type::remove_const(type->get_subtype()));
+        auto st = std::dynamic_pointer_cast<struct_type>(value_type);
+        auto agg = st ? st->get_struct() : nullptr;
+        auto first_copy = agg ? agg->get_copy_constructor() : nullptr;
+        if (first_copy && !first_copy->is_compiler_generated()
+            && !std::dynamic_pointer_cast<temporary_construction_expression>(expr)) {
+            auto access_site = expr->parent<element>();
+            std::vector<std::shared_ptr<constructor>> copies;
+            for (const auto& ctor : agg->constructors()) {
+                if (ctor && agg->is_copy_constructor(*ctor)) copies.push_back(ctor);
+            }
+            auto [selected, adapted] = get_best_matching_constructor(
+                copies, {expr}, true, expr->first_lexeme());
+            check_constructor_visibility(*selected, access_site ? *access_site : *expr);
+            check_call_contract(*selected, expr->first_lexeme());
+            copy_ctor = selected;
+            source = adapted.front();
+        }
+        auto deref = load_value_expression::make_shared(source);
+        std::dynamic_pointer_cast<load_value_expression>(deref)->set_value_constructor(copy_ctor);
         // Strip const when loading a value: const is compile-time only.
         deref->set_type(k::model::type::remove_const(type->get_subtype()));
         if (expr->is_constant()) {

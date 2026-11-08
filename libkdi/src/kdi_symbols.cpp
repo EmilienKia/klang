@@ -177,7 +177,7 @@ static void collect_namespace(const kdi_namespace& ns,
 static void collect_method(const kdi_method& m,
                             const std::string& agg_fq,
                             std::vector<sym_entry>& out) {
-    if (m.is_abstract) return;                      // abstract → no symbol
+    if (m.is_abstract || m.is_deleted) return;
     if (!m.mangled_name.empty())
         out.push_back({m.mangled_name, agg_fq + "::" + m.name});
 }
@@ -188,6 +188,7 @@ static void collect_aggregate(const kdi_aggregate& agg,
 
     // Constructors (C1 + C2 variants)
     for (auto& ctor : agg.constructors) {
+        if (ctor.is_deleted) continue;
         if (!ctor.mangled_name.empty())
             out.push_back({ctor.mangled_name, ctx + "::[ctor C1]"});
         if (!ctor.mangled_name_c2.empty()

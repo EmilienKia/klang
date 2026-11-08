@@ -700,13 +700,16 @@ protected:
      * If multiple candidates share the same (lowest) score, emits an ambiguity error.
      * @param constructors  List of constructor candidates.
      * @param args          Argument expressions.
+     * @param throw_on_deleted  Throw when the selected constructor is deleted,
+     *                          even if other resolution failures return null.
      * @return {best_constructor, adapted_args} or {nullptr, {}} on failure.
      */
     std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::shared_ptr<expression>>/*adapted_args*/>
     get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors,
                                   const std::vector<std::shared_ptr<expression>>& args,
                                   bool throw_on_failure = false,
-                                  const lex::opt_any_lexeme& failure_location = {});
+                                  const lex::opt_any_lexeme& failure_location = {},
+                                  bool throw_on_deleted = false);
 
 
     /**
