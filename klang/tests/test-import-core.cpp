@@ -32,9 +32,11 @@
 
 #include "helpers.hpp"
 #include "../src/errors.hpp"
+#include "../src/gen/resolvers_aggregate.hpp"
 #include "../src/model/context.hpp"
-#include "../src/model/tools/kdi_type_converter.hpp"
 #include "../src/model/imported.hpp"
+#include "../src/model/tools/kdi_exporter.hpp"
+#include "../src/model/tools/kdi_type_converter.hpp"
 
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/GlobalVariable.h>
@@ -45,6 +47,99 @@
 #include <algorithm>
 
 namespace fs = std::filesystem;
+
+TEST_CASE("Ordinary KDI conversion retains generic arguments on re-export",
+          "[import][kdi][generic][regression]") {
+    auto compiler = k::compiler::create();
+    REQUIRE_NOTHROW(compiler->parse_source("generic_reference_export.k", R"K(
+        module generic_reference_export;
+        public value: int;
+        public callback: int;
+    )K", false, false));
+    auto unit = compiler->get_unit();
+    auto value = unit->get_root_namespace()->get_variable("value");
+    auto callback = unit->get_root_namespace()->get_variable("callback");
+    REQUIRE(value);
+    REQUIRE(callback);
+
+    kdi::kdi_generic_ref_type inner;
+    inner.name = "::source::Inner";
+    inner.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_bool()));
+    kdi::kdi_generic_ref_type outer;
+    outer.name = "::source::Outer";
+    outer.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type{std::move(inner)}));
+    outer.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_int(32)));
+    outer.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_void()));
+    kdi::kdi_ref_type ref;
+    ref.inner = std::make_shared<kdi::kdi_type>(kdi::kdi_type{std::move(outer)});
+    kdi::kdi_type original{std::move(ref)};
+
+    auto model = k::model::kdi_type_to_model_type(original, *unit, compiler->get_context_for_test());
+    REQUIRE(model);
+    value->set_type(model);
+    kdi::kdi_callable_type callable;
+    callable.ret = std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_void());
+    callable.params.push_back(std::make_shared<kdi::kdi_type>(original));
+    auto callable_model = k::model::kdi_type_to_model_type(
+        kdi::kdi_type{std::move(callable)}, *unit, compiler->get_context_for_test());
+    REQUIRE(callable_model);
+    callback->set_type(callable_model);
+    k::model::kdi_builder exporter(*compiler->get_context_for_test());
+    unit->accept(exporter);
+    auto output = exporter.take();
+    auto exported = std::find_if(output.unit.root_ns.variables.begin(),
+        output.unit.root_ns.variables.end(), [](const auto& var) { return var.name == "value"; });
+    REQUIRE(exported != output.unit.root_ns.variables.end());
+    auto result_ref = std::get_if<kdi::kdi_ref_type>(&exported->type.value);
+    REQUIRE(result_ref);
+    REQUIRE(result_ref->inner);
+    auto result_outer = std::get_if<kdi::kdi_generic_ref_type>(&result_ref->inner->value);
+    REQUIRE(result_outer);
+    CHECK(result_outer->name == "::source::Outer");
+    REQUIRE(result_outer->args.size() == 3);
+    auto result_inner = std::get_if<kdi::kdi_generic_ref_type>(&result_outer->args[0]->value);
+    REQUIRE(result_inner);
+    CHECK(result_inner->name == "::source::Inner");
+    REQUIRE(result_inner->args.size() == 1);
+    CHECK(std::holds_alternative<kdi::kdi_bool_type>(result_inner->args[0]->value));
+    CHECK(std::holds_alternative<kdi::kdi_int_type>(result_outer->args[1]->value));
+    CHECK(std::holds_alternative<kdi::kdi_void_type>(result_outer->args[2]->value));
+    auto exported_callback = std::find_if(output.unit.root_ns.variables.begin(),
+        output.unit.root_ns.variables.end(), [](const auto& var) { return var.name == "callback"; });
+    REQUIRE(exported_callback != output.unit.root_ns.variables.end());
+    auto result_callable = std::get_if<kdi::kdi_callable_type>(&exported_callback->type.value);
+    REQUIRE(result_callable);
+    REQUIRE(result_callable->params.size() == 1);
+    REQUIRE(result_callable->params[0]);
+    CHECK(kdi::kdi_type_to_string(*result_callable->params[0]) == kdi::kdi_type_to_string(original));
+}
+
+TEST_CASE("Unrecoverable generic return arguments do not bind a bare name",
+          "[import][kdi][generic][regression]") {
+    auto compiler = k::compiler::create();
+    REQUIRE_NOTHROW(compiler->parse_source("generic_return_scope.k", R"K(
+        module generic_return_scope;
+        public struct Named {}
+        public make(): int { return 1; }
+    )K", false, false));
+    auto unit = compiler->get_unit();
+    auto function = unit->get_root_namespace()->get_function("make");
+    REQUIRE(function);
+    kdi::kdi_generic_ref_type descriptor;
+    descriptor.name = "Named";
+    descriptor.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_void()));
+    auto model = k::model::kdi_type_to_model_type(
+        kdi::kdi_type{std::move(descriptor)}, *unit, compiler->get_context_for_test());
+    REQUIRE(model);
+    function->set_return_type(model);
+    k::model::gen::aggregate_type_resolver resolver(
+        compiler->diagnostics(), compiler->get_context_for_test(), *unit);
+    function->accept(resolver);
+    auto unresolved = std::dynamic_pointer_cast<k::model::unresolved_type>(function->get_return_type());
+    REQUIRE(unresolved);
+    REQUIRE(unresolved->get_model_template_args().size() == 1);
+    CHECK_FALSE(unresolved->get_model_template_args()[0]);
+}
 
 TEST_CASE("Import rejects a legacy union lifecycle layout",
           "[import][union][abi][regression]") {

@@ -440,3 +440,4 @@ TEST_CASE("validate: generic template_def with aggregate signature passes", "[va
     auto r = kdi_validate(f);
     REQUIRE(r.is_valid());
 }
+

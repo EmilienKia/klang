@@ -1061,7 +1061,3 @@ TEST_CASE("Assignment diagnostics warn once for concrete invalid returns using s
     }
     CHECK(template_signatures == 2);
 }
-
-// ═════════════════════════════════════════════════════════════════════════════
-// 9. Non-member assignment operator must fail
-// ═════════════════════════════════════════════════════════════════════════════

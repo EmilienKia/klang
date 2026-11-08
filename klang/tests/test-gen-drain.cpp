@@ -541,3 +541,5 @@ TEST_CASE("Drain moves a class into a union alternative",
     REQUIRE(fn);
     CHECK(fn() == 42);
 }
+
+

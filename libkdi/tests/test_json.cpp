@@ -950,7 +950,3 @@ TEST_CASE("JSON: polymorphic union round-trips", "[json][union][polymorphic]") {
     REQUIRE(run.alternatives[0].name == "dog");
     REQUIRE(run.alternatives[1].name == "cat");
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Header round-trip
-// ─────────────────────────────────────────────────────────────────────────────

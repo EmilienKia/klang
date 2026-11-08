@@ -165,6 +165,7 @@ TEST_CASE("Member lookup: generic Writer redeclarations bind the first signature
     auto compatibility = k::model::gen::callable_signature_compatible(
         k::model::gen::callable_signature_view::of(*narrow), broad_prototype);
     CHECK(compatibility.result == k::model::gen::callable_compat::status::needs_adjustment);
+    REQUIRE(ensure_libk_loaded());
     auto jit = comp->to_jit();
     REQUIRE(jit != nullptr);
     auto run = jit->lookup_symbol<int(*)()>("run");

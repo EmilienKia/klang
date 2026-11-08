@@ -214,3 +214,4 @@ TEST_CASE("kdi_symbol_error: message includes context", "[symbols]") {
     kdi_symbol_error err("test context message");
     REQUIRE( std::string(err.what()).find("test context message") != std::string::npos );
 }
+
