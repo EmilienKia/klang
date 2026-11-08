@@ -28,6 +28,7 @@
 #include <openssl/core_names.h>
 #include <openssl/evp.h>
 #include <openssl/evperr.h>
+#include <openssl/kdf.h>
 #include <openssl/params.h>
 #include <openssl/proverr.h>
 
@@ -45,6 +46,8 @@ typedef struct {
     unsigned int length;
     EVP_MD *md;
     int standard;
+    unsigned int hash_size;
+    unsigned int modes;
 } cap_digest_entry;
 
 typedef struct {
@@ -70,7 +73,7 @@ static const char *const cap_digest_standard_names[] = {
  * Inspect all errors, not just the last one: fetch can append "unsupported"
  * after an earlier allocation failure. Discovery starts with an empty queue.
  */
-static int cap_digest_errors(unsigned long previous, int failed) {
+static int cap_fetch_errors(unsigned long previous, int failed, int allow_disabled) {
     unsigned long error;
     int unsupported = 0;
     int other = 0;
@@ -79,9 +82,11 @@ static int cap_digest_errors(unsigned long previous, int failed) {
         return failed || ERR_peek_last_error() != previous ? -1 : 0;
     }
     while ((error = ERR_get_error()) != 0) {
-        if (ERR_GET_LIB(error) == ERR_LIB_EVP &&
-            (ERR_GET_REASON(error) == ERR_R_UNSUPPORTED ||
-             ERR_GET_REASON(error) == EVP_R_UNSUPPORTED_ALGORITHM)) {
+        if ((allow_disabled && !ERR_SYSTEM_ERROR(error) &&
+             ERR_GET_REASON(error) == ERR_R_DISABLED) ||
+            (ERR_GET_LIB(error) == ERR_LIB_EVP &&
+             (ERR_GET_REASON(error) == ERR_R_UNSUPPORTED ||
+              ERR_GET_REASON(error) == EVP_R_UNSUPPORTED_ALGORITHM))) {
             unsupported = 1;
         } else {
             other = 1;
@@ -91,6 +96,10 @@ static int cap_digest_errors(unsigned long previous, int failed) {
         return -1;
     }
     return unsupported ? 1 : 0;
+}
+
+static int cap_digest_errors(unsigned long previous, int failed) {
+    return cap_fetch_errors(previous, failed, 0);
 }
 
 static int cap_digest_probe_errors(unsigned long previous, int failed) {
@@ -228,12 +237,12 @@ static int cap_digest_same(const EVP_MD *a, const EVP_MD *b) {
 }
 
 /* Return 1 for a fetch, 0 for an unavailable name, and -1 for a failure. */
-static int cap_digest_fetch(const char *name, EVP_MD **result) {
+static int cap_digest_fetch(const char *name, EVP_MD **result, int allow_disabled) {
     unsigned long previous = ERR_peek_last_error();
     int errors;
 
     *result = EVP_MD_fetch(NULL, name, NULL);
-    errors = cap_digest_errors(previous, *result == NULL);
+    errors = cap_fetch_errors(previous, *result == NULL, allow_disabled);
     if (*result == NULL) {
         return errors == 1 ? 0 : -1;
     }
@@ -317,7 +326,7 @@ static int cap_digest_usable(EVP_MD *md) {
  * resolves it back to this implementation.
  */
 static int cap_digest_preferred(EVP_MD *md, const char *candidate,
-                                const char **name, int *standard) {
+                                const char **name, int *standard, int allow_disabled) {
     size_t i;
     EVP_MD *check;
     int fetched;
@@ -330,7 +339,7 @@ static int cap_digest_preferred(EVP_MD *md, const char *candidate,
         if (!EVP_MD_is_a(md, cap_digest_standard_names[i])) {
             continue;
         }
-        fetched = cap_digest_fetch(cap_digest_standard_names[i], &check);
+        fetched = cap_digest_fetch(cap_digest_standard_names[i], &check, allow_disabled);
         if (fetched < 0) {
             return 0;
         }
@@ -348,7 +357,7 @@ static int cap_digest_preferred(EVP_MD *md, const char *candidate,
     if (primary == NULL) {
         return 0;
     }
-    fetched = cap_digest_fetch(primary, &check);
+    fetched = cap_digest_fetch(primary, &check, allow_disabled);
     if (fetched < 0) {
         return 0;
     }
@@ -377,7 +386,8 @@ void __k_cap_digest_free(void *handle) {
     free(snapshot);
 }
 
-static void *cap_digest_discover(int *status) {
+static void *cap_digest_discover_candidates(int *status, int require_digest_usable,
+                                            int allow_disabled) {
     cap_digest_candidates candidates = {0};
     cap_digest_snapshot *snapshot;
     unsigned long previous;
@@ -409,7 +419,7 @@ static void *cap_digest_discover(int *status) {
         unsigned int length;
         size_t j;
         int standard;
-        int fetched = cap_digest_fetch(candidates.names[i], &md);
+        int fetched = cap_digest_fetch(candidates.names[i], &md, allow_disabled);
         int usable;
 
         if (fetched < 0) {
@@ -418,16 +428,19 @@ static void *cap_digest_discover(int *status) {
         if (fetched == 0) {
             continue;
         }
-        usable = cap_digest_usable(md);
-        if (usable < 0) {
-            EVP_MD_free(md);
-            goto fail;
+        if (require_digest_usable) {
+            usable = cap_digest_usable(md);
+            if (usable < 0) {
+                EVP_MD_free(md);
+                goto fail;
+            }
+            if (usable == 0) {
+                EVP_MD_free(md);
+                continue;
+            }
         }
-        if (usable == 0) {
-            EVP_MD_free(md);
-            continue;
-        }
-        if (!cap_digest_preferred(md, candidates.names[i], &name, &standard)) {
+        if (!cap_digest_preferred(md, candidates.names[i], &name, &standard,
+                                  allow_disabled)) {
             EVP_MD_free(md);
             goto fail;
         }
@@ -467,6 +480,8 @@ static void *cap_digest_discover(int *status) {
         snapshot->entries[j].length = length;
         snapshot->entries[j].md = md;
         snapshot->entries[j].standard = standard;
+        snapshot->entries[j].hash_size = 0;
+        snapshot->entries[j].modes = 0;
     }
     if (snapshot->count > 1) {
         qsort(snapshot->entries, snapshot->count, sizeof(*snapshot->entries),
@@ -489,6 +504,10 @@ fail:
     free(candidates.names);
     __k_cap_digest_free(snapshot);
     return NULL;
+}
+
+static void *cap_digest_discover(int *status) {
+    return cap_digest_discover_candidates(status, 1, 0);
 }
 
 /*
@@ -624,7 +643,7 @@ static void *cap_hmac_discover(int *status) {
     for (i = 0; i < snapshot->count; ++i) {
         cap_digest_entry *entry = &snapshot->entries[i];
         EVP_MD *md = NULL;
-        int fetched = cap_digest_fetch(entry->name, &md);
+        int fetched = cap_digest_fetch(entry->name, &md, 0);
         int usable = 0;
 
         if (fetched < 0) {
@@ -669,6 +688,232 @@ fail:
     return NULL;
 }
 
+enum {
+    CAP_HKDF_EXTRACT = 1,
+    CAP_HKDF_EXPAND = 2,
+    CAP_HKDF_DERIVE = 4
+};
+
+static int cap_hkdf_probe_errors(int failed) {
+    unsigned long error;
+    int rejected = 0;
+    int other = 0;
+
+    while ((error = ERR_get_error()) != 0) {
+        int lib = ERR_GET_LIB(error);
+        int reason = ERR_GET_REASON(error);
+        if (!ERR_SYSTEM_ERROR(error) && reason == ERR_R_DISABLED) {
+            rejected = 1;
+        } else if (!ERR_SYSTEM_ERROR(error) && !ERR_FATAL_ERROR(error) &&
+                   (reason == ERR_R_UNSUPPORTED ||
+                    (lib == ERR_LIB_EVP &&
+                     (reason == EVP_R_UNSUPPORTED_ALGORITHM ||
+                      reason == EVP_R_INVALID_DIGEST ||
+                      reason == EVP_R_INVALID_KEY_LENGTH)) ||
+                    (lib == ERR_LIB_PROV &&
+                     (reason == PROV_R_INVALID_DIGEST ||
+                      reason == PROV_R_INVALID_DIGEST_LENGTH ||
+                      reason == PROV_R_INVALID_DIGEST_SIZE ||
+                      reason == PROV_R_DIGEST_NOT_ALLOWED ||
+                      reason == PROV_R_XOF_DIGESTS_NOT_ALLOWED ||
+                      reason == PROV_R_NOT_SUPPORTED ||
+                      reason == PROV_R_INVALID_MODE ||
+                      reason == PROV_R_INVALID_KEY ||
+                      reason == PROV_R_INVALID_KEY_LENGTH ||
+                      reason == PROV_R_KEY_SIZE_TOO_SMALL ||
+                      reason == PROV_R_UNSUPPORTED_KEY_SIZE ||
+                      reason == PROV_R_INVALID_SALT_LENGTH ||
+                      reason == PROV_R_INVALID_INPUT_LENGTH ||
+                      reason == PROV_R_INVALID_OUTPUT_LENGTH)))) {
+            rejected = 1;
+        } else {
+            other = 1;
+        }
+    }
+    if (other || (failed && !rejected) || (!failed && rejected)) {
+        return -1;
+    }
+    return failed ? 0 : 1;
+}
+
+static int cap_hkdf_create_probe(EVP_KDF *kdf, const char *name) {
+    EVP_KDF_CTX *ctx;
+    OSSL_PARAM params[2];
+    int ok;
+
+    ctx = EVP_KDF_CTX_new(kdf);
+    if (cap_digest_errors(0, ctx == NULL) != 0 || ctx == NULL) {
+        EVP_KDF_CTX_free(ctx);
+        return -1;
+    }
+    params[0] = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, (char *)name, 0);
+    params[1] = OSSL_PARAM_construct_end();
+    ok = EVP_KDF_CTX_set_params(ctx, params);
+    ok = cap_hkdf_probe_errors(ok != 1);
+    EVP_KDF_CTX_free(ctx);
+    return ok;
+}
+
+/*
+ * Exercise each mode separately. Expand uses a hash-sized PRK, not the
+ * extract input. The deterministic inputs are public witnesses only.
+ */
+static int cap_hkdf_probe(EVP_KDF *kdf, const char *name, size_t hash_size,
+                          int mode) {
+    static const unsigned char salt[16] = {
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+    };
+    static const unsigned char info[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+    EVP_KDF_CTX *ctx = NULL;
+    unsigned char *prk = NULL;
+    unsigned char *output = NULL;
+    const unsigned char *key = cap_hmac_probe_key;
+    size_t key_size = sizeof(cap_hmac_probe_key);
+    OSSL_PARAM params[6];
+    size_t n = 0;
+    size_t i;
+    int ok = -1;
+
+    ctx = EVP_KDF_CTX_new(kdf);
+    if (cap_digest_errors(0, ctx == NULL) != 0 || ctx == NULL) {
+        goto done;
+    }
+    if (mode == EVP_KDF_HKDF_MODE_EXPAND_ONLY) {
+        prk = malloc(hash_size);
+        if (prk == NULL) {
+            goto done;
+        }
+        for (i = 0; i < hash_size; ++i) {
+            prk[i] = (unsigned char)i;
+        }
+        key = prk;
+        key_size = hash_size;
+    }
+    output = malloc(hash_size);
+    if (output == NULL) {
+        goto done;
+    }
+    params[n++] = OSSL_PARAM_construct_int(OSSL_KDF_PARAM_MODE, &mode);
+    params[n++] = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, (char *)name, 0);
+    params[n++] = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, (void *)key, key_size);
+    if (mode != EVP_KDF_HKDF_MODE_EXPAND_ONLY) {
+        params[n++] = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT,
+                                                        (void *)salt, sizeof(salt));
+    }
+    if (mode != EVP_KDF_HKDF_MODE_EXTRACT_ONLY) {
+        params[n++] = OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO,
+                                                        (void *)info, sizeof(info));
+    }
+    params[n] = OSSL_PARAM_construct_end();
+    if (EVP_KDF_derive(ctx, output, hash_size, params) != 1) {
+        ok = cap_hkdf_probe_errors(1);
+        goto done;
+    }
+    ok = cap_hkdf_probe_errors(0);
+done:
+    free(prk);
+    free(output);
+    EVP_KDF_CTX_free(ctx);
+    return ok;
+}
+
+static void *cap_hkdf_discover(int *status) {
+    cap_digest_snapshot *snapshot;
+    EVP_KDF *kdf = NULL;
+    size_t i, kept = 0;
+    int errors;
+
+    snapshot = cap_digest_discover_candidates(status, 0, 1);
+    if (snapshot == NULL) {
+        return NULL;
+    }
+    *status = -3;
+    kdf = EVP_KDF_fetch(NULL, OSSL_KDF_NAME_HKDF, NULL);
+    errors = cap_fetch_errors(0, kdf == NULL, 1);
+    if (kdf == NULL && errors == 1) {
+        for (i = 0; i < snapshot->count; ++i) {
+            free(snapshot->entries[i].name);
+        }
+        snapshot->count = 0;
+        *status = 0;
+        return snapshot;
+    }
+    if (kdf == NULL || errors != 0) {
+        goto fail;
+    }
+    for (i = 0; i < snapshot->count; ++i) {
+        cap_digest_entry *entry = &snapshot->entries[i];
+        EVP_MD *md = NULL;
+        int fetched = cap_digest_fetch(entry->name, &md, 1);
+        unsigned int modes = 0;
+        int size = 0;
+
+        if (fetched < 0) {
+            goto fail;
+        }
+        if (fetched > 0) {
+            unsigned long flags = EVP_MD_get_flags(md);
+            size = EVP_MD_get_size(md);
+            if (cap_digest_errors(0, 0) != 0) {
+                EVP_MD_free(md);
+                goto fail;
+            }
+            if (size > 0 && (unsigned int)size <= UINT_MAX / 255u &&
+                (flags & EVP_MD_FLAG_XOF) == 0) {
+                static const int probe_modes[] = {
+                    EVP_KDF_HKDF_MODE_EXTRACT_ONLY,
+                    EVP_KDF_HKDF_MODE_EXPAND_ONLY,
+                    EVP_KDF_HKDF_MODE_EXTRACT_AND_EXPAND
+                };
+                static const unsigned int flags_for_modes[] = {
+                    CAP_HKDF_EXTRACT, CAP_HKDF_EXPAND, CAP_HKDF_DERIVE
+                };
+                size_t j;
+                int creatable = cap_hkdf_create_probe(kdf, entry->name);
+                if (creatable < 0) {
+                    EVP_MD_free(md);
+                    goto fail;
+                }
+                if (creatable == 0) {
+                    EVP_MD_free(md);
+                    free(entry->name);
+                    entry->name = NULL;
+                    continue;
+                }
+                for (j = 0; j < sizeof(probe_modes) / sizeof(probe_modes[0]); ++j) {
+                    int usable = cap_hkdf_probe(kdf, entry->name, (size_t)size, probe_modes[j]);
+                    if (usable < 0) {
+                        EVP_MD_free(md);
+                        goto fail;
+                    }
+                    if (usable > 0) modes |= flags_for_modes[j];
+                }
+            }
+            EVP_MD_free(md);
+        }
+        if (modes != 0) {
+            entry->hash_size = (unsigned int)size;
+            entry->modes = modes;
+            if (kept != i) {
+                snapshot->entries[kept] = *entry;
+                entry->name = NULL;
+            }
+            ++kept;
+        } else {
+            free(entry->name);
+            entry->name = NULL;
+        }
+    }
+    snapshot->count = kept;
+    EVP_KDF_free(kdf);
+    *status = 0;
+    return snapshot;
+fail:
+    EVP_KDF_free(kdf);
+    __k_cap_digest_free(snapshot);
+    return NULL;
+}
+
 typedef struct {
     OSSL_LIB_CTX *libctx;
     cap_digest_snapshot *snapshot;
@@ -697,7 +942,8 @@ static void *cap_digest_worker(void *arg) {
     if (previous != NULL) {
         int selected = OSSL_LIB_CTX_set0_default(NULL) == job->libctx;
         if (cap_digest_errors(0, 0) == 0 && selected) {
-            job->snapshot = job->kind == 1 ? cap_hmac_discover(&job->status)
+            job->snapshot = job->kind == 2 ? cap_hkdf_discover(&job->status)
+                            : job->kind == 1 ? cap_hmac_discover(&job->status)
                                              : cap_digest_discover(&job->status);
         }
         if (OSSL_LIB_CTX_set0_default(previous) != job->libctx) {
@@ -724,7 +970,8 @@ static void *cap_digest_new_impl(int *status, int kind) {
     }
     *status = -3;
     if (ERR_peek_last_error() == 0) {
-        return kind == 1 ? cap_hmac_discover(status) : cap_digest_discover(status);
+        return kind == 2 ? cap_hkdf_discover(status)
+             : kind == 1 ? cap_hmac_discover(status) : cap_digest_discover(status);
     }
 
     /*
@@ -801,6 +1048,20 @@ void *__k_cap_digest_new(int *status) {
 
 void *__k_cap_hmac_digest_new(int *status) {
     return cap_digest_new(status, 1);
+}
+
+void *__k_cap_hkdf_new(int *status) {
+    return cap_digest_new(status, 2);
+}
+
+unsigned int __k_cap_hkdf_hash_size(const void *handle, unsigned int index) {
+    const cap_digest_snapshot *snapshot = handle;
+    return snapshot->entries[index].hash_size;
+}
+
+unsigned int __k_cap_hkdf_modes(const void *handle, unsigned int index) {
+    const cap_digest_snapshot *snapshot = handle;
+    return snapshot->entries[index].modes;
 }
 
 unsigned int __k_cap_digest_count(const void *handle) {

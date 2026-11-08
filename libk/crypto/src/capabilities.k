@@ -15,6 +15,11 @@ private struct NativeSymmetricCapabilities {}
 
 @ffi::Extern("C") private __k_cap_digest_new(status: int*) : NativeDigestCapabilities*;
 @ffi::Extern("C") private __k_cap_hmac_digest_new(status: int*) : NativeDigestCapabilities*;
+@ffi::Extern("C") private __k_cap_hkdf_new(status: int*) : NativeDigestCapabilities*;
+@ffi::Extern("C") private __k_cap_hkdf_hash_size(catalog: const NativeDigestCapabilities*,
+    index: unsigned int) : unsigned int;
+@ffi::Extern("C") private __k_cap_hkdf_modes(catalog: const NativeDigestCapabilities*,
+    index: unsigned int) : unsigned int;
 @ffi::Extern("C") private __k_cap_digest_count(catalog: const NativeDigestCapabilities*) : unsigned int;
 @ffi::Extern("C") private __k_cap_digest_size(catalog: const NativeDigestCapabilities*,
     index: unsigned int) : unsigned int;
@@ -57,6 +62,85 @@ private capabilityAppendUnique(values: Vector<String>&, value: const String&) {
         ++i;
     }
     values.append(value);
+}
+
+/**
+ * HKDF modes witnessed for one fixed-output digest with non-secret inputs.
+ * Provider changes or different inputs can make later operations unavailable.
+ */
+public final struct HkdfConfiguration {
+    friend CryptoCapabilities;
+private:
+    _algorithm: MessageDigestAlgorithm;
+    _hashSize: unsigned int;
+    _extract: bool;
+    _expand: bool;
+    _derive: bool;
+
+    HkdfConfiguration(algorithm: const MessageDigestAlgorithm&, hashSize: unsigned int,
+            extract: bool, expand: bool, derive: bool)
+        : _algorithm(algorithm), _hashSize(hashSize), _extract(extract),
+          _expand(expand), _derive(derive) {}
+public:
+    HkdfConfiguration(other: const HkdfConfiguration&)
+        : _algorithm(other._algorithm), _hashSize(other._hashSize),
+          _extract(other._extract), _expand(other._expand), _derive(other._derive) {}
+
+    const algorithm() : MessageDigestAlgorithm { return String(_algorithm); }
+    const hashSize() : unsigned int { return _hashSize; }
+    const supportsExtract() : bool { return _extract; }
+    const supportsExpand() : bool { return _expand; }
+    const supportsDerive() : bool { return _derive; }
+}
+
+private struct HkdfCapabilityNode {
+public:
+    value: HkdfConfiguration;
+    next: HkdfCapabilityNode! = null;
+    HkdfCapabilityNode(configuration: const HkdfConfiguration&) : value(configuration) {}
+}
+
+private class HkdfCapabilityIterator : public ConstIterator<HkdfConfiguration> {
+    current: const HkdfCapabilityNode*;
+public:
+    HkdfCapabilityIterator(first: const HkdfCapabilityNode*) : current(first) {}
+    override next() : OptionalConstRef<HkdfConfiguration> {
+        result: OptionalConstRef<HkdfConfiguration>;
+        if (current != null) {
+            result.set(current->value);
+            current = current->next;
+        }
+        return result;
+    }
+}
+
+private class HkdfCapabilitySequence : public Sequence<HkdfConfiguration> {
+    head: HkdfCapabilityNode! = null;
+    tail: HkdfCapabilityNode* = null;
+public:
+    HkdfCapabilitySequence() -> default;
+    HkdfCapabilitySequence(other: const HkdfCapabilitySequence&) -> delete;
+    operator =(other: const HkdfCapabilitySequence&) -> delete;
+    ~HkdfCapabilitySequence() {
+        while (head != null) {
+            next: HkdfCapabilityNode! = head.next;
+            head = next;
+        }
+        tail = null;
+    }
+    append(configuration: const HkdfConfiguration&) {
+        node: HkdfCapabilityNode! = new HkdfCapabilityNode(configuration);
+        if (tail == null) {
+            tail = node;
+            head = node;
+        } else {
+            tail->next = node;
+            tail = tail->next;
+        }
+    }
+    override const constIterator() : ConstIterator<HkdfConfiguration>! {
+        return new HkdfCapabilityIterator(head);
+    }
 }
 
 /**
@@ -155,6 +239,7 @@ public final class CryptoCapabilities {
 private:
     _digests: Vector<String>;
     _hmacDigests: Vector<String>;
+    _hkdfConfigurations: HkdfCapabilitySequence;
     _configurations: CapabilityConfigurationSequence;
 
     CryptoCapabilities() -> default;
@@ -166,6 +251,7 @@ public:
         result: CryptoCapabilities! = new CryptoCapabilities();
         digests: NativeDigestCapabilities* = null;
         hmacDigests: NativeDigestCapabilities* = null;
+        hkdf: NativeDigestCapabilities* = null;
         symmetric: NativeSymmetricCapabilities* = null;
         try {
             status: int = 0;
@@ -174,6 +260,9 @@ public:
             status = 0;
             hmacDigests = __k_cap_hmac_digest_new(&status);
             if (status != 0 || hmacDigests == null) throw CryptoOperationException();
+            status = 0;
+            hkdf = __k_cap_hkdf_new(&status);
+            if (status != 0 || hkdf == null) throw CryptoOperationException();
             status = 0;
             symmetric = __k_cap_symmetric_new(&status);
             if (status != 0 || symmetric == null) throw CryptoOperationException();
@@ -194,6 +283,18 @@ public:
                 ++i;
             }
 
+            count = __k_cap_digest_count(hkdf);
+            i = 0u;
+            while (i < count) {
+                name: String = capabilityDigestName(hkdf, i);
+                size: unsigned int = __k_cap_hkdf_hash_size(hkdf, i);
+                modes: unsigned int = __k_cap_hkdf_modes(hkdf, i);
+                configuration: HkdfConfiguration = HkdfConfiguration(name, size,
+                    (modes & 1u) != 0u, (modes & 2u) != 0u, (modes & 4u) != 0u);
+                result._hkdfConfigurations.append(configuration);
+                ++i;
+            }
+
             count = __k_cap_symmetric_count(symmetric);
             i = 0u;
             while (i < count) {
@@ -211,6 +312,7 @@ public:
             return result;
         } finally {
             if (symmetric != null) __k_cap_symmetric_free(symmetric);
+            if (hkdf != null) __k_cap_digest_free(hkdf);
             if (hmacDigests != null) __k_cap_digest_free(hmacDigests);
             if (digests != null) __k_cap_digest_free(digests);
         }
@@ -237,6 +339,34 @@ public:
         while (i < _hmacDigests.size()) {
             result.append(_hmacDigests[i]);
             ++i;
+        }
+        return result;
+    }
+
+    /**
+     * Fixed-output digest names with at least one witnessed HKDF mode.
+     * Returned values are independent of this snapshot.
+     */
+    const hkdfDigestAlgorithms() : Sequence<MessageDigestAlgorithm>! {
+        result: Vector<String>! = new Vector<String>();
+        it: ConstIterator<HkdfConfiguration>! = _hkdfConfigurations.constIterator();
+        current: OptionalConstRef<HkdfConfiguration> = it.next();
+        while (current.hasValue()) {
+            name: String = current.get().algorithm();
+            capabilityAppendUnique(result, name);
+            current = it.next();
+        }
+        return result;
+    }
+
+    /** Independently owned configurations witnessed at snapshot acquisition. */
+    const hkdfConfigurations() : Sequence<HkdfConfiguration>! {
+        result: HkdfCapabilitySequence! = new HkdfCapabilitySequence();
+        it: ConstIterator<HkdfConfiguration>! = _hkdfConfigurations.constIterator();
+        current: OptionalConstRef<HkdfConfiguration> = it.next();
+        while (current.hasValue()) {
+            result.append(current.get());
+            current = it.next();
         }
         return result;
     }

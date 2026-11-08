@@ -39,6 +39,7 @@ MockFailure mockFailure;
 
 struct MockMac {
     size_t size;
+    char* digest;
 };
 
 void* mockMacNew(void*) {
@@ -46,7 +47,35 @@ void* mockMacNew(void*) {
 }
 
 void mockMacFree(void* ctx) {
+    if (ctx) std::free(static_cast<MockMac*>(ctx)->digest);
     std::free(ctx);
+}
+
+int mockMacSetCtxParams(void* ctx, const OSSL_PARAM params[]) {
+    if (!params) return 1;
+    const OSSL_PARAM* param = OSSL_PARAM_locate_const(params, OSSL_MAC_PARAM_DIGEST);
+    if (!param) return 1;
+    const char* name = nullptr;
+    if (!OSSL_PARAM_get_utf8_string_ptr(param, &name)) return 0;
+    const size_t size = std::strlen(name) + 1;
+    char* copy = static_cast<char*>(std::malloc(size));
+    if (!copy) {
+        ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        return 0;
+    }
+    std::memcpy(copy, name, size);
+    auto* mac = static_cast<MockMac*>(ctx);
+    std::free(mac->digest);
+    mac->digest = copy;
+    return 1;
+}
+
+const OSSL_PARAM* mockMacSettableCtxParams(void*, void*) {
+    static const OSSL_PARAM params[] = {
+        OSSL_PARAM_utf8_string(OSSL_MAC_PARAM_DIGEST, nullptr, 0),
+        OSSL_PARAM_END
+    };
+    return params;
 }
 
 int mockMacInit(void* ctx, const unsigned char*, size_t, const OSSL_PARAM params[]) {
@@ -65,9 +94,11 @@ int mockMacInit(void* ctx, const unsigned char*, size_t, const OSSL_PARAM params
     }
     if (mockFailure == MockFailure::silent) return 0;
 
-    const OSSL_PARAM* param = OSSL_PARAM_locate_const(params, OSSL_MAC_PARAM_DIGEST);
-    const char* name = nullptr;
-    if (!param || !OSSL_PARAM_get_utf8_string_ptr(param, &name)) return 0;
+    const OSSL_PARAM* param = params ? OSSL_PARAM_locate_const(params, OSSL_MAC_PARAM_DIGEST)
+                                    : nullptr;
+    const char* name = static_cast<MockMac*>(ctx)->digest;
+    if (param && !OSSL_PARAM_get_utf8_string_ptr(param, &name)) return 0;
+    if (!name) return 0;
     if (mockFailure == MockFailure::selective && std::strcmp(name, "SHA-256") == 0) {
         ERR_raise(ERR_LIB_PROV, PROV_R_INVALID_DIGEST);
         return 0;
@@ -126,6 +157,8 @@ const OSSL_DISPATCH mockMacDispatch[] = {
     {OSSL_FUNC_MAC_UPDATE, reinterpret_cast<void (*)(void)>(mockMacUpdate)},
     {OSSL_FUNC_MAC_FINAL, reinterpret_cast<void (*)(void)>(mockMacFinal)},
     {OSSL_FUNC_MAC_GET_CTX_PARAMS, reinterpret_cast<void (*)(void)>(mockMacGetCtxParams)},
+    {OSSL_FUNC_MAC_SET_CTX_PARAMS, reinterpret_cast<void (*)(void)>(mockMacSetCtxParams)},
+    {OSSL_FUNC_MAC_SETTABLE_CTX_PARAMS, reinterpret_cast<void (*)(void)>(mockMacSettableCtxParams)},
     {0, nullptr}
 };
 
@@ -438,6 +471,15 @@ TEST_CASE("HMAC discovery distinguishes provider rejection from backend failure"
         EVP_MAC_free(mac);
         OSSL_LIB_CTX* previous = OSSL_LIB_CTX_set0_default(custom);
         if (!previous) _exit(85);
+
+        mockFailure = MockFailure::selective;
+        const unsigned char key[32] = {};
+        const unsigned char input[1] = {};
+        unsigned char output[64];
+        size_t written = 0;
+        if (!EVP_Q_mac(custom, "HMAC", nullptr, "SHA-512", nullptr,
+                       key, sizeof(key), input, sizeof(input), output,
+                       sizeof(output), &written) || written != sizeof(output)) _exit(87);
 
         struct Case { MockFailure mode; int expected; };
         const Case cases[] = {

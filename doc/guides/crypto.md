@@ -248,9 +248,10 @@ thread to preserve the error queue, which can affect thread-affine providers.
 
 ## 4. Discovering supported algorithms
 
-`CryptoCapabilities::snapshot()` produces an eager snapshot. The four global
+`CryptoCapabilities::snapshot()` produces an eager snapshot. The global
 sequences are `digestAlgorithms()`, `hmacDigestAlgorithms()`,
-`symmetricAlgorithms()`, `symmetricModes()`, and `symmetricPaddings()`.
+`hkdfDigestAlgorithms()`, `symmetricAlgorithms()`, `symmetricModes()`, and
+`symmetricPaddings()`.
 Their values are string aliases:
 they can include supported extensions absent from the standard enums, and
 standard enum entries need not be available on every installation.
@@ -297,6 +298,8 @@ that a later factory call will succeed after provider settings change. Digest
 and cipher candidates come from the provider; padding choices are libk
 policies validated with ciphers. HMAC digest names are separately probed with
 a fixed test key; a provider may impose different restrictions on other keys.
+`hkdfConfigurations()` reports which HKDF modes were witnessed for each digest;
+it does not guarantee that a later operation or different inputs will succeed.
 
 ## 5. Selecting a symmetric cipher
 

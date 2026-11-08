@@ -363,13 +363,18 @@ authentication, `CryptoOperationException` reports operation failures, and
 
 ## Capability discovery
 
-`CryptoCapabilities::snapshot()` discovers available digests, HMAC digests, and
-symmetric ciphers and returns an owned snapshot. Its `digestAlgorithms()`,
+`CryptoCapabilities::snapshot()` discovers available digests, HMAC and HKDF
+digests, and symmetric ciphers and returns an owned snapshot. Its `digestAlgorithms()`,
 `symmetricAlgorithms()`, `symmetricModes()` and `symmetricPaddings()` methods
 return owned `Sequence` values containing the corresponding string aliases.
 Names may include supported extensions that have no entry in the standard enums.
 `hmacDigestAlgorithms()` returns digest names actually witnessed with HMAC and
 a fixed 32-byte probe key. Other keys can be subject to provider restrictions.
+`hkdfDigestAlgorithms()` returns digest names for which at least one HKDF mode
+was witnessed. `hkdfConfigurations()` returns `HkdfConfiguration` values with
+`algorithm()`, `hashSize()`, `supportsExtract()`, `supportsExpand()`, and
+`supportsDerive()` accessors. Each mode is independently probed with fixed
+non-secret inputs; other inputs and subsequent provider settings can differ.
 With an empty caller OpenSSL error queue, discovery normally uses the calling
 thread. Existing errors may force worker execution to preserve the queue and
 its marks, which can cause discovery to fail for thread-affine providers.

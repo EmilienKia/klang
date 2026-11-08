@@ -1570,6 +1570,133 @@ TEST_CASE("HKDF cancellation waits for the worker and wipes output",
     ERR_clear_error();
 }
 
+TEST_CASE("Snapshot-advertised HKDF supports a thread-affine provider",
+          "[crypto][hkdf][provider]") {
+    auto jit = gen_jit_with_crypto(std::string(prelude) + R"K(
+        test() : int {
+            stage: int = 10;
+            try {
+                snapshot: k::crypto::CryptoCapabilities! =
+                    k::crypto::CryptoCapabilities::snapshot();
+                configs: Sequence<k::crypto::HkdfConfiguration>! = snapshot.hkdfConfigurations();
+                it: ConstIterator<k::crypto::HkdfConfiguration>! = configs.constIterator();
+                cur: OptionalConstRef<k::crypto::HkdfConfiguration> = it.next();
+                while (cur.hasValue()) {
+                    c: const k::crypto::HkdfConfiguration& = cur.get();
+                    if (c.algorithm() == String("SHA-256")) {
+                        if (c.hashSize() != 32u || !c.supportsExtract() ||
+                            !c.supportsExpand() || !c.supportsDerive()) return 1;
+                        stage = 11;
+                        h: k::crypto::Hkdf! = k::crypto::Hkdf::create(c.algorithm());
+                        if (!h) return 2;
+                        ikm: unsigned byte[32];
+                        salt: unsigned byte[16];
+                        info: unsigned byte[8];
+                        i: unsigned int = 0u;
+                        while (i < 32u) { ikm[i] = (unsigned byte)i; ++i; }
+                        i = 0u;
+                        while (i < 16u) { salt[i] = (unsigned byte)i; ++i; }
+                        i = 0u;
+                        while (i < 8u) { info[i] = (unsigned byte)i; ++i; }
+                        stage = 12;
+                        p: k::crypto::HkdfPrk! = h.extract(ikm, salt);
+                        stage = 13;
+                        imported: k::crypto::HkdfPrk! = h.importPrk(ikm);
+                        stage = 14;
+                        expanded: unsigned byte[]! = p.expand(info, 32u);
+                        importedOutput: unsigned byte[]! = imported.expand(info, 32u);
+                        stage = 15;
+                        derived: unsigned byte[]! = h.derive(ikm, salt, info, 32u);
+                        if (p.keySize() != 32u || expanded.size != 32u ||
+                            importedOutput.size != 32u || derived.size != 32u) return 3;
+                        i = 0u;
+                        while (i < 32u) {
+                            if (expanded[i] != 0 || importedOutput[i] != 0 ||
+                                derived[i] != 0) return 4;
+                            ++i;
+                        }
+                        return 0;
+                    }
+                    cur = it.next();
+                }
+                return 5;
+            } catch (e: k::crypto::CryptoException&) { return stage; }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    auto make = reinterpret_cast<NativeHkdfNew>(dlsym(RTLD_DEFAULT, "__k_hkdf_new"));
+    auto free = reinterpret_cast<NativeHkdfFree>(dlsym(RTLD_DEFAULT, "__k_hkdf_free"));
+    auto derive = reinterpret_cast<NativeHkdfDerive>(dlsym(RTLD_DEFAULT, "__k_hkdf_derive"));
+    auto symmetricSnapshot = reinterpret_cast<void *(*)(int *)>(
+        dlsym(RTLD_DEFAULT, "__k_cap_symmetric_new"));
+    auto freeSymmetricSnapshot = reinterpret_cast<void (*)(void *)>(
+        dlsym(RTLD_DEFAULT, "__k_cap_symmetric_free"));
+    REQUIRE(make);
+    REQUIRE(free);
+    REQUIRE(derive);
+    REQUIRE(symmetricSnapshot);
+    REQUIRE(freeSymmetricSnapshot);
+    std::unique_ptr<OSSL_LIB_CTX, decltype(&OSSL_LIB_CTX_free)> context(
+        OSSL_LIB_CTX_new(), OSSL_LIB_CTX_free);
+    REQUIRE(context);
+    REQUIRE(OSSL_PROVIDER_add_builtin(context.get(), "klang-hkdf-test", mockProviderInit) == 1);
+    std::unique_ptr<OSSL_PROVIDER, decltype(&OSSL_PROVIDER_unload)> standard(
+        OSSL_PROVIDER_load(context.get(), "default"), OSSL_PROVIDER_unload);
+    std::unique_ptr<OSSL_PROVIDER, decltype(&OSSL_PROVIDER_unload)> mock(
+        OSSL_PROVIDER_load(context.get(), "klang-hkdf-test"), OSSL_PROVIDER_unload);
+    REQUIRE(standard);
+    REQUIRE(mock);
+    REQUIRE(EVP_set_default_properties(context.get(), "?provider=klang-hkdf-test") == 1);
+    std::unique_ptr<EVP_KDF, decltype(&EVP_KDF_free)> selectedKdf(
+        EVP_KDF_fetch(context.get(), "HKDF", nullptr), EVP_KDF_free);
+    REQUIRE(selectedKdf);
+    REQUIRE(EVP_KDF_get0_provider(selectedKdf.get()) == mock.get());
+    ScopedDefaultContext selected(context.get());
+    REQUIRE(selected.previous);
+    struct Reset {
+        ~Reset() { mockEnforceThreadAffinity = false; ERR_clear_error(); }
+    } reset;
+    mockExpectedThread = std::this_thread::get_id();
+    mockAffinityViolations = 0;
+    mockDerives = 0;
+    mockEnforceThreadAffinity = true;
+    ERR_clear_error();
+    CHECK(test() == 0);
+    CHECK(mockDerives > 3);
+    CHECK(mockAffinityViolations == 0);
+    CHECK(ERR_peek_error() == 0);
+    int status = 0;
+    std::unique_ptr<void, NativeHkdfFree> h(
+        make(reinterpret_cast<const unsigned char *>("SHA-256"), &status), free);
+    REQUIRE(h);
+    REQUIRE(status == 0);
+    ERR_raise(ERR_LIB_USER, 90);
+    const auto first = ERR_peek_error();
+    REQUIRE(ERR_set_mark() == 1);
+    ERR_raise(ERR_LIB_USER, 91);
+    const auto last = ERR_peek_last_error();
+    int violations = mockAffinityViolations;
+    status = 0;
+    void *symmetric = symmetricSnapshot(&status);
+    CHECK(symmetric == nullptr);
+    CHECK(status == -3);
+    if (symmetric) freeSymmetricSnapshot(symmetric);
+    CHECK(mockAffinityViolations > violations);
+    CHECK(ERR_peek_error() == first);
+    CHECK(ERR_peek_last_error() == last);
+    violations = mockAffinityViolations;
+    unsigned char key[32] = {}, output[32] = {};
+    CHECK(derive(h.get(), 0, key, sizeof(key), nullptr, 0, 1, nullptr, 0,
+                 output, sizeof(output)) == -3);
+    CHECK(mockAffinityViolations > violations);
+    CHECK(ERR_peek_error() == first);
+    CHECK(ERR_peek_last_error() == last);
+    CHECK(ERR_pop_to_mark() == 1);
+    CHECK(ERR_peek_last_error() == first);
+}
+
 TEST_CASE("HKDF accepts no-store digest methods with stable semantics",
           "[crypto][hkdf][provider]") {
     auto jit = gen_jit_with_crypto(std::string(prelude));
@@ -1614,5 +1741,110 @@ TEST_CASE("HKDF accepts no-store digest methods with stable semantics",
     CHECK(derive(h.get(), 0, key, sizeof(key), nullptr, 0, 1, nullptr, 0,
                  out, sizeof(out)) == 0);
     CHECK(mockDerives == 1);
+    for (auto byte : out) CHECK(byte == 0);
+}
+
+TEST_CASE("Snapshot-advertised HKDF operates with a no-store provider",
+          "[crypto][hkdf][provider]") {
+    auto jit = gen_jit_with_crypto(std::string(prelude) + R"K(
+        test() : int {
+            try {
+                snapshot: k::crypto::CryptoCapabilities! =
+                    k::crypto::CryptoCapabilities::snapshot();
+                configs: Sequence<k::crypto::HkdfConfiguration>! = snapshot.hkdfConfigurations();
+                it: ConstIterator<k::crypto::HkdfConfiguration>! = configs.constIterator();
+                cur: OptionalConstRef<k::crypto::HkdfConfiguration> = it.next();
+                while (cur.hasValue()) {
+                    c: const k::crypto::HkdfConfiguration& = cur.get();
+                    if (c.algorithm() == String("SHA-256")) {
+                        if (c.hashSize() != 32u || !c.supportsExtract() ||
+                            !c.supportsExpand() || !c.supportsDerive()) return 1;
+                        h: k::crypto::Hkdf! = k::crypto::Hkdf::create(c.algorithm());
+                        if (!h) return 2;
+                        ikm: unsigned byte[32];
+                        salt: unsigned byte[16];
+                        info: unsigned byte[8];
+                        i: unsigned int = 0u;
+                        while (i < 32u) { ikm[i] = (unsigned byte)i; ++i; }
+                        i = 0u;
+                        while (i < 16u) { salt[i] = (unsigned byte)i; ++i; }
+                        i = 0u;
+                        while (i < 8u) { info[i] = (unsigned byte)i; ++i; }
+                        p: k::crypto::HkdfPrk! = h.extract(ikm, salt);
+                        imported: k::crypto::HkdfPrk! = h.importPrk(ikm);
+                        expanded: unsigned byte[]! = imported.expand(info, 32u);
+                        derived: unsigned byte[]! = h.derive(ikm, salt, info, 32u);
+                        if (p.keySize() != 32u || expanded.size != 32u ||
+                            derived.size != 32u) return 3;
+                        i = 0u;
+                        while (i < 32u) {
+                            if (expanded[i] != 0 || derived[i] != 0) return 4;
+                            ++i;
+                        }
+                        return 0;
+                    }
+                    cur = it.next();
+                }
+                return 5;
+            } catch (e: k::crypto::CryptoException&) { return 6; }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    auto make = reinterpret_cast<NativeHkdfNew>(dlsym(RTLD_DEFAULT, "__k_hkdf_new"));
+    auto free = reinterpret_cast<NativeHkdfFree>(dlsym(RTLD_DEFAULT, "__k_hkdf_free"));
+    auto derive = reinterpret_cast<NativeHkdfDerive>(dlsym(RTLD_DEFAULT, "__k_hkdf_derive"));
+    REQUIRE(make);
+    REQUIRE(free);
+    REQUIRE(derive);
+    struct Reset { ~Reset() { mockNoStore = false; ERR_clear_error(); } } reset;
+    mockNoStore = true;
+    std::unique_ptr<OSSL_LIB_CTX, decltype(&OSSL_LIB_CTX_free)> context(
+        OSSL_LIB_CTX_new(), OSSL_LIB_CTX_free);
+    REQUIRE(context);
+    REQUIRE(OSSL_PROVIDER_add_builtin(context.get(), "klang-hkdf-test", mockProviderInit) == 1);
+    std::unique_ptr<OSSL_PROVIDER, decltype(&OSSL_PROVIDER_unload)> standard(
+        OSSL_PROVIDER_load(context.get(), "default"), OSSL_PROVIDER_unload);
+    std::unique_ptr<OSSL_PROVIDER, decltype(&OSSL_PROVIDER_unload)> mock(
+        OSSL_PROVIDER_load(context.get(), "klang-hkdf-test"), OSSL_PROVIDER_unload);
+    REQUIRE(standard);
+    REQUIRE(mock);
+    REQUIRE(EVP_set_default_properties(context.get(), "?provider=klang-hkdf-test") == 1);
+    ScopedDefaultContext selected(context.get());
+    REQUIRE(selected.previous);
+    mockNoStoreKdfQueries = 0;
+    int status = 0;
+    std::unique_ptr<void, NativeHkdfFree> h(
+        make(reinterpret_cast<const unsigned char *>("SHA-256"), &status), free);
+    REQUIRE(h);
+    REQUIRE(status == 0);
+    std::unique_ptr<EVP_KDF, decltype(&EVP_KDF_free)> first(
+        EVP_KDF_fetch(context.get(), "HKDF", nullptr), EVP_KDF_free);
+    std::unique_ptr<EVP_KDF, decltype(&EVP_KDF_free)> second(
+        EVP_KDF_fetch(context.get(), "HKDF", nullptr), EVP_KDF_free);
+    REQUIRE(first);
+    REQUIRE(second);
+    REQUIRE(EVP_KDF_get0_provider(first.get()) == mock.get());
+    REQUIRE(EVP_KDF_get0_provider(second.get()) == mock.get());
+    REQUIRE(mockNoStoreKdfQueries > 0);
+    unsigned char key[32] = {}, out[32];
+    std::memset(out, 0x5a, sizeof(out));
+    mockDerives = 0;
+    CHECK(derive(h.get(), 0, key, sizeof(key), nullptr, 0, 1, nullptr, 0,
+                 out, sizeof(out)) == 0);
+    CHECK(mockDerives == 1);
+    for (auto byte : out) CHECK(byte == 0);
+    CHECK(test() == 0);
+    REQUIRE(EVP_set_default_properties(context.get(), "provider=default") == 1);
+    std::unique_ptr<EVP_KDF, decltype(&EVP_KDF_free)> restricted(
+        EVP_KDF_fetch(context.get(), "HKDF", nullptr), EVP_KDF_free);
+    REQUIRE(restricted);
+    REQUIRE(EVP_KDF_get0_provider(restricted.get()) == standard.get());
+    int calls = mockDerives;
+    std::memset(out, 0x5a, sizeof(out));
+    CHECK(derive(h.get(), 0, key, sizeof(key), nullptr, 0, 1, nullptr, 0,
+                 out, sizeof(out)) == -3);
+    CHECK(mockDerives == calls);
     for (auto byte : out) CHECK(byte == 0);
 }
