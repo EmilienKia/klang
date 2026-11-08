@@ -532,6 +532,20 @@ static std::string make_sig(const std::string& name,
     return out.str();
 }
 
+static std::string constructor_sig(const std::string& name, const kdi_constructor& ctor) {
+    std::string result = make_sig(name, ctor.params, nullptr);
+    if (!ctor.throws_spec) return result + " [throws contract unknown]";
+    if (!ctor.throws_spec->empty()) {
+        result += " throws(";
+        for (size_t i = 0; i < ctor.throws_spec->size(); ++i) {
+            if (i) result += ", ";
+            result += type_to_string_h((*ctor.throws_spec)[i]);
+        }
+        result += ")";
+    }
+    return result;
+}
+
 static std::string make_slug_h(std::string v) {
     for (char& ch : v) {
         if (std::isalnum(static_cast<unsigned char>(ch)))
@@ -1414,7 +1428,7 @@ static void write_aggregate_body_html(std::ostringstream& content,
             const auto& c = ctors[i];
             const std::string id = "ctor-" + std::to_string(i);
             content << "<tr><td class=\"ts\"><a href=\"#" << id << "\">"
-                    << html_escape(make_sig(agg.name, c.params, nullptr)) << "</a></td>"
+                    << html_escape(constructor_sig(agg.name, c)) << "</a></td>"
                     << "<td>" << vis_tag(c.visibility) << "</td>"
                     << "<td class=\"tk\">" << html_escape(compact_doc_brief_h(c.doc)) << "</td></tr>\n";
         }
@@ -1507,7 +1521,7 @@ static void write_aggregate_body_html(std::ostringstream& content,
             const std::string id = "ctor-" + std::to_string(i);
             content << "<div class=\"dblock\" id=\"" << id << "\">\n"
                     << "  <div class=\"dhead\">"
-                    << html_escape(make_sig(agg.name, c.params, nullptr)) << "</div>\n"
+                    << html_escape(constructor_sig(agg.name, c)) << "</div>\n"
                     << "  <div class=\"dbody\">\n"
                     << "    <div class=\"meta\">" << vis_tag(c.visibility) << "</div>\n";
             append_doc_function_html(content, c.doc);
@@ -1596,7 +1610,7 @@ static void add_aggregate_member_refs_html(std::vector<symbol_ref_html>& refs,
     }
     for (size_t i = 0; i < ctors.size(); ++i) {
         add_ref(refs, "constructor", agg.name, fq_scope,
-                make_sig(agg.name, ctors[i].params, nullptr),
+                constructor_sig(agg.name, ctors[i]),
                 type_link + "#ctor-" + std::to_string(i),
                 compact_doc_brief_h(ctors[i].doc));
     }

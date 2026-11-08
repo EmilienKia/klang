@@ -2017,6 +2017,10 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         // Create a temporary_construction_expression
                         auto temp_expr = temporary_construction_expression::make_shared(
                             st_type, expr.arguments());
+                        if (auto usage = _generic_constructor_usages.find(&expr);
+                            usage != _generic_constructor_usages.end()) {
+                            _generic_constructor_usages[temp_expr.get()] = usage->second;
+                        }
                         // Copy AST node for diagnostics
                         if (auto ast = expr.get_ast_expression()) {
                             temp_expr->set_ast_expression(ast);
@@ -3182,7 +3186,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                 return;
             }
             check_constructor_visibility(*best_ctor, expr);
-            check_call_contract(*best_ctor, expr.first_lexeme());
+            check_call_contract(*best_ctor, expr.first_lexeme(), &expr);
             expr._uniform_constructor = best_ctor;
             expr.set_uniform_ctor_args(adapted_args);
         } else if (type::is_primitive(elem_type)) {
@@ -3351,6 +3355,10 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                 // Resolve default constructor (needed for each element)
                 auto [default_ctor, default_args] = get_best_matching_constructor(
                     struct_model->constructors(), std::vector<std::shared_ptr<expression>>{});
+                if (default_ctor) {
+                    check_constructor_visibility(*default_ctor, expr);
+                    check_call_contract(*default_ctor, expr.first_lexeme(), &expr);
+                }
                 // Store in element_constructors[0] as the single default ctor to use
                 expr._element_constructors.resize(1, nullptr);
                 expr._element_constructors[0] = default_ctor;
@@ -3427,7 +3435,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                             {std::to_string(i), st_type->to_string()});
                     }
                     check_constructor_visibility(*best_ctor, expr);
-                    check_call_contract(*best_ctor, expr.first_lexeme());
+                    check_call_contract(*best_ctor, expr.first_lexeme(), &expr);
                     expr._element_constructors[i] = best_ctor;
                     func_inv->assign_arguments(adapted_args);
                 } else {
@@ -3442,7 +3450,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                              e->get_type() ? e->get_type()->to_string() : "?"});
                     }
                     check_constructor_visibility(*best_ctor, expr);
-                    check_call_contract(*best_ctor, expr.first_lexeme());
+                    check_call_contract(*best_ctor, expr.first_lexeme(), &expr);
                     expr._element_constructors[i] = best_ctor;
                     if (!adapted_args.empty() && adapted_args[0] != e) {
                         expr.assign_array_init_element(i, adapted_args[0]);
@@ -3462,7 +3470,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                 auto [default_ctor, default_args] = get_best_matching_constructor(
                     struct_model->constructors(), std::vector<std::shared_ptr<expression>>{});
                 if (default_ctor) {
-                    check_call_contract(*default_ctor, expr.first_lexeme());
+                    check_call_contract(*default_ctor, expr.first_lexeme(), &expr);
                 }
                 for (size_t i = 0; i < arr_size; ++i) {
                     if (i >= init_count || !expr._array_init_elements[i]) {
@@ -3574,7 +3582,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
         }
         check_constructor_visibility(*best_ctor, expr);
         // Check exception contract for throwing constructors
-        check_call_contract(*best_ctor, expr.get_interest_lexeme());
+        check_call_contract(*best_ctor, expr.get_interest_lexeme(), &expr);
         expr.set_constructor(best_ctor);
         expr.assign_arguments(adapted_args);
     } else if (type::is_primitive(alloc_type)) {

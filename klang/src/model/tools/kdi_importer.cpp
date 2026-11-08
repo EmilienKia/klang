@@ -225,6 +225,7 @@ void populate_template_signature_aggregate(aggregate& agg,
         ctor->set_aliasing(ctor_sig.is_deleted ? function::function_aliasing::DELETE
                                               : (ctor_sig.is_defaulted ? function::function_aliasing::DEFAULT
                                                                        : function::function_aliasing::NONE));
+        ctor->set_throws_spec_unknown(!ctor_sig.throws_spec);
         for (const auto& param : ctor_sig.params) {
             auto p = ctor->append_parameter(param.name, nullptr);
             if (p) {
@@ -232,6 +233,7 @@ void populate_template_signature_aggregate(aggregate& agg,
                 assign_type(p, param.type);
             }
         }
+        if (ctor_sig.throws_spec) pending.emplace_back(ctor, &*ctor_sig.throws_spec);
     }
 
     for (const auto& method_sig : sig.methods) {
@@ -1015,12 +1017,14 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
     }
     _pending_generic_overloads.clear();
 
-    const auto complete_throws = [&](function& fn, const std::vector<kdi::kdi_type>& spec) {
+    const auto complete_throws = [&](function& fn, const std::vector<kdi::kdi_type>& spec,
+                                     bool template_signature) {
         std::vector<std::shared_ptr<type>> resolved_types;
         resolved_types.reserve(spec.size());
         for (const auto& ts : spec) {
-            auto exc_type = kdi_type_to_model_type(ts, _unit, ctx,
-                                                    kdi_type_conversion::template_signature);
+            auto mode = template_signature ? kdi_type_conversion::template_signature
+                                           : kdi_type_conversion::concrete_contract;
+            auto exc_type = kdi_type_to_model_type(ts, _unit, ctx, mode);
             if (!exc_type) {
                 auto diag = k::log::diagnostic::make_error(
                     static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND),
@@ -1035,7 +1039,7 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
         fn.set_throws_spec(std::move(resolved_types));
     };
     for (const auto& [fn, spec] : _pending_generic_contracts)
-        complete_throws(*fn, *spec);
+        complete_throws(*fn, *spec, true);
     _pending_generic_contracts.clear();
 
     // Signatures can refer to unions or aliases in namespaces materialised later.
@@ -1077,18 +1081,27 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
         }
     };
     for (const auto& [mangled, fn] : _unit.get_imported_functions()) {
-        if (auto signature = fn->get_kdi_function()) complete_signature(*fn, *signature);
+        if (auto signature = fn->get_kdi_function()) {
+            complete_signature(*fn, *signature);
+            complete_throws(*fn, signature->throws_spec, false);
+        }
     }
     for (const auto& [fq, agg] : _unit.get_imported_aggregates()) {
         for (const auto& ctor : agg->constructors()) {
             if (auto imported = std::dynamic_pointer_cast<imported_constructor>(ctor)) {
-                if (auto signature = imported->get_kdi_constructor())
+                if (auto signature = imported->get_kdi_constructor()) {
                     complete_signature(*imported, *signature);
+                    if (signature->throws_spec)
+                        complete_throws(*imported, *signature->throws_spec, false);
+                }
             }
         }
         for (const auto& child : agg->get_children()) {
             if (auto method = std::dynamic_pointer_cast<imported_method>(child)) {
-                if (auto signature = method->get_kdi_method()) complete_signature(*method, *signature);
+                if (auto signature = method->get_kdi_method()) {
+                    complete_signature(*method, *signature);
+                    complete_throws(*method, signature->throws_spec, false);
+                }
             }
         }
     }

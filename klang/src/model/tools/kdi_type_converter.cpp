@@ -386,7 +386,7 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx,
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_template_param_ref>) {
             if (mode == kdi_type_conversion::ordinary) return ctx->from_string(v.name);
-            if (v.name.empty()) return nullptr;
+            if (mode == kdi_type_conversion::concrete_contract || v.name.empty()) return nullptr;
             k::parse::ast::qualified_identifier name{
                 std::nullopt, std::vector<k::lex::identifier>{k::lex::identifier(v.name)}};
             k::parse::ast::identified_type_specifier specifier{name};
@@ -406,6 +406,7 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx,
             for (const auto& arg : v.args) {
                 if (!arg) return nullptr;
                 if (std::holds_alternative<kdi::kdi_void_type>(arg->value)) {
+                    if (mode == kdi_type_conversion::concrete_contract) return nullptr;
                     args.push_back(nullptr);
                     continue;
                 }

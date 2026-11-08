@@ -79,6 +79,103 @@ TEST_CASE("validate: deleted members require no LLVM declaration or symbol", "[v
     CHECK_FALSE(kdi_validate(file).is_valid());
 }
 
+TEST_CASE("validate: constructor throws references in aggregates and generic signatures",
+          "[validate][constructor][throws]") {
+    auto file = make_valid_file();
+    kdi_aggregate agg;
+    agg.name = "Value";
+    agg.fq_name = "valid::mod::Value";
+    agg.llvm_def = "%Value = type {}";
+    kdi_constructor ctor;
+    ctor.is_deleted = true;
+    ctor.throws_spec = std::vector<kdi_type>{kdi_type::make_aggregate("valid::mod::Missing")};
+    agg.constructors.push_back(ctor);
+    file.unit.root_ns.aggregates.push_back(agg);
+
+    kdi_template_def def;
+    def.name = "Box";
+    def.fq_name = "valid::mod::Box";
+    def.entity_kind = "struct";
+    def.is_generic = true;
+    def.params.push_back({"typename", "T"});
+    def.aggregate_signature = std::make_shared<kdi_aggregate>();
+    def.aggregate_signature->name = "Box";
+    def.aggregate_signature->constructors.push_back(ctor);
+    def.aggregate_signature->constructors[0].throws_spec->push_back(
+        kdi_type::make_template_param("T"));
+    file.unit.root_ns.template_defs.push_back(def);
+
+    auto result = kdi_validate(file);
+    REQUIRE(result.errors.size() == 2);
+    CHECK(result.errors[0].path == "unit.root_ns.aggregates[0].constructors[0].throws_spec[0]");
+    CHECK(result.errors[1].path ==
+          "unit.root_ns.template_defs[0].aggregate_signature.constructors[0].throws_spec[0]");
+    file.unit.root_ns.aggregates[0].constructors[0].throws_spec->push_back(
+        kdi_type::make_owner(kdi_type::make_aggregate("valid::mod::NestedMissing")));
+    result = kdi_validate(file);
+    REQUIRE(result.errors.size() == 3);
+    CHECK(result.errors[1].path ==
+          "unit.root_ns.aggregates[0].constructors[0].throws_spec[1].inner");
+    file.types.aggregates.push_back({"::valid::mod::Missing", "_Missing"});
+    file.types.aggregates.push_back({"valid::mod::NestedMissing", "_NestedMissing"});
+    CHECK(kdi_validate(file).is_valid());
+    file.unit.root_ns.aggregates[0].constructors[0].throws_spec.reset();
+    file.unit.root_ns.template_defs[0].aggregate_signature->constructors[0].throws_spec->clear();
+    CHECK(kdi_validate(file).is_valid());
+}
+
+TEST_CASE("validate: constructor throws placeholders respect template scope",
+          "[validate][constructor][throws][template]") {
+    auto file = make_valid_file();
+    kdi_aggregate concrete;
+    concrete.name = "Value";
+    concrete.fq_name = "valid::mod::Value";
+    concrete.llvm_def = "%Value = type {}";
+    kdi_constructor ctor;
+    ctor.is_deleted = true;
+    ctor.throws_spec = std::vector<kdi_type>{kdi_type::make_template_param("T")};
+    concrete.constructors.push_back(ctor);
+    file.unit.root_ns.aggregates.push_back(concrete);
+
+    kdi_template_def def;
+    def.name = "Box";
+    def.fq_name = "valid::mod::Box";
+    def.entity_kind = "struct";
+    def.is_generic = true;
+    def.params.push_back({"typename", "T"});
+    def.params.push_back({"class", "E"});
+    def.aggregate_signature = std::make_shared<kdi_aggregate>();
+    def.aggregate_signature->name = "Box";
+    def.aggregate_signature->constructors.push_back(ctor);
+    def.aggregate_signature->constructors[0].throws_spec->push_back(
+        kdi_type::make_owner(kdi_type::make_template_param("E")));
+    file.unit.root_ns.template_defs.push_back(def);
+
+    auto result = kdi_validate(file);
+    REQUIRE(result.errors.size() == 1);
+    CHECK(result.errors[0].path == "unit.root_ns.aggregates[0].constructors[0].throws_spec[0]");
+    file.unit.root_ns.aggregates[0].constructors[0].throws_spec->clear();
+    CHECK(kdi_validate(file).is_valid());
+
+    auto& spec = *file.unit.root_ns.template_defs[0].aggregate_signature->constructors[0].throws_spec;
+    spec[0] = kdi_type::make_template_param("Missing");
+    spec[1] = kdi_type::make_owner(kdi_type::make_template_param("AlsoMissing"));
+    result = kdi_validate(file);
+    REQUIRE(result.errors.size() == 2);
+    CHECK(result.errors[0].path ==
+          "unit.root_ns.template_defs[0].aggregate_signature.constructors[0].throws_spec[0]");
+    CHECK(result.errors[1].path ==
+          "unit.root_ns.template_defs[0].aggregate_signature.constructors[0].throws_spec[1].inner");
+
+    spec[0] = kdi_type::make_template_param("T");
+    spec[1] = kdi_type::make_template_param("E");
+    file.unit.root_ns.template_defs[0].is_generic = false;
+    CHECK(kdi_validate(file).is_valid());
+    file.unit.root_ns.template_defs[0].params.push_back({"value", "N"});
+    spec[1] = kdi_type::make_template_param("N");
+    CHECK_FALSE(kdi_validate(file).is_valid());
+}
+
 TEST_CASE("validate: placeholders in nested signature types require a type parameter",
           "[validate][template]") {
     auto file = make_valid_file();

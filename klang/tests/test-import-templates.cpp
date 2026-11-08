@@ -1513,6 +1513,377 @@ TEST_CASE("generic KDI signatures retain every private deleted constructor",
         [](const auto& ctor) { return ctor.is_deleted && ctor.is_private; }) == 2);
 }
 
+TEST_CASE("generic constructor signatures retain checked exceptions across import",
+          "[import][template][generic][constructor][throws][regression]") {
+    TmpKdi lib(R"K(
+        module genericctorcontracts;
+        public class Failure : public Exception {}
+        public class OtherFailure : public Exception {}
+        generic<typename T>
+        public struct Box {
+            Box() throws(Failure) {}
+            inspect(): int throws(Failure) { return 1; }
+        }
+        generic<typename T>
+        public probe(): int throws(Failure) { return 1; }
+    )K", true);
+    auto metadata = kdi::kdi_read_cbor_file(lib.kdi_path);
+    auto def = std::find_if(metadata.unit.root_ns.template_defs.begin(),
+        metadata.unit.root_ns.template_defs.end(),
+        [](const auto& entry) { return entry.name == "Box"; });
+    REQUIRE(def != metadata.unit.root_ns.template_defs.end());
+    REQUIRE(def->is_generic);
+    REQUIRE(def->source.empty());
+    REQUIRE(def->aggregate_signature);
+    auto ctor = std::find_if(def->aggregate_signature->constructors.begin(),
+        def->aggregate_signature->constructors.end(),
+        [](const auto& entry) { return entry.params.empty(); });
+    REQUIRE(ctor != def->aggregate_signature->constructors.end());
+    REQUIRE(ctor->throws_spec);
+    REQUIRE(ctor->throws_spec->size() == 1);
+    REQUIRE(std::holds_alternative<kdi::kdi_aggregate_ref>((*ctor->throws_spec)[0].value));
+    CHECK(std::get<kdi::kdi_aggregate_ref>((*ctor->throws_spec)[0].value).fq_name ==
+          "genericctorcontracts::Failure");
+    CHECK(std::any_of(metadata.types.aggregates.begin(), metadata.types.aggregates.end(),
+        [](const auto& entry) {
+            return entry.fq_name == "genericctorcontracts::Failure"
+                || entry.fq_name == "::genericctorcontracts::Failure";
+        }));
+    auto method = std::find_if(def->aggregate_signature->methods.begin(),
+        def->aggregate_signature->methods.end(),
+        [](const auto& entry) { return entry.name == "inspect"; });
+    REQUIRE(method != def->aggregate_signature->methods.end());
+    REQUIRE(method->throws_spec.size() == 1);
+    REQUIRE(std::holds_alternative<kdi::kdi_aggregate_ref>(method->throws_spec[0].value));
+    CHECK(std::get<kdi::kdi_aggregate_ref>(method->throws_spec[0].value).fq_name ==
+          "genericctorcontracts::Failure");
+    auto probe = std::find_if(metadata.unit.root_ns.template_defs.begin(),
+        metadata.unit.root_ns.template_defs.end(),
+        [](const auto& entry) { return entry.name == "probe"; });
+    REQUIRE(probe != metadata.unit.root_ns.template_defs.end());
+    REQUIRE(probe->function_signature);
+    REQUIRE(probe->function_signature->throws_spec.size() == 1);
+    REQUIRE(std::holds_alternative<kdi::kdi_aggregate_ref>(
+        probe->function_signature->throws_spec[0].value));
+    CHECK(std::get<kdi::kdi_aggregate_ref>(probe->function_signature->throws_spec[0].value).fq_name ==
+          "genericctorcontracts::Failure");
+
+    auto make_consumer = [&]() {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("genericctorcontracts", lib.kdi_path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        compiler->set_file_resolver(resolver);
+        return compiler;
+    };
+    auto allowed = make_consumer();
+    REQUIRE_NOTHROW(allowed->parse_source("genericctor_allowed.k", R"K(
+        module genericctor_allowed;
+        import genericctorcontracts;
+        use() throws(genericctorcontracts::Failure) {
+            value: genericctorcontracts::Box<int>;
+        }
+    )K", false, false));
+    REQUIRE_FALSE(allowed->has_compilation_error());
+    auto imported_ns = allowed->get_unit()->get_root_namespace()->get_child_namespace("genericctorcontracts");
+    REQUIRE(imported_ns);
+    auto box = imported_ns->get_aggregate("Box");
+    REQUIRE(box);
+    auto imported_ctor = std::find_if(box->constructors().begin(), box->constructors().end(),
+        [](const auto& entry) { return !entry->is_copy_constructor(); });
+    REQUIRE(imported_ctor != box->constructors().end());
+    CHECK_FALSE((*imported_ctor)->is_throws_spec_unknown());
+    CHECK((*imported_ctor)->has_throws_spec());
+
+    auto denied = make_consumer();
+    CHECK_THROWS(denied->parse_source("genericctor_denied.k", R"K(
+        module genericctor_denied;
+        import genericctorcontracts;
+        use() throws(genericctorcontracts::OtherFailure) {
+            value: genericctorcontracts::Box<int>;
+        }
+    )K", false, false));
+}
+
+TEST_CASE("generic constructor import preserves mixed alias and placeholder exceptions",
+          "[import][template][generic][constructor][throws][regression]") {
+    TmpKdi lib(R"K(
+        module mixedctorcontracts;
+        public class Failure : public Exception {}
+        generic<typename T>
+        public struct Box {
+            Box() {}
+            inspect(): int { return 1; }
+        }
+        generic<typename T>
+        public probe(): int { return 1; }
+        namespace late {
+            public typedef AliasFailure : Failure;
+        }
+    )K", true);
+    auto metadata = kdi::kdi_read_cbor_file(lib.kdi_path);
+    auto def = std::find_if(metadata.unit.root_ns.template_defs.begin(),
+        metadata.unit.root_ns.template_defs.end(),
+        [](const auto& entry) { return entry.name == "Box"; });
+    REQUIRE(def != metadata.unit.root_ns.template_defs.end());
+    REQUIRE(def->aggregate_signature);
+    auto ctor = std::find_if(def->aggregate_signature->constructors.begin(),
+        def->aggregate_signature->constructors.end(),
+        [](const auto& entry) { return entry.params.empty(); });
+    REQUIRE(ctor != def->aggregate_signature->constructors.end());
+    auto signature_method = std::find_if(def->aggregate_signature->methods.begin(),
+        def->aggregate_signature->methods.end(),
+        [](const auto& entry) { return entry.name == "inspect"; });
+    REQUIRE(signature_method != def->aggregate_signature->methods.end());
+    auto make_alias = [](const std::string& name, const std::string& target) {
+        kdi::kdi_alias alias;
+        alias.name = name;
+        alias.fq_name = "mixedctorcontracts::" + name;
+        alias.is_strong = true;
+        alias.target_type = kdi::kdi_type::make_alias(target);
+        return alias;
+    };
+    metadata.unit.root_ns.aliases.push_back(
+        make_alias("EarlyAlias", "mixedctorcontracts::late::AliasFailure"));
+    auto late_ns = std::find_if(metadata.unit.root_ns.namespaces.begin(),
+        metadata.unit.root_ns.namespaces.end(), [](const auto& entry) { return entry.name == "late"; });
+    REQUIRE(late_ns != metadata.unit.root_ns.namespaces.end());
+    auto late_alias = std::find_if(late_ns->aliases.begin(), late_ns->aliases.end(),
+        [](const auto& entry) { return entry.name == "AliasFailure"; });
+    REQUIRE(late_alias != late_ns->aliases.end());
+    late_alias->target_type = kdi::kdi_type::make_alias("mixedctorcontracts::later::FinalAlias");
+    kdi::kdi_namespace later;
+    later.name = "later";
+    later.fq_name = "mixedctorcontracts::later";
+    auto final_alias = make_alias("FinalAlias", "mixedctorcontracts::late::AliasFailure");
+    final_alias.fq_name = "mixedctorcontracts::later::FinalAlias";
+    final_alias.target_type = kdi::kdi_type::make_aggregate("mixedctorcontracts::Failure");
+    later.aliases.push_back(std::move(final_alias));
+    metadata.unit.root_ns.namespaces.push_back(std::move(later));
+    auto wrapped = [](kdi::kdi_type inner) {
+        kdi::kdi_const_type cnst;
+        cnst.inner = std::make_shared<kdi::kdi_type>(std::move(inner));
+        kdi::kdi_ref_type ref;
+        ref.inner = std::make_shared<kdi::kdi_type>(kdi::kdi_type{std::move(cnst)});
+        return kdi::kdi_type{std::move(ref)};
+    };
+    ctor->throws_spec = std::vector<kdi::kdi_type>{
+        kdi::kdi_type::make_alias("mixedctorcontracts::EarlyAlias"),
+        kdi::kdi_type::make_template_param("T"),
+        kdi::kdi_type::make_aggregate("mixedctorcontracts::Failure"),
+        wrapped(kdi::kdi_type::make_template_param("T")),
+        wrapped(kdi::kdi_type::make_alias("mixedctorcontracts::EarlyAlias"))};
+    signature_method->throws_spec = *ctor->throws_spec;
+    auto probe = std::find_if(metadata.unit.root_ns.template_defs.begin(),
+        metadata.unit.root_ns.template_defs.end(),
+        [](const auto& entry) { return entry.name == "probe"; });
+    REQUIRE(probe != metadata.unit.root_ns.template_defs.end());
+    REQUIRE(probe->function_signature);
+    probe->source.clear();
+    probe->function_signature->throws_spec = *ctor->throws_spec;
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("mixedctorcontracts", lib.kdi_path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    compiler->set_file_resolver(resolver);
+    REQUIRE_NOTHROW(compiler->parse_source("mixedctor_consumer.k", R"K(
+        module mixedctor_consumer;
+        import mixedctorcontracts;
+        struct T {}
+        namespace shadow {
+            typedef T : mixedctorcontracts::Failure;
+        }
+    )K", false, false));
+    REQUIRE_FALSE(compiler->has_compilation_error());
+    auto ns = compiler->get_unit()->get_root_namespace()->get_child_namespace("mixedctorcontracts");
+    REQUIRE(ns);
+    auto box = ns->get_aggregate("Box");
+    auto failure = ns->get_aggregate("Failure");
+    REQUIRE(box);
+    REQUIRE(failure);
+    auto context = compiler->get_context_for_test();
+    context->add_struct("T", failure->get_struct_type());
+    REQUIRE(std::dynamic_pointer_cast<k::model::struct_type>(context->from_string("T")));
+    auto nested_param = wrapped(kdi::kdi_type::make_template_param("T"));
+    CHECK_FALSE(k::model::kdi_type_to_model_type(nested_param, *compiler->get_unit(), context,
+        k::model::kdi_type_conversion::concrete_contract));
+    auto explicitly_converted = k::model::kdi_type_to_model_type(
+        nested_param, *compiler->get_unit(), context,
+        k::model::kdi_type_conversion::template_signature);
+    REQUIRE(explicitly_converted);
+    auto explicit_ref = std::dynamic_pointer_cast<k::model::reference_type>(explicitly_converted);
+    REQUIRE(explicit_ref);
+    REQUIRE(explicit_ref->get_subtype());
+    auto explicit_param = std::dynamic_pointer_cast<k::model::unresolved_type>(
+        explicit_ref->get_subtype()->get_subtype());
+    REQUIRE(explicit_param);
+    CHECK(explicit_param->is_template_param_placeholder());
+
+    kdi::kdi_callable_type callable;
+    callable.member_of = "mixedctorcontracts::Box";
+    callable.params.push_back(std::make_shared<kdi::kdi_type>(nested_param));
+    auto callable_dto = kdi::kdi_type{std::move(callable)};
+    CHECK_FALSE(k::model::kdi_type_to_model_type(callable_dto, *compiler->get_unit(), context,
+        k::model::kdi_type_conversion::concrete_contract));
+    auto converted_callable = std::dynamic_pointer_cast<k::model::unresolved_callable_type>(
+        k::model::kdi_type_to_model_type(callable_dto, *compiler->get_unit(), context,
+            k::model::kdi_type_conversion::template_signature));
+    REQUIRE(converted_callable);
+    CHECK(converted_callable->owner_name().to_string() == "mixedctorcontracts::Box");
+    REQUIRE(converted_callable->parameter_types().size() == 1);
+    REQUIRE(converted_callable->parameter_types()[0]->get_subtype());
+    auto callable_param = std::dynamic_pointer_cast<k::model::unresolved_type>(
+        converted_callable->parameter_types()[0]->get_subtype()->get_subtype());
+    REQUIRE(callable_param);
+    CHECK(callable_param->is_template_param_placeholder());
+
+    kdi::kdi_generic_ref_type generic_ref;
+    generic_ref.name = "SomeGeneric";
+    generic_ref.args.push_back(std::make_shared<kdi::kdi_type>(nested_param));
+    auto generic_dto = kdi::kdi_type{std::move(generic_ref)};
+    auto converted_generic = std::dynamic_pointer_cast<k::model::unresolved_type>(
+        k::model::kdi_type_to_model_type(generic_dto, *compiler->get_unit(), context,
+            k::model::kdi_type_conversion::template_signature));
+    REQUIRE(converted_generic);
+    REQUIRE(converted_generic->has_model_only_template_args());
+    REQUIRE(converted_generic->get_model_template_args().size() == 1);
+    CHECK(k::model::type::contains_template_placeholder(converted_generic));
+    CHECK_FALSE(k::model::kdi_type_to_model_type(generic_dto, *compiler->get_unit(), context,
+        k::model::kdi_type_conversion::concrete_contract));
+    auto imported_ctor = std::find_if(box->constructors().begin(), box->constructors().end(),
+        [](const auto& entry) { return !entry->is_copy_constructor(); });
+    REQUIRE(imported_ctor != box->constructors().end());
+    const auto& exceptions = (*imported_ctor)->get_throws_spec();
+    REQUIRE(exceptions.size() == 5);
+    auto alias = std::dynamic_pointer_cast<k::model::alias_type>(exceptions[0]);
+    REQUIRE(alias);
+    CHECK(alias->get_alias() == ns->get_alias("EarlyAlias"));
+    auto middle = std::dynamic_pointer_cast<k::model::alias_type>(alias->get_underlying());
+    REQUIRE(middle);
+    auto late = ns->get_child_namespace("late");
+    REQUIRE(late);
+    CHECK(middle->get_alias() == late->get_alias("AliasFailure"));
+    CHECK(std::dynamic_pointer_cast<k::model::alias_type>(middle->get_underlying()));
+    auto placeholder = std::dynamic_pointer_cast<k::model::unresolved_type>(exceptions[1]);
+    REQUIRE(placeholder);
+    CHECK(placeholder->is_template_param_placeholder());
+    CHECK(placeholder->type_id().to_string() == "T");
+    CHECK(k::model::type::canonical(exceptions[2]) == failure->get_struct_type());
+    k::model::type_substitution_map subst{{"T", failure->get_struct_type()}};
+    CHECK(k::model::substitute_type(exceptions[1], subst) == failure->get_struct_type());
+    CHECK(k::model::substitute_type(exceptions[0], subst) == exceptions[0]);
+    auto check_wrapped = [&](const std::shared_ptr<k::model::type>& value) {
+        auto ref = std::dynamic_pointer_cast<k::model::reference_type>(value);
+        REQUIRE(ref);
+        auto cnst = std::dynamic_pointer_cast<k::model::const_type>(ref->get_subtype());
+        REQUIRE(cnst);
+        auto param = std::dynamic_pointer_cast<k::model::unresolved_type>(cnst->get_subtype());
+        REQUIRE(param);
+        CHECK(param->is_template_param_placeholder());
+        CHECK(param->type_id().to_string() == "T");
+        auto substituted = k::model::substitute_type(value, subst);
+        auto substituted_ref = std::dynamic_pointer_cast<k::model::reference_type>(substituted);
+        REQUIRE(substituted_ref);
+        auto substituted_const = std::dynamic_pointer_cast<k::model::const_type>(
+            substituted_ref->get_subtype());
+        REQUIRE(substituted_const);
+        CHECK(substituted_const->get_subtype() == failure->get_struct_type());
+    };
+    check_wrapped(exceptions[3]);
+    auto alias_ref = std::dynamic_pointer_cast<k::model::reference_type>(exceptions[4]);
+    REQUIRE(alias_ref);
+    auto alias_const = std::dynamic_pointer_cast<k::model::const_type>(alias_ref->get_subtype());
+    REQUIRE(alias_const);
+    CHECK(alias_const->get_subtype() == exceptions[0]);
+    auto methods = box->get_functions("inspect");
+    REQUIRE(methods.size() == 1);
+    REQUIRE(methods[0]->get_throws_spec().size() == exceptions.size());
+    CHECK(methods[0]->get_throws_spec()[0] == exceptions[0]);
+    auto method_param = std::dynamic_pointer_cast<k::model::unresolved_type>(
+        methods[0]->get_throws_spec()[1]);
+    REQUIRE(method_param);
+    CHECK(method_param->is_template_param_placeholder());
+    check_wrapped(methods[0]->get_throws_spec()[3]);
+    auto method_alias_ref = std::dynamic_pointer_cast<k::model::reference_type>(
+        methods[0]->get_throws_spec()[4]);
+    REQUIRE(method_alias_ref);
+    REQUIRE(method_alias_ref->get_subtype());
+    CHECK(method_alias_ref->get_subtype()->get_subtype() == exceptions[0]);
+    auto probes = ns->get_functions("probe");
+    auto imported_probe = std::find_if(probes.begin(), probes.end(),
+        [](const auto& fn) { return fn->is_template(); });
+    REQUIRE(imported_probe != probes.end());
+    REQUIRE((*imported_probe)->get_throws_spec().size() == exceptions.size());
+    CHECK((*imported_probe)->get_throws_spec()[0] == exceptions[0]);
+    auto probe_param = std::dynamic_pointer_cast<k::model::unresolved_type>(
+        (*imported_probe)->get_throws_spec()[1]);
+    REQUIRE(probe_param);
+    CHECK(probe_param->is_template_param_placeholder());
+    check_wrapped((*imported_probe)->get_throws_spec()[3]);
+    auto probe_alias_ref = std::dynamic_pointer_cast<k::model::reference_type>(
+        (*imported_probe)->get_throws_spec()[4]);
+    REQUIRE(probe_alias_ref);
+    REQUIRE(probe_alias_ref->get_subtype());
+    CHECK(probe_alias_ref->get_subtype()->get_subtype() == exceptions[0]);
+
+    k::model::kdi_builder exporter(*compiler->get_context_for_test());
+    compiler->get_unit()->accept(exporter);
+    auto reexported = exporter.take();
+    const kdi::kdi_template_def* exported_box = nullptr;
+    const kdi::kdi_template_def* exported_probe = nullptr;
+    std::function<void(const kdi::kdi_namespace&)> find_box = [&](const auto& current) {
+        for (const auto& entry : current.template_defs) {
+            if (entry.name == "Box" && entry.is_generic) exported_box = &entry;
+            if (entry.name == "probe" && entry.is_generic) exported_probe = &entry;
+        }
+        for (const auto& child : current.namespaces) find_box(child);
+    };
+    find_box(reexported.unit.root_ns);
+    REQUIRE(exported_box);
+    REQUIRE(exported_box->aggregate_signature);
+    auto exported_ctor = std::find_if(exported_box->aggregate_signature->constructors.begin(),
+        exported_box->aggregate_signature->constructors.end(),
+        [](const auto& entry) { return entry.params.empty(); });
+    REQUIRE(exported_ctor != exported_box->aggregate_signature->constructors.end());
+    REQUIRE(exported_ctor->throws_spec);
+    auto check_exported = [](const std::vector<kdi::kdi_type>& types) {
+        REQUIRE(types.size() == 5);
+        REQUIRE(std::holds_alternative<kdi::kdi_alias_ref>(types[0].value));
+        CHECK(std::get<kdi::kdi_alias_ref>(types[0].value).fq_name ==
+              "mixedctorcontracts::EarlyAlias");
+        CHECK(std::holds_alternative<kdi::kdi_template_param_ref>(types[1].value));
+        CHECK(std::holds_alternative<kdi::kdi_aggregate_ref>(types[2].value));
+        const auto* ref = std::get_if<kdi::kdi_ref_type>(&types[3].value);
+        REQUIRE(ref);
+        REQUIRE(ref->inner);
+        const auto* cnst = std::get_if<kdi::kdi_const_type>(&ref->inner->value);
+        REQUIRE(cnst);
+        REQUIRE(cnst->inner);
+        REQUIRE(std::holds_alternative<kdi::kdi_template_param_ref>(cnst->inner->value));
+        CHECK(std::get<kdi::kdi_template_param_ref>(cnst->inner->value).name == "T");
+        const auto* alias_ref = std::get_if<kdi::kdi_ref_type>(&types[4].value);
+        REQUIRE(alias_ref);
+        REQUIRE(alias_ref->inner);
+        const auto* alias_const = std::get_if<kdi::kdi_const_type>(&alias_ref->inner->value);
+        REQUIRE(alias_const);
+        REQUIRE(alias_const->inner);
+        REQUIRE(std::holds_alternative<kdi::kdi_alias_ref>(alias_const->inner->value));
+        CHECK(std::get<kdi::kdi_alias_ref>(alias_const->inner->value).fq_name ==
+              "mixedctorcontracts::EarlyAlias");
+    };
+    check_exported(*exported_ctor->throws_spec);
+    auto exported_method = std::find_if(exported_box->aggregate_signature->methods.begin(),
+        exported_box->aggregate_signature->methods.end(),
+        [](const auto& entry) { return entry.name == "inspect"; });
+    REQUIRE(exported_method != exported_box->aggregate_signature->methods.end());
+    check_exported(exported_method->throws_spec);
+    REQUIRE(exported_probe);
+    REQUIRE(exported_probe->function_signature);
+    check_exported(exported_probe->function_signature->throws_spec);
+}
+
 TEST_CASE("KDI generic references preserve nested arguments through import and re-export",
           "[import][template][generic][kdi][regression]") {
     TmpKdi lib(R"K(
@@ -1548,14 +1919,14 @@ TEST_CASE("KDI generic references preserve nested arguments through import and r
     kdi::kdi_ref_type reference;
     reference.inner = std::make_shared<kdi::kdi_type>(kdi::kdi_type{std::move(outer)});
     field->type = kdi::kdi_type{std::move(reference)};
-    auto method = std::find_if(host->aggregate_signature->methods.begin(),
-        host->aggregate_signature->methods.end(),
-        [](const auto& entry) { return entry.name == "relay"; });
-    REQUIRE(method != host->aggregate_signature->methods.end());
+    auto constructor = std::find_if(host->aggregate_signature->constructors.begin(),
+        host->aggregate_signature->constructors.end(),
+        [](const auto& entry) { return entry.params.empty(); });
+    REQUIRE(constructor != host->aggregate_signature->constructors.end());
     kdi::kdi_generic_ref_type failure;
     failure.name = "::genericrefmeta::Failure";
     failure.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_template_param("T")));
-    method->throws_spec = std::vector<kdi::kdi_type>{kdi::kdi_type{std::move(failure)}};
+    constructor->throws_spec = std::vector<kdi::kdi_type>{kdi::kdi_type{std::move(failure)}};
     REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
 
     auto compiler = k::compiler::create();
@@ -1649,13 +2020,14 @@ TEST_CASE("KDI generic references preserve nested arguments through import and r
     REQUIRE(exported_outer);
     REQUIRE(exported_outer->args.size() == 3);
     CHECK(std::holds_alternative<kdi::kdi_void_type>(exported_outer->args[2]->value));
-    auto exported_method = std::find_if(exported_host->aggregate_signature->methods.begin(),
-        exported_host->aggregate_signature->methods.end(),
-        [](const auto& entry) { return entry.name == "relay"; });
-    REQUIRE(exported_method != exported_host->aggregate_signature->methods.end());
-    REQUIRE(exported_method->throws_spec.size() == 1);
-    CHECK(kdi::kdi_type_to_string(exported_method->throws_spec.front())
-          == kdi::kdi_type_to_string(method->throws_spec.front()));
+    auto exported_constructor = std::find_if(exported_host->aggregate_signature->constructors.begin(),
+        exported_host->aggregate_signature->constructors.end(),
+        [](const auto& entry) { return entry.params.empty(); });
+    REQUIRE(exported_constructor != exported_host->aggregate_signature->constructors.end());
+    REQUIRE(exported_constructor->throws_spec);
+    REQUIRE(exported_constructor->throws_spec->size() == 1);
+    CHECK(kdi::kdi_type_to_string(exported_constructor->throws_spec->front())
+          == kdi::kdi_type_to_string(constructor->throws_spec->front()));
 }
 
 TEST_CASE("imported generic signatures reject invalid nested KDI types",
@@ -2219,6 +2591,253 @@ TEST_CASE("imported generic template parameters reject invalid nested KDI types"
         module invalidtparammeta_consumer;
         import invalidtparammeta;
     )K", false, false), k::log::compiler_error, invalid_type);
+}
+
+TEST_CASE("imported generic constructor checks its dependent exception at each use",
+          "[import][template][generic][constructor][throws][regression]") {
+    TmpKdi lib(R"K(
+        module dependentctor;
+        public class Failure : public Exception {}
+        public class OtherFailure : public Exception {}
+        template<typename U> public class WrappedFailure : public Exception {}
+        generic<typename T> public struct Box {
+            Box() {}
+            Box(value: int) {}
+            Box(value: long) {}
+            Box(value: T*) {}
+        }
+    )K", true);
+    auto metadata = kdi::kdi_read_cbor_file(lib.kdi_path);
+    auto host = std::find_if(metadata.unit.root_ns.template_defs.begin(),
+        metadata.unit.root_ns.template_defs.end(),
+        [](const auto& entry) { return entry.name == "Box"; });
+    REQUIRE(host != metadata.unit.root_ns.template_defs.end());
+    REQUIRE(host->aggregate_signature);
+    auto ctor = std::find_if(host->aggregate_signature->constructors.begin(),
+        host->aggregate_signature->constructors.end(),
+        [](const auto& entry) { return entry.params.empty(); });
+    REQUIRE(ctor != host->aggregate_signature->constructors.end());
+    ctor->throws_spec = std::vector<kdi::kdi_type>{kdi::kdi_type::make_template_param("T")};
+    auto int_ctor = std::find_if(host->aggregate_signature->constructors.begin(),
+        host->aggregate_signature->constructors.end(), [](const auto& entry) {
+            if (entry.params.size() != 1) return false;
+            auto integer = std::get_if<kdi::kdi_int_type>(&entry.params[0].type.value);
+            return integer && integer->bits == 32;
+        });
+    REQUIRE(int_ctor != host->aggregate_signature->constructors.end());
+    int_ctor->throws_spec = std::vector<kdi::kdi_type>{kdi::kdi_type::make_template_param("T")};
+    auto pointer_ctor = std::find_if(host->aggregate_signature->constructors.begin(),
+        host->aggregate_signature->constructors.end(), [](const auto& entry) {
+            if (entry.params.size() != 1) return false;
+            auto pointer = std::get_if<kdi::kdi_ptr_type>(&entry.params[0].type.value);
+            return pointer && pointer->inner
+                && std::holds_alternative<kdi::kdi_template_param_ref>(pointer->inner->value);
+        });
+    REQUIRE(pointer_ctor != host->aggregate_signature->constructors.end());
+    pointer_ctor->throws_spec = std::vector<kdi::kdi_type>{kdi::kdi_type::make_template_param("T")};
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+
+    auto make_consumer = [&]() {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("dependentctor", lib.kdi_path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        compiler->set_file_resolver(resolver);
+        return compiler;
+    };
+    auto allowed = make_consumer();
+    REQUIRE_NOTHROW(allowed->parse_source("dependentctor_allowed.k", R"K(
+        module dependentctor_allowed;
+        import dependentctor;
+        use() throws(dependentctor::Failure) {
+            value: dependentctor::Box<dependentctor::Failure>;
+        }
+    )K", false, false));
+    REQUIRE_FALSE(allowed->has_compilation_error());
+
+    auto unhandled = Catch::Matchers::Predicate<k::log::compiler_error>(
+        [](const auto& error) {
+            return error.get_diagnostic().message.find("neither caught nor declared") != std::string::npos;
+        }, "rejects the selected concrete exception contract");
+    auto denied = make_consumer();
+    REQUIRE_THROWS_MATCHES(denied->parse_source("dependentctor_denied.k", R"K(
+        module dependentctor_denied;
+        import dependentctor;
+        use() throws(dependentctor::OtherFailure) {
+            value: dependentctor::Box<dependentctor::Failure>;
+        }
+    )K", false, false), k::log::compiler_error, unhandled);
+
+    REQUIRE_NOTHROW(make_consumer()->parse_source("dependentctor_overloads.k", R"K(
+        module dependentctor_overloads;
+        import dependentctor;
+        use() throws(dependentctor::Failure, dependentctor::OtherFailure) {
+            first: dependentctor::Box<dependentctor::Failure>(1);
+            second: dependentctor::Box<dependentctor::OtherFailure>(2);
+            third: dependentctor::Box<dependentctor::Failure>(null);
+        }
+        noThrow() throws() {
+            number: long = 1;
+            value: dependentctor::Box<dependentctor::Failure>(number);
+        }
+        caught() throws() {
+            try {
+                value: dependentctor::Box<dependentctor::Failure>(1);
+            } catch (error: dependentctor::Failure&) {}
+        }
+    )K", false, false));
+    REQUIRE_THROWS_MATCHES(make_consumer()->parse_source("dependentctor_repeated.k", R"K(
+        module dependentctor_repeated;
+        import dependentctor;
+        use() throws(dependentctor::Failure) {
+            first: dependentctor::Box<dependentctor::Failure>(1);
+            second: dependentctor::Box<dependentctor::OtherFailure>(2);
+        }
+    )K", false, false), k::log::compiler_error, unhandled);
+    REQUIRE_THROWS_MATCHES(make_consumer()->parse_source("dependentctor_wrong_catch.k", R"K(
+        module dependentctor_wrong_catch;
+        import dependentctor;
+        use() throws() {
+            try {
+                value: dependentctor::Box<dependentctor::Failure>(1);
+            } catch (error: dependentctor::OtherFailure&) {}
+        }
+    )K", false, false), k::log::compiler_error, unhandled);
+    REQUIRE_THROWS_MATCHES(make_consumer()->parse_source("dependentctor_pointer_denied.k", R"K(
+        module dependentctor_pointer_denied;
+        import dependentctor;
+        use() throws() {
+            value: dependentctor::Box<dependentctor::Failure>(null);
+        }
+    )K", false, false), k::log::compiler_error, unhandled);
+
+    REQUIRE_NOTHROW(make_consumer()->parse_source("dependentctor_members_allowed.k", R"K(
+        module dependentctor_members_allowed;
+        import dependentctor;
+        struct Holder {
+            first: dependentctor::Box<dependentctor::Failure>;
+            second: dependentctor::Box<dependentctor::OtherFailure>;
+            Holder() throws(dependentctor::Failure, dependentctor::OtherFailure) {}
+        }
+    )K", false, false));
+    REQUIRE_THROWS_MATCHES(make_consumer()->parse_source("dependentctor_members_denied.k", R"K(
+        module dependentctor_members_denied;
+        import dependentctor;
+        struct Holder {
+            first: dependentctor::Box<dependentctor::Failure>;
+            second: dependentctor::Box<dependentctor::OtherFailure>;
+            Holder() throws(dependentctor::Failure) {}
+        }
+    )K", false, false), k::log::compiler_error, unhandled);
+
+    REQUIRE_NOTHROW(make_consumer()->parse_source("dependentctor_stack_arrays_allowed.k", R"K(
+        module dependentctor_stack_arrays_allowed;
+        import dependentctor;
+        use() throws(dependentctor::Failure) {
+            defaults: dependentctor::Box<dependentctor::Failure>[2];
+            uniform: dependentctor::Box<dependentctor::Failure>(1)[2];
+        }
+    )K", false, false));
+    REQUIRE_THROWS_MATCHES(make_consumer()->parse_source("dependentctor_stack_array_denied.k", R"K(
+        module dependentctor_stack_array_denied;
+        import dependentctor;
+        use() throws() {
+            defaults: dependentctor::Box<dependentctor::Failure>[2];
+        }
+    )K", false, false), k::log::compiler_error, unhandled);
+
+    REQUIRE_NOTHROW(make_consumer()->parse_source("dependentctor_expression_allowed.k", R"K(
+        module dependentctor_expression_allowed;
+        import dependentctor;
+        use() throws(dependentctor::Failure) {
+            dependentctor::Box<dependentctor::Failure>(1);
+            value: dependentctor::Box<dependentctor::Failure>! =
+                new dependentctor::Box<dependentctor::Failure>(1);
+        }
+    )K", false, false));
+    REQUIRE_THROWS_MATCHES(make_consumer()->parse_source("dependentctor_temporary_denied.k", R"K(
+        module dependentctor_temporary_denied;
+        import dependentctor;
+        use() throws() { dependentctor::Box<dependentctor::Failure>(1); }
+    )K", false, false), k::log::compiler_error, unhandled);
+    REQUIRE_THROWS_MATCHES(make_consumer()->parse_source("dependentctor_new_denied.k", R"K(
+        module dependentctor_new_denied;
+        import dependentctor;
+        use() throws() {
+            value: dependentctor::Box<dependentctor::Failure>! =
+                new dependentctor::Box<dependentctor::Failure>(1);
+        }
+    )K", false, false), k::log::compiler_error, unhandled);
+    REQUIRE_NOTHROW(make_consumer()->parse_source("dependentctor_uniform_new_allowed.k", R"K(
+        module dependentctor_uniform_new_allowed;
+        import dependentctor;
+        use() throws(dependentctor::Failure) {
+            new dependentctor::Box<dependentctor::Failure>(1)[2];
+        }
+    )K", false, false));
+    REQUIRE_THROWS_MATCHES(make_consumer()->parse_source("dependentctor_uniform_new_denied.k", R"K(
+        module dependentctor_uniform_new_denied;
+        import dependentctor;
+        use() throws() {
+            new dependentctor::Box<dependentctor::Failure>(1)[2];
+        }
+    )K", false, false), k::log::compiler_error, unhandled);
+    REQUIRE_NOTHROW(make_consumer()->parse_source("dependentctor_array_allowed.k", R"K(
+        module dependentctor_array_allowed;
+        import dependentctor;
+        use(n: int) throws(dependentctor::Failure) {
+            values: dependentctor::Box<dependentctor::Failure>[]! =
+                new dependentctor::Box<dependentctor::Failure>[n];
+        }
+    )K", false, false));
+    REQUIRE_THROWS_MATCHES(make_consumer()->parse_source("dependentctor_array_denied.k", R"K(
+        module dependentctor_array_denied;
+        import dependentctor;
+        use(n: int) throws() {
+            values: dependentctor::Box<dependentctor::Failure>[]! =
+                new dependentctor::Box<dependentctor::Failure>[n];
+        }
+    )K", false, false), k::log::compiler_error, unhandled);
+    auto invalid_exception = Catch::Matchers::Predicate<k::log::compiler_error>(
+        [](const auto& error) {
+            return std::string(error.what()).find("an exception type could not be resolved")
+                != std::string::npos;
+        }, "rejects a non-exception template argument in the contract");
+    REQUIRE_THROWS_MATCHES(make_consumer()->parse_source("dependentctor_invalid_exception.k", R"K(
+        module dependentctor_invalid_exception;
+        import dependentctor;
+        use() throws() { value: dependentctor::Box<int>(1); }
+    )K", false, false), k::log::compiler_error, invalid_exception);
+
+    kdi::kdi_generic_ref_type wrapped;
+    wrapped.name = "::dependentctor::WrappedFailure";
+    wrapped.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_template_param("T")));
+    int_ctor->throws_spec = std::vector<kdi::kdi_type>{kdi::kdi_type{std::move(wrapped)}};
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+    REQUIRE_NOTHROW(make_consumer()->parse_source("dependentctor_nested_allowed.k", R"K(
+        module dependentctor_nested_allowed;
+        import dependentctor;
+        use() throws(Exception) { value: dependentctor::Box<dependentctor::Failure>(1); }
+    )K", false, false));
+    REQUIRE_THROWS_MATCHES(make_consumer()->parse_source("dependentctor_nested_denied.k", R"K(
+        module dependentctor_nested_denied;
+        import dependentctor;
+        use() throws() { value: dependentctor::Box<dependentctor::Failure>(1); }
+    )K", false, false), k::log::compiler_error, unhandled);
+
+    int_ctor->throws_spec.reset();
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+    auto unavailable = Catch::Matchers::Predicate<k::log::compiler_error>(
+        [](const auto& error) {
+            return std::string(error.what()).find("exception contract is unavailable") != std::string::npos;
+        }, "rejects an unavailable constructor contract");
+    REQUIRE_THROWS_MATCHES(make_consumer()->parse_source("dependentctor_unknown.k", R"K(
+        module dependentctor_unknown;
+        import dependentctor;
+        use() throws(dependentctor::Failure) {
+            value: dependentctor::Box<dependentctor::Failure>(1);
+        }
+    )K", false, false), k::log::compiler_error, unavailable);
 }
 
 TEST_CASE("forward method calls resolve complete exception contracts",

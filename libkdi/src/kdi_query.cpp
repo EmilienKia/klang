@@ -119,6 +119,8 @@ std::string constructor_signature(const kdi_constructor& ctor, const kdi_aggrega
     if (ctor.is_defaulted) out << "default ";
     if (ctor.is_deleted) out << "deleted ";
     out << owner.name << params_to_string(ctor.params);
+    if (ctor.throws_spec) out << throws_to_string(*ctor.throws_spec);
+    else out << " [throws contract unknown]";
     return out.str();
 }
 

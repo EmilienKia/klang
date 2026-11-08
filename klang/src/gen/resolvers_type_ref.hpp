@@ -102,6 +102,12 @@ protected:
      */
     std::unordered_map<const variable_definition*, tpl_info::generic_usage_descriptor> _generic_usage_by_site;
 
+    struct generic_constructor_usage {
+        std::shared_ptr<aggregate> definition;
+        tpl_info::generic_usage_descriptor bindings;
+    };
+    std::unordered_map<const element*, generic_constructor_usage> _generic_constructor_usages;
+
     /**
      * Guard set of instantiated aggregates already processed by
      * resolve_instantiated_aggregate(), to keep that pass idempotent and to
@@ -481,7 +487,11 @@ protected:
      * (either caught by enclosing try-catch or declared in the caller's throws clause).
      * Emits ERR_UNCAUGHT_EXCEPTION for each unhandled type.
      */
-    void check_call_contract(const function& called_func, const lex::opt_any_lexeme& lexeme);
+    void check_call_contract(const function& called_func, const lex::opt_any_lexeme& lexeme,
+                             const element* use_site = nullptr);
+    bool check_imported_generic_constructor_contract(const function& called_func,
+                                                     const lex::opt_any_lexeme& lexeme,
+                                                     const element* use_site);
     void check_call_exception_types(const function& called_func,
                                     const std::vector<std::shared_ptr<type>>& exceptions,
                                     const lex::opt_any_lexeme& lexeme);

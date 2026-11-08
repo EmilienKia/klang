@@ -1129,6 +1129,8 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
         new_vs->_ast_node = vs->get_ast_node();
         new_vs->_documentation = vs->get_documentation();
         new_vs->set_type(substitute_type(std::const_pointer_cast<type>(vs->get_type()), subst));
+        if (auto declared = vs->get_declared_template_type())
+            new_vs->_declared_template_type = substitute_type(declared, subst);
         new_vs->set_const(vs->is_const());
         if (vs->get_init_expr()) {
             // variable_definition::set_init_expr(shared_ptr<expression>) is the base version
@@ -1314,6 +1316,8 @@ void template_instantiator::clone_member_variable(
     // Substitute type
     auto src_type = std::const_pointer_cast<type>(src.get_type());
     new_var->set_type(substitute_type(src_type, subst));
+    if (auto declared = src.get_declared_template_type())
+        new_var->_declared_template_type = substitute_type(declared, subst);
     new_var->set_const(src.is_const());
 
     // Clone init expression and retarget to new variable
@@ -1594,8 +1598,18 @@ void template_instantiator::populate_function_from_template(
 
     // Copy throws spec (raw names — will be resolved by the resolution passes)
     for (auto& raw : src.get_throws_spec_raw()) {
-        dst->add_throws_spec_raw(raw);
+        auto it = subst.find(raw);
+        std::shared_ptr<struct_type> concrete;
+        if (it != subst.end())
+            concrete = std::dynamic_pointer_cast<struct_type>(type::canonical(it->second));
+        auto aggregate = concrete ? concrete->get_struct() : nullptr;
+        dst->add_throws_spec_raw(aggregate ? aggregate->get_fq_name() : raw);
     }
+    if (src.get_throws_spec_raw().empty()) {
+        for (const auto& thrown : src.get_throws_spec())
+            dst->add_throws_type(substitute_type(thrown, subst));
+    }
+    dst->set_throws_spec_unknown(src.is_throws_spec_unknown());
 
     // Copy AST node (optional, for diagnostics)
     dst->_ast_node = src.get_ast_node();

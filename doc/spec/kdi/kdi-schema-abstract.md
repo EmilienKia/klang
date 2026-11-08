@@ -129,8 +129,9 @@ arguments. A `void` placeholder does not encode the original value and must
 not be treated as a recoverable template argument.
 
 `template_param` must name a type parameter declared by the enclosing template
-definition. It must not occur in a concrete declaration. `erased_param` remains
-valid in a generic synthesis.
+definition. It must not occur in a concrete declaration, including recursively
+within constructor exception types. `erased_param` remains valid in a generic
+synthesis.
 
 ---
 
@@ -704,12 +705,38 @@ KdiConstructor {
   params             : [KdiParam]
   mangled_name       : string      -- C1 variant; may be empty when deleted
   mangled_name_c2    : string      -- C2 variant; may be empty when deleted
+  throws_spec        : [KdiType]?  -- absent: unknown; present empty: no checked exceptions
   llvm_def           : string      -- empty when deleted, else C1 prototype, e.g.
                                    -- "declare void @_ZN7CounterC1Ev
                                    --   (%struct.Counter* %this)"
   doc                : KdiDocFunction?
 }
 ```
+
+For a concrete constructor with a resolved contract the producer must include
+`throws_spec`, including an empty array for a known empty checked-exception
+contract. It must omit the field if the contract is unknown. Entries use the
+same type encoding as function and method exception specifications. If a
+non-generic template signature has not resolved its exception types, it may
+omit the field; its source recipe remains authoritative. Generic aggregate
+signatures have no source recipe and must preserve constructor exception
+types, including unresolved types resolved in the defining scope. A producer
+must reject a generic signature if it cannot export that contract.
+Aggregate exception types referenced by constructor contracts, including
+types from dependencies, must be registered in the type table.
+The compiler also omits the field if a constructor's exception type cannot be
+exported, preserving the constructor record without asserting a false contract.
+
+An absent field in an older descriptor means **unknown**, not noexcept.
+Regenerate the defining library's KDI with an updated compiler and use an
+updated importer before relying on constructor exception contracts. The current
+compiler model preserves unknown separately from empty, but existing call-contract
+checks do not reject unknown contracts; legacy imports therefore remain unsafe
+for exception-sensitive ordinary calls. The same limitation applies when a
+new descriptor omits a contract whose exception type cannot be exported.
+Older readers ignore the new field and can
+likewise miscompile throwing constructor calls even after regeneration.
+Schema version remains `0.1`; this additive extension is not fail-closed.
 
 `is_private` is reserved for private deleted declarations included solely
 to enforce copy restrictions when importing an aggregate. When true it overrides

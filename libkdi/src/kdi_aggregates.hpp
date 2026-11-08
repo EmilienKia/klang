@@ -266,6 +266,8 @@ struct kdi_constructor {
     /// LLVM IR prototype of the C1 constructor variant, e.g.
     /// "declare void @_ZN3ns7CounterC1Ev(%struct.ns.Counter* %this)".
     std::string              llvm_def;
+    /// Absent for legacy/unknown contracts; a present empty vector means noexcept.
+    std::optional<std::vector<kdi_type>> throws_spec;
     std::optional<kdi_doc_function> doc;
 };
 

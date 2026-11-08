@@ -1370,7 +1370,10 @@ inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::share
     // Nominal equality for struct/aggregate types: same underlying aggregate
     if (auto s1 = std::dynamic_pointer_cast<struct_type>(type1)) {
         auto s2 = std::dynamic_pointer_cast<struct_type>(type2);
-        return s2 && s1->get_struct() == s2->get_struct();
+        if (!s2) return false;
+        auto agg1 = s1->get_struct();
+        auto agg2 = s2->get_struct();
+        return agg1 && agg1 == agg2;
     }
 
     // Structural equality for function reference types

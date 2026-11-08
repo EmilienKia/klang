@@ -588,6 +588,11 @@ static json to_json(const kdi_constructor& c) {
         {"llvm_def",            c.llvm_def},
     };
     if (c.is_private) j["is_private"] = true;
+    if (c.throws_spec) {
+        json ts = json::array();
+        for (const auto& t : *c.throws_spec) ts.push_back(to_json(t));
+        j["throws_spec"] = ts;
+    }
     if (c.doc) j["doc"] = to_json(*c.doc);
     return j;
 }
@@ -602,6 +607,12 @@ static kdi_constructor from_json_constructor(const json& j) {
     c.mangled_name        = j.value("mangled_name", "");
     c.mangled_name_c2     = j.value("mangled_name_c2", "");
     c.llvm_def            = j.at("llvm_def");
+    if (j.contains("throws_spec")) {
+        if (!j.at("throws_spec").is_array())
+            throw kdi_json_error("constructor throws_spec must be an array");
+        c.throws_spec.emplace();
+        for (const auto& t : j.at("throws_spec")) c.throws_spec->push_back(from_json_type(t));
+    }
     if (j.contains("doc")) c.doc = from_json_doc_function(j.at("doc"));
     return c;
 }

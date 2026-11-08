@@ -37,6 +37,7 @@ namespace kdi {
     struct kdi_file;
     struct kdi_namespace;
     struct kdi_aggregate;
+    struct kdi_constructor;
     struct kdi_annotation;
     struct kdi_function;
     struct kdi_param;

@@ -51,7 +51,8 @@ namespace k::model {
 
 enum class kdi_type_conversion {
     ordinary,
-    template_signature
+    template_signature,
+    concrete_contract
 };
 
 /**
@@ -61,7 +62,7 @@ enum class kdi_type_conversion {
  * @param owner   Compilation unit (needed for aggregate-ref resolution).
  * @param ctx     Compilation context (needed for primitive lookup and
  *                struct_type registration).
- * @param mode    Preserve template placeholders in imported signatures.
+ * @param mode    Preserve template placeholders or reject them in concrete contracts.
  * @return        Resolved k::model::type, or nullptr if conversion is not
  *                possible (e.g. unsupported form, forward reference that
  *                could not be resolved yet).

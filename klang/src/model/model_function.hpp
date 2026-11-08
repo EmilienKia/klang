@@ -276,8 +276,11 @@ protected:
     /** Raw unresolved exception type names from parser (consumed during resolution). */
     std::vector<std::string> _throws_spec_raw;
 
-    /** Resolved exception types that this function may throw. Empty = noexcept. */
+    /** Resolved exception types that this function may throw. */
     std::vector<std::shared_ptr<type>> _throws_spec;
+
+    /** The exception contract was not supplied by an imported descriptor. */
+    bool _throws_spec_unknown = false;
 
     function(std::shared_ptr<element> parent, bool is_static = false) :
         element(parent), _is_static(is_static) {}
@@ -309,10 +312,12 @@ public:
     void set_has_bare_return(bool v) { _has_bare_return = v; }
 
     // ── Exception specification ──────────────────────────────────────────────
-    /** True if this function has an explicit throws clause (even if empty after resolution). */
+    /** True if a nonempty throws clause is known. Unknown is reported separately. */
     bool has_throws_spec() const { return !_throws_spec_raw.empty() || !_throws_spec.empty(); }
-    /** True if this function is guaranteed not to throw (no throws clause). */
-    bool is_noexcept() const { return _throws_spec_raw.empty() && _throws_spec.empty(); }
+    /** True only when the checked-exception contract is known to be empty. */
+    bool is_noexcept() const { return !_throws_spec_unknown && !has_throws_spec(); }
+    bool is_throws_spec_unknown() const { return _throws_spec_unknown; }
+    void set_throws_spec_unknown(bool value) { _throws_spec_unknown = value; }
     /** Raw unresolved exception type names (set by model builder, consumed by resolver). */
     const std::vector<std::string>& get_throws_spec_raw() const { return _throws_spec_raw; }
     void add_throws_spec_raw(const std::string& name) { _throws_spec_raw.push_back(name); }

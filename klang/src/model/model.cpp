@@ -627,6 +627,15 @@ std::shared_ptr<expression> variable_definition::get_init_expr() const {
 }
 
 variable_definition& variable_definition::set_type(std::shared_ptr<type> type) {
+    if (!_declared_template_type && _type && _type != type) {
+        for (auto current = _type; current; current = current->get_subtype()) {
+            if (auto unresolved = std::dynamic_pointer_cast<unresolved_type>(current);
+                unresolved && unresolved->has_template_args()) {
+                _declared_template_type = unresolved;
+                break;
+            }
+        }
+    }
     _type = type;
     return *this;
 }

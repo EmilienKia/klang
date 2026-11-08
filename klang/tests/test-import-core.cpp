@@ -33,6 +33,7 @@
 #include "helpers.hpp"
 #include "../src/errors.hpp"
 #include "../src/model/context.hpp"
+#include "../src/model/tools/kdi_type_converter.hpp"
 #include "../src/model/imported.hpp"
 
 #include <llvm/IR/DerivedTypes.h>
@@ -44,6 +45,237 @@
 #include <algorithm>
 
 namespace fs = std::filesystem;
+
+TEST_CASE("KDI preserves imported default and copy constructor exception contracts",
+          "[import][constructor][exceptions][regression]") {
+    TmpKdi lib(R"K(
+        module ctorcontracts;
+        public class Failure : public Exception {}
+        public class OtherFailure : public Exception {}
+        public struct Value {
+            Value() throws(Failure) {}
+            Value(other: const Value&) throws(Failure) {}
+        }
+        public struct Safe {
+            Safe() {}
+        }
+    )K", true);
+    auto metadata = kdi::kdi_read_cbor_file(lib.kdi_path);
+    auto value = std::find_if(metadata.unit.root_ns.aggregates.begin(),
+        metadata.unit.root_ns.aggregates.end(), [](const auto& agg) { return agg.name == "Value"; });
+    REQUIRE(value != metadata.unit.root_ns.aggregates.end());
+    REQUIRE(value->constructors.size() == 2);
+    for (const auto& ctor : value->constructors) {
+        REQUIRE(ctor.throws_spec);
+        REQUIRE(ctor.throws_spec->size() == 1);
+        CHECK(std::get<kdi::kdi_aggregate_ref>((*ctor.throws_spec)[0].value).fq_name
+              == "ctorcontracts::Failure");
+    }
+    auto safe = std::find_if(metadata.unit.root_ns.aggregates.begin(),
+        metadata.unit.root_ns.aggregates.end(), [](const auto& agg) { return agg.name == "Safe"; });
+    REQUIRE(safe != metadata.unit.root_ns.aggregates.end());
+    REQUIRE_FALSE(safe->constructors.empty());
+    REQUIRE(safe->constructors[0].throws_spec);
+    CHECK(safe->constructors[0].throws_spec->empty());
+
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("ctorcontracts", lib.kdi_path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    compiler->set_file_resolver(resolver);
+    REQUIRE_NOTHROW(compiler->parse_source("ctorcontracts_consumer.k", R"K(
+        module ctorcontracts_consumer;
+        import ctorcontracts;
+        use(value: const ctorcontracts::Value&) throws(ctorcontracts::Failure) {
+            first: ctorcontracts::Value;
+            second: ctorcontracts::Value(value);
+        }
+    )K", false, false));
+    auto ns = compiler->get_unit()->get_root_namespace()->get_child_namespace("ctorcontracts");
+    REQUIRE(ns);
+    auto imported = ns->get_aggregate("Value");
+    REQUIRE(imported);
+    REQUIRE(imported->constructors().size() == 2);
+    for (const auto& ctor : imported->constructors()) {
+        CHECK_FALSE(ctor->is_throws_spec_unknown());
+        CHECK_FALSE(ctor->is_noexcept());
+        REQUIRE(ctor->get_throws_spec().size() == 1);
+        auto exc = std::dynamic_pointer_cast<k::model::struct_type>(
+            k::model::type::canonical(ctor->get_throws_spec()[0]));
+        REQUIRE(exc);
+        CHECK(exc->get_struct()->get_fq_name() == "::ctorcontracts::Failure");
+    }
+    auto imported_safe = ns->get_aggregate("Safe");
+    REQUIRE(imported_safe);
+    REQUIRE_FALSE(imported_safe->constructors().empty());
+    CHECK_FALSE(imported_safe->constructors()[0]->is_throws_spec_unknown());
+    CHECK(imported_safe->constructors()[0]->is_noexcept());
+
+    auto denied = k::compiler::create();
+    auto denied_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    denied_resolver->add_explicit_path("ctorcontracts", lib.kdi_path);
+    denied_resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    denied->set_file_resolver(denied_resolver);
+    CHECK_THROWS(denied->parse_source("ctorcontracts_denied.k", R"K(
+        module ctorcontracts_denied;
+        import ctorcontracts;
+        use() throws(ctorcontracts::OtherFailure) {
+            value: ctorcontracts::Value;
+        }
+    )K", false, false));
+
+    for (auto& agg : metadata.unit.root_ns.aggregates) {
+        if (agg.name != "Value") continue;
+        for (auto& ctor : agg.constructors)
+            if (!ctor.is_copy_constructor) ctor.throws_spec.reset();
+    }
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+    auto legacy = k::compiler::create();
+    auto legacy_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    legacy_resolver->add_explicit_path("ctorcontracts", lib.kdi_path);
+    legacy_resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    legacy->set_file_resolver(legacy_resolver);
+    REQUIRE_NOTHROW(legacy->parse_source("ctorcontracts_legacy.k", R"K(
+        module ctorcontracts_legacy;
+        import ctorcontracts;
+        use() throws(ctorcontracts::OtherFailure) {
+            value: ctorcontracts::Value;
+        }
+    )K", false, false));
+    auto legacy_ns = legacy->get_unit()->get_root_namespace()->get_child_namespace("ctorcontracts");
+    REQUIRE(legacy_ns);
+    auto legacy_value = legacy_ns->get_aggregate("Value");
+    REQUIRE(legacy_value);
+    for (const auto& ctor : legacy_value->constructors()) {
+        if (ctor->is_copy_constructor()) {
+            CHECK_FALSE(ctor->is_throws_spec_unknown());
+            CHECK(ctor->get_throws_spec().size() == 1);
+        } else {
+            CHECK(ctor->is_throws_spec_unknown());
+            CHECK_FALSE(ctor->is_noexcept());
+        }
+    }
+
+    kdi::kdi_const_type cnst;
+    cnst.inner = std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_template_param("T"));
+    kdi::kdi_ref_type ref;
+    ref.inner = std::make_shared<kdi::kdi_type>(kdi::kdi_type{std::move(cnst)});
+    for (auto& agg : metadata.unit.root_ns.aggregates) {
+        if (agg.name != "Value") continue;
+        for (auto& ctor : agg.constructors)
+            if (!ctor.is_copy_constructor)
+                ctor.throws_spec = std::vector<kdi::kdi_type>{kdi::kdi_type{ref}};
+    }
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+    auto invalid = k::compiler::create();
+    auto invalid_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    invalid_resolver->add_explicit_path("ctorcontracts", lib.kdi_path);
+    invalid_resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    invalid->set_file_resolver(invalid_resolver);
+    REQUIRE_THROWS_MATCHES(invalid->parse_source("ctorcontracts_invalid.k", R"K(
+        module ctorcontracts_invalid;
+        import ctorcontracts;
+        struct T {}
+    )K", false, false), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+            return error.get_diagnostic().code == static_cast<unsigned int>(
+                k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND);
+        }, "rejects a placeholder nested in a concrete constructor contract"));
+}
+
+TEST_CASE("KDI completes late aliases in imported function and method contracts",
+          "[import][exceptions][alias][regression]") {
+    TmpKdi lib(R"K(
+        module latecontracts;
+        public class Failure : public Exception {}
+        public class OtherFailure : public Exception {}
+        public struct Worker {
+            Worker() {}
+            run(): int { return 1; }
+        }
+        public work(): int { return 1; }
+        namespace late {
+            public typedef AliasFailure : Failure;
+        }
+    )K", true);
+    auto metadata = kdi::kdi_read_cbor_file(lib.kdi_path);
+    auto work = std::find_if(metadata.unit.root_ns.functions.begin(), metadata.unit.root_ns.functions.end(),
+        [](const auto& entry) { return entry.name == "work"; });
+    auto worker = std::find_if(metadata.unit.root_ns.aggregates.begin(), metadata.unit.root_ns.aggregates.end(),
+        [](const auto& entry) { return entry.name == "Worker"; });
+    auto late = std::find_if(metadata.unit.root_ns.namespaces.begin(), metadata.unit.root_ns.namespaces.end(),
+        [](const auto& entry) { return entry.name == "late"; });
+    REQUIRE(work != metadata.unit.root_ns.functions.end());
+    REQUIRE(worker != metadata.unit.root_ns.aggregates.end());
+    REQUIRE(late != metadata.unit.root_ns.namespaces.end());
+    auto method = std::find_if(worker->methods.begin(), worker->methods.end(),
+        [](const auto& entry) { return entry.name == "run"; });
+    auto alias = std::find_if(late->aliases.begin(), late->aliases.end(),
+        [](const auto& entry) { return entry.name == "AliasFailure"; });
+    REQUIRE(method != worker->methods.end());
+    REQUIRE(alias != late->aliases.end());
+    REQUIRE_FALSE(worker->constructors.empty());
+    const std::vector<kdi::kdi_type> spec{
+        kdi::kdi_type::make_aggregate("latecontracts::Failure"),
+        kdi::kdi_type::make_alias("latecontracts::late::AliasFailure"),
+        kdi::kdi_type::make_aggregate("latecontracts::OtherFailure")};
+    work->throws_spec = spec;
+    method->throws_spec = spec;
+    worker->constructors[0].throws_spec = spec;
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+
+    auto make_compiler = [&]() {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("latecontracts", lib.kdi_path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        compiler->set_file_resolver(resolver);
+        return compiler;
+    };
+    auto compiler = make_compiler();
+    constexpr auto consumer = R"K(
+        module latecontracts_consumer;
+        import latecontracts;
+    )K";
+    REQUIRE_NOTHROW(compiler->parse_source("latecontracts_consumer.k", consumer, false, false));
+    REQUIRE_FALSE(compiler->has_compilation_error());
+    auto ns = compiler->get_unit()->get_root_namespace()->get_child_namespace("latecontracts");
+    REQUIRE(ns);
+    auto imported_work = ns->get_function("work");
+    auto imported_worker = ns->get_aggregate("Worker");
+    REQUIRE(imported_work);
+    REQUIRE(imported_worker);
+    auto imported_method = imported_worker->get_function("run");
+    REQUIRE(imported_method);
+    REQUIRE_FALSE(imported_worker->constructors().empty());
+    auto imported_late = ns->get_child_namespace("late");
+    REQUIRE(imported_late);
+    auto imported_alias = imported_late->get_alias("AliasFailure");
+    REQUIRE(imported_alias);
+    for (const auto& fn : {imported_work, imported_method,
+                           std::static_pointer_cast<k::model::function>(imported_worker->constructors()[0])}) {
+        const auto& types = fn->get_throws_spec();
+        REQUIRE(types.size() == 3);
+        auto nominal = std::dynamic_pointer_cast<k::model::alias_type>(types[1]);
+        REQUIRE(nominal);
+        CHECK(nominal->get_alias() == imported_alias);
+        CHECK(k::model::type::canonical(types[0]) == ns->get_aggregate("Failure")->get_struct_type());
+        CHECK(k::model::type::canonical(types[2]) == ns->get_aggregate("OtherFailure")->get_struct_type());
+    }
+
+    for (const auto& target : {"latecontracts::late::AliasFailure", "latecontracts::late::Missing"}) {
+        alias->target_type = kdi::kdi_type::make_alias(target);
+        REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+        auto invalid = make_compiler();
+        INFO(target);
+        REQUIRE_THROWS_MATCHES(invalid->parse_source("latecontracts_invalid.k", consumer, false, false),
+            k::log::compiler_error, Catch::Matchers::Predicate<k::log::compiler_error>(
+                [](const auto& error) {
+                    return error.get_diagnostic().code == static_cast<unsigned int>(
+                        k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND);
+                }, "unavailable exception alias"));
+    }
+}
 
 TEST_CASE("Imported opaque Counter rejects tutorial copy probes", "[import][copy][delete][regression]") {
     for (const auto* kind : {"final class", "struct"}) {

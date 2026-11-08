@@ -20,6 +20,7 @@
 #include "../tools/k_source_emitter.hpp"
 
 #include "../model.hpp"
+#include "../imported.hpp"
 #include "../type.hpp"
 #include "../aggregate_value.hpp"
 
@@ -1003,6 +1004,11 @@ kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const
         kc.is_deleted = ctor->is_deleted();
         kc.is_private = ctor->get_visibility() == PRIVATE;
         kc.params = to_kdi_signature_params(*ctor, ti);
+        if (!ctor->is_throws_spec_unknown()
+            && (ti.is_generic || ctor->get_throws_spec_raw().empty()
+                || !ctor->get_throws_spec().empty())) {
+            kc.throws_spec = to_kdi_signature_throws(*ctor, ti, fq_name);
+        }
         kc.doc = to_kdi_doc_function(*ctor);
         sig.constructors.push_back(std::move(kc));
     }
@@ -2007,6 +2013,11 @@ void kdi_builder::visit_constructor(constructor& ctor) {
     for (const auto& parameter : ctor.parameters()) {
         if (!is_exported_type(std::const_pointer_cast<type>(parameter->get_type()))) return;
     }
+    const bool exported_throws = std::all_of(
+        ctor.get_throws_spec().begin(), ctor.get_throws_spec().end(),
+        [](const auto& thrown) {
+            return is_exported_type(std::const_pointer_cast<type>(thrown));
+        });
 
     kdi::kdi_constructor kc;
     kc.visibility          = ctor.get_visibility() == PRIVATE ? kdi::kdi_visibility::protected_
@@ -2024,6 +2035,23 @@ void kdi_builder::visit_constructor(constructor& ctor) {
     {
         auto* llvm_fn = _ctx.module().getFunction(kc.mangled_name);
         kc.llvm_def = llvm_fn_prototype(llvm_fn);
+    }
+    if (auto imported = dynamic_cast<const imported_constructor*>(&ctor);
+        imported && imported->get_kdi_constructor()) {
+        kc.throws_spec = imported->get_kdi_constructor()->throws_spec;
+    } else if (exported_throws && !ctor.is_throws_spec_unknown()
+               && (ctor.get_throws_spec_raw().empty() || !ctor.get_throws_spec().empty())) {
+        kc.throws_spec.emplace();
+        for (const auto& t : ctor.get_throws_spec())
+            kc.throws_spec->push_back(to_kdi_type(std::const_pointer_cast<type>(t)));
+    }
+    if (kc.throws_spec) {
+        for (const auto& t : ctor.get_throws_spec()) {
+            auto st = std::dynamic_pointer_cast<struct_type>(type::canonical(t));
+            if (st) {
+                if (auto definition = st->get_struct()) register_aggregate_type(*definition);
+            }
+        }
     }
     kc.doc = to_kdi_doc_function(ctor);
 

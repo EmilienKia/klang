@@ -244,7 +244,8 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
                         auto [selected, adapted] = get_best_matching_constructor(
                             st->constructors(), ctor_args, true, expr.first_lexeme());
                         check_constructor_visibility(*selected, expr);
-                        check_call_contract(*selected, expr.first_lexeme());
+                        check_call_contract(*selected, expr.first_lexeme(),
+                                            dynamic_cast<const element*>(var_def.get()));
                         expr.set_constructor(selected);
                         expr.arguments(adapted);
                         return;
@@ -291,7 +292,8 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
         // Check constructor visibility
         check_constructor_visibility(*best_constructor, expr);
         // Check exception contract for throwing constructors
-        check_call_contract(*best_constructor, expr.first_lexeme());
+        check_call_contract(*best_constructor, expr.first_lexeme(),
+                            dynamic_cast<const element*>(var_def.get()));
         expr.set_constructor(best_constructor);
         expr.arguments(adapted_args);
     }
@@ -427,7 +429,7 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
                     auto [selected, adapted] = get_best_matching_constructor(
                         st->constructors(), expr.arguments(), true, expr.first_lexeme());
                     check_constructor_visibility(*selected, expr);
-                    check_call_contract(*selected, expr.first_lexeme());
+                    check_call_contract(*selected, expr.first_lexeme(), &expr);
                     expr.set_constructor(selected);
                     expr.assign_arguments(adapted);
                     expr.set_type(st_type->get_reference());
@@ -459,7 +461,7 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
 
     check_constructor_visibility(*best_constructor, expr);
     // Check exception contract for throwing constructors
-    check_call_contract(*best_constructor, expr.first_lexeme());
+    check_call_contract(*best_constructor, expr.first_lexeme(), &expr);
     expr.set_constructor(best_constructor);
     expr.assign_arguments(adapted_args);
     // The temporary is an alloca → its type is a reference to the struct

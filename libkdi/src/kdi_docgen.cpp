@@ -249,6 +249,20 @@ std::string make_signature(const std::string& name,
     return out.str();
 }
 
+std::string constructor_signature(const std::string& name, const kdi_constructor& ctor) {
+    std::string result = make_signature(name, ctor.params, nullptr);
+    if (!ctor.throws_spec) return result + " [throws contract unknown]";
+    if (!ctor.throws_spec->empty()) {
+        result += " throws(";
+        for (size_t i = 0; i < ctor.throws_spec->size(); ++i) {
+            if (i) result += ", ";
+            result += type_to_string((*ctor.throws_spec)[i]);
+        }
+        result += ")";
+    }
+    return result;
+}
+
 std::string make_slug(std::string value) {
     for (char& ch : value) {
         if (std::isalnum(static_cast<unsigned char>(ch)))
@@ -1059,7 +1073,7 @@ void write_aggregate_body(std::ostringstream& out,
         for (size_t i = 0; i < constructors.size(); ++i) {
             const auto& ctor = constructors[i];
             const std::string anchor = "ctor-" + std::to_string(i);
-            out << "- [" << code(make_signature(agg.name, ctor.params, nullptr)) << "](#" << anchor << ")";
+            out << "- [" << code(constructor_signature(agg.name, ctor)) << "](#" << anchor << ")";
             const std::string brief = compact_doc_brief(ctor.doc);
             if (!brief.empty())
                 out << " - " << md_escape(brief);
@@ -1138,7 +1152,7 @@ void write_aggregate_body(std::ostringstream& out,
     for (size_t i = 0; i < constructors.size(); ++i) {
         const auto& ctor = constructors[i];
         const std::string anchor = "ctor-" + std::to_string(i);
-        out << "\n### <a id=\"" << anchor << "\"></a>" << code(make_signature(agg.name, ctor.params, nullptr)) << "\n\n";
+        out << "\n### <a id=\"" << anchor << "\"></a>" << code(constructor_signature(agg.name, ctor)) << "\n\n";
         out << "- Visibility: " << code(visibility_to_string(ctor.visibility)) << "\n";
         append_doc_function(out, ctor.doc);
     }
@@ -1229,7 +1243,7 @@ void add_aggregate_member_refs(std::vector<symbol_ref>& refs,
                       "constructor",
                       agg.name,
                       fq_scope,
-                      make_signature(agg.name, constructors[i].params, nullptr),
+                      constructor_signature(agg.name, constructors[i]),
                       type_link + "#ctor-" + std::to_string(i),
                       compact_doc_brief(constructors[i].doc));
     }

@@ -129,6 +129,29 @@ TEST_CASE("query: symbols can be listed and searched", "[query]") {
     REQUIRE(filtered[0].mangled_name == "_KFN4demo3addEii");
 }
 
+TEST_CASE("query and dump expose constructor exception metadata", "[query][constructor][throws]") {
+    auto file = make_query_file();
+    auto& ctor = file.unit.root_ns.aggregates[0].constructors[0];
+    auto signature = [&] {
+        auto rows = kdi_list_aggregate_members(file, "demo::Point");
+        auto row = std::find_if(rows.begin(), rows.end(), [](const auto& r) {
+            return r.kind == "constructor";
+        });
+        REQUIRE(row != rows.end());
+        return row->signature;
+    };
+    CHECK(signature().find("throws contract unknown") != std::string::npos);
+    ctor.throws_spec = std::vector<kdi_type>{kdi_type::make_aggregate("demo::Error")};
+    CHECK(signature().find("throws(demo::Error)") != std::string::npos);
+    std::ostringstream out;
+    kdi_dump(file, out);
+    CHECK(out.str().find("throws(demo::Error)") != std::string::npos);
+    ctor.throws_spec.reset();
+    std::ostringstream legacy;
+    kdi_dump(file, legacy);
+    CHECK(legacy.str().find("throws contract unknown") != std::string::npos);
+}
+
 TEST_CASE("query: aggregate members are direct and TSV-formatted", "[query]") {
     auto file = make_query_file();
     auto rows = kdi_list_aggregate_members(file, "demo::Point");

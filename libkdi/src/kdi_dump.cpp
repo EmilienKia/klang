@@ -252,8 +252,18 @@ void dump_aggregate(const kdi_aggregate& agg, std::ostream& out, int depth) {
         if (c.is_copy_constructor) out << "copy ";
         if (c.is_defaulted)        out << "default ";
         if (c.is_deleted)          out << "deleted ";
-        out << "constructor" << params_str(c.params)
-            << "  // C1=" << c.mangled_name
+        out << "constructor" << params_str(c.params);
+        if (!c.throws_spec) {
+            out << " [throws contract unknown]";
+        } else if (!c.throws_spec->empty()) {
+            out << " throws(";
+            for (size_t i = 0; i < c.throws_spec->size(); ++i) {
+                if (i) out << ", ";
+                out << type_str((*c.throws_spec)[i]);
+            }
+            out << ")";
+        }
+        out << "  // C1=" << c.mangled_name
             << " C2=" << c.mangled_name_c2 << "\n";
         if (!c.llvm_def.empty())
             out << indent(depth + 2) << "// llvm: " << c.llvm_def << "\n";

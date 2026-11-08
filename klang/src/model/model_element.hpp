@@ -310,6 +310,9 @@ protected:
     /** Type of the variable */
     std::shared_ptr<type> _type;
 
+    /** Original parameterized type retained when an earlier pass replaces it. */
+    std::shared_ptr<type> _declared_template_type;
+
     /** True if this variable is declared const (immutable after construction). */
     bool _is_const = false;
 
@@ -328,6 +331,7 @@ protected:
     std::shared_ptr<constructor> _var_constructor;
 
     friend class k::model::gen::type_reference_resolver;
+    friend class template_instantiator;
     void set_var_constructor(const std::shared_ptr<constructor>& var_constructor) { _var_constructor = var_constructor; }
 
     variable_definition() = default;
@@ -339,6 +343,7 @@ public:
 
     virtual std::shared_ptr<type> get_type() const;
     virtual variable_definition& set_type(std::shared_ptr<type> type);
+    std::shared_ptr<type> get_declared_template_type() const { return _declared_template_type; }
 
     bool is_const() const { return _is_const; }
     variable_definition& set_const(bool c) { _is_const = c; return *this; }

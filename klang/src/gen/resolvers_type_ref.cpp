@@ -964,6 +964,171 @@ type_reference_resolver::find_generic_usage_for_site(const variable_definition* 
     return &it->second;
 }
 
+bool type_reference_resolver::check_imported_generic_constructor_contract(
+    const function& called_func, const lex::opt_any_lexeme& lexeme, const element* use_site)
+{
+    auto selected = dynamic_cast<const imported_constructor*>(&called_func);
+    auto owner = selected ? selected->get_owner() : nullptr;
+    if (!owner) return false;
+
+    const generic_constructor_usage* usage = nullptr;
+    if (use_site) {
+        auto it = _generic_constructor_usages.find(use_site);
+        if (it != _generic_constructor_usages.end() && it->second.definition
+            && template_instantiator::find_imported_generic_synthesis(
+                *it->second.definition, _unit, _context) == owner) {
+            usage = &it->second;
+        }
+    }
+    if (!usage && use_site) {
+        auto variable = dynamic_cast<const variable_definition*>(use_site);
+        auto declared = variable
+            ? std::dynamic_pointer_cast<unresolved_type>(variable->get_declared_template_type())
+            : nullptr;
+        auto definition_scope = declared ? declared->get_definition_namespace() : nullptr;
+        if (declared && (!definition_scope
+            || scope_lookup::enclosing_namespace(*use_site) == definition_scope)) {
+            auto original = find_template_aggregate(declared->type_id(), *use_site);
+            if (original && original->is_generic() && original->get_tpl_info()
+                && original->get_tpl_info()->is_imported_signature_only
+                && template_instantiator::find_imported_generic_synthesis(
+                    *original, _unit, _context) == owner) {
+                try_instantiate_template_type(declared, *use_site);
+                auto it = _generic_constructor_usages.find(use_site);
+                if (it != _generic_constructor_usages.end() && it->second.definition == original) {
+                    usage = &it->second;
+                }
+            }
+        }
+    }
+
+    auto definition = usage ? usage->definition
+        : find_template_aggregate(k::name::from(owner->get_fq_name()), called_func);
+    auto* ti = definition ? definition->get_tpl_info() : nullptr;
+    if (!ti || !ti->is_generic || !ti->is_imported_signature_only) {
+        auto fq = owner->get_fq_name();
+        if (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':') fq = fq.substr(2);
+        const auto* metadata = find_imported_kdi_template_def(_unit, fq);
+        if (metadata && metadata->is_generic && metadata->aggregate_signature) {
+            throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND),
+                lexeme, "Cannot check imported generic constructor contract for '{}': "
+                        "its original signature is unavailable", {owner->get_fq_name()});
+        }
+        return false;
+    }
+
+    const auto fail = [&](const std::string& reason) {
+        const auto name = definition->get_fq_name().empty()
+            ? owner->get_fq_name() : definition->get_fq_name();
+        throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND),
+            lexeme, "Cannot check imported generic constructor contract for '{}': {}",
+            {name, reason});
+    };
+    if (template_instantiator::find_imported_generic_synthesis(*definition, _unit, _context) != owner) {
+        fail("the selected constructor does not belong to its erased synthesis");
+        return true;
+    }
+
+    type_substitution_map erased;
+    auto byte = _context->from_type(primitive_type::BYTE);
+    if (!byte) {
+        fail("the erased parameter type is unavailable");
+        return true;
+    }
+    for (const auto& param : ti->params) {
+        if (param.is_type_param()) erased[param.name] = byte->get_erased_param();
+    }
+
+    std::shared_ptr<constructor> signature;
+    bool uncertain = false;
+    for (const auto& candidate : definition->constructors()) {
+        if (!candidate || candidate->parameters().size() != selected->parameters().size()) continue;
+        bool matches = true;
+        bool candidate_uncertain = false;
+        for (size_t i = 0; i < candidate->parameters().size(); ++i) {
+            const auto& original = candidate->parameters()[i];
+            const auto& concrete = selected->parameters()[i];
+            if (!original || !concrete || original->is_varargs() != concrete->is_varargs()) {
+                matches = false;
+                break;
+            }
+            auto expected = substitute_type(original->get_type(), erased);
+            auto actual = type::canonical(concrete->get_type());
+            if (!actual || type::contains_unresolved(actual)) {
+                candidate_uncertain = true;
+                continue;
+            }
+            if (expected
+                && ((type::is_reference(expected) && !type::is_reference(actual))
+                    || (type::is_pointer(expected) && !type::is_pointer(actual))
+                    || (type::is_link(expected) && !type::is_link(actual))
+                    || (type::is_view(expected) && !type::is_view(actual))
+                    || (type::is_owner(expected) && !type::is_owner(actual))
+                    || (type::is_drain(expected) && !type::is_drain(actual))
+                    || (type::is_array(expected) && !type::is_array(actual))
+                    || (type::is_primitive(expected) && !type::is_primitive(actual)))) {
+                matches = false;
+                break;
+            }
+            expected = resolve_type_chain(expected, definition.get());
+            if (!expected || type::contains_unresolved(expected)) {
+                candidate_uncertain = true;
+                continue;
+            }
+            if (!type::are_equal(type::canonical(expected), actual)) {
+                matches = false;
+                break;
+            }
+        }
+        if (!matches) continue;
+        if (candidate_uncertain) {
+            uncertain = true;
+            continue;
+        }
+        if (signature) {
+            fail("more than one original signature has the selected erased parameter types");
+            return true;
+        }
+        signature = candidate;
+    }
+    if (uncertain || !signature) {
+        fail("the selected erased overload cannot be associated with one original signature");
+        return true;
+    }
+    if (signature->is_throws_spec_unknown()
+        || (!signature->get_throws_spec_raw().empty()
+            && signature->get_throws_spec_raw().size() != signature->get_throws_spec().size())) {
+        fail("its exception contract is unavailable in the KDI");
+        return true;
+    }
+
+    std::vector<std::shared_ptr<type>> exceptions;
+    for (const auto& declared : signature->get_throws_spec()) {
+        if (!usage && type::contains_template_placeholder(declared)) {
+            fail("the concrete template arguments were not retained at this use");
+            return true;
+        }
+        auto specialized = usage ? substitute_type(declared, usage->bindings.type_bindings) : declared;
+        auto resolved = resolve_type_chain(specialized, definition.get());
+        auto exception = resolved && !type::contains_unresolved(resolved)
+            ? get_exception_aggregate(type::canonical(resolved)) : nullptr;
+        auto root = _unit.get_root_namespace();
+        auto k_ns = root ? root->get_child_namespace("k") : nullptr;
+        auto throwable = k_ns ? k_ns->get_aggregate("Throwable") : nullptr;
+        if (!throwable) {
+            throwable = _unit.get_or_create_imported_aggregate(k::name(false, {"k", "Throwable"}), _context);
+        }
+        if (!exception || !throwable
+            || (exception != throwable && !exception->is_derived_from(throwable))) {
+            fail("an exception type could not be resolved with the concrete template arguments");
+            return true;
+        }
+        exceptions.push_back(std::move(resolved));
+    }
+    check_call_exception_types(called_func, exceptions, lexeme);
+    return true;
+}
+
 const tpl_info::generic_usage_descriptor*
 type_reference_resolver::find_generic_usage_for_receiver(const std::shared_ptr<expression>& receiver) const
 {
@@ -1320,6 +1485,8 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
                 "rebuild the library with the current compiler");
         }
         record_generic_usage(*ti, model_args);
+        _generic_constructor_usages[&context_elem] = {
+            tpl_agg, build_generic_usage_descriptor(*ti, model_args)};
         if (auto site_var = dynamic_cast<const variable_definition*>(&context_elem)) {
             _generic_usage_by_site[site_var] = build_generic_usage_descriptor(*ti, model_args);
         }
@@ -1601,6 +1768,25 @@ type_reference_resolver::ctad_resolution_result type_reference_resolver::resolve
         return result;
     }
 
+    auto* template_info = tpl_agg->get_tpl_info();
+    const bool imported_generic = template_info && template_info->is_generic
+        && template_info->is_imported_signature_only;
+    bool committed_usage = false;
+    auto clear_failed_usage = llvm::make_scope_exit([&] {
+        if (!imported_generic || committed_usage) return;
+        _generic_constructor_usages.erase(&context_elem);
+        if (auto site = dynamic_cast<const variable_definition*>(&context_elem))
+            _generic_usage_by_site.erase(site);
+    });
+    auto commit_usage = [&](const std::vector<template_argument>& args) {
+        if (!imported_generic) return;
+        auto bindings = build_generic_usage_descriptor(*template_info, args);
+        _generic_constructor_usages[&context_elem] = {tpl_agg, bindings};
+        if (auto site = dynamic_cast<const variable_definition*>(&context_elem))
+            _generic_usage_by_site[site] = std::move(bindings);
+        committed_usage = true;
+    };
+
     std::vector<std::shared_ptr<type>> arg_types;
     for (auto& a : args) {
         arg_types.push_back(a ? a->get_type() : nullptr);
@@ -1709,6 +1895,17 @@ type_reference_resolver::ctad_resolution_result type_reference_resolver::resolve
     // Prefer copy guide if exact match
     for (const auto& vm : viable_matches) {
         if (vm.is_copy_guide) {
+            if (imported_generic) {
+                for (const auto& other : viable_matches) {
+                    if (other.is_copy_guide
+                        && build_instantiation_key(other.deduced_args)
+                            != build_instantiation_key(vm.deduced_args)) {
+                        result.failure_reason = "Ambiguous generic copy deduction for '" +
+                            tpl_agg->get_short_name() + "'";
+                        return result;
+                    }
+                }
+            }
             result.success = true;
             result.concrete_aggregate = vm.concrete_agg;
             result.concrete_struct_type = vm.concrete_st;
@@ -1716,6 +1913,7 @@ type_reference_resolver::ctad_resolution_result type_reference_resolver::resolve
             result.deduced_args = vm.deduced_args;
             result.adapted_args = vm.adapted_args;
             result.is_copy_guide = true;
+            commit_usage(vm.deduced_args);
             return result;
         }
     }
@@ -1733,7 +1931,9 @@ type_reference_resolver::ctad_resolution_result type_reference_resolver::resolve
 
     for (auto it = viable_matches.begin(); it != viable_matches.end(); ++it) {
         if (it != best_it && it->score == best_it->score && it->defaults_used == best_it->defaults_used) {
-            if (it->concrete_agg != best_it->concrete_agg) {
+            if (it->concrete_agg != best_it->concrete_agg
+                || (imported_generic && build_instantiation_key(it->deduced_args)
+                    != build_instantiation_key(best_it->deduced_args))) {
                 result.success = false;
                 result.failure_reason = "Ambiguous class template argument deduction for '" +
                     tpl_agg->get_short_name() + "'";
@@ -1749,6 +1949,7 @@ type_reference_resolver::ctad_resolution_result type_reference_resolver::resolve
     result.deduced_args = best_it->deduced_args;
     result.adapted_args = best_it->adapted_args;
     result.is_copy_guide = best_it->is_copy_guide;
+    commit_usage(best_it->deduced_args);
     return result;
 }
 

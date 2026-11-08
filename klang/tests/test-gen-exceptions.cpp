@@ -31,9 +31,99 @@
 
 #include <llvm/IR/Instructions.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <sys/wait.h>
 #include <unistd.h>
+
+TEST_CASE("Imported exception aliases enforce call contracts",
+          "[gen][exceptions][contract][import][alias][regression]") {
+    TmpKdi lib(R"K(
+        module alias_call_contract;
+        public class Failure : public Exception {}
+        public typedef FailureAlias : Failure;
+        public struct Value {
+            Value() throws(Failure) {}
+        }
+        public work() throws(Failure) {}
+    )K", true);
+    auto metadata = kdi::kdi_read_cbor_file(lib.kdi_path);
+    auto value = std::find_if(metadata.unit.root_ns.aggregates.begin(),
+        metadata.unit.root_ns.aggregates.end(),
+        [](const auto& entry) { return entry.name == "Value"; });
+    REQUIRE(value != metadata.unit.root_ns.aggregates.end());
+    auto ctor = std::find_if(value->constructors.begin(), value->constructors.end(),
+        [](const auto& entry) { return entry.params.empty(); });
+    REQUIRE(ctor != value->constructors.end());
+    ctor->throws_spec = std::vector<kdi::kdi_type>{
+        kdi::kdi_type::make_alias("alias_call_contract::FailureAlias")};
+    auto work = std::find_if(metadata.unit.root_ns.functions.begin(), metadata.unit.root_ns.functions.end(),
+        [](const auto& entry) { return entry.name == "work"; });
+    REQUIRE(work != metadata.unit.root_ns.functions.end());
+    work->throws_spec = {kdi::kdi_type::make_alias("alias_call_contract::FailureAlias")};
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+
+    auto make_compiler = [&]() {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("alias_call_contract", lib.kdi_path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        compiler->set_file_resolver(resolver);
+        return compiler;
+    };
+    auto declared = make_compiler();
+    REQUIRE_NOTHROW(declared->parse_source("alias_call_declared.k", R"K(
+        module alias_call_declared;
+        import alias_call_contract;
+        use() throws(alias_call_contract::Failure) {
+            alias_call_contract::work();
+            value: alias_call_contract::Value;
+        }
+    )K", false, false));
+    auto ns = declared->get_unit()->get_root_namespace()->get_child_namespace("alias_call_contract");
+    REQUIRE(ns);
+    auto imported_work = ns->get_function("work");
+    auto imported_value = ns->get_aggregate("Value");
+    auto imported_alias = ns->get_alias("FailureAlias");
+    auto imported_failure = ns->get_aggregate("Failure");
+    REQUIRE(imported_work);
+    REQUIRE(imported_value);
+    REQUIRE(imported_alias);
+    REQUIRE(imported_failure);
+    REQUIRE(imported_work->get_throws_spec().size() == 1);
+    REQUIRE_FALSE(imported_value->constructors().empty());
+    REQUIRE(imported_value->constructors()[0]->get_throws_spec().size() == 1);
+    auto alias = imported_alias->get_declared_type();
+    REQUIRE(std::dynamic_pointer_cast<k::model::alias_type>(alias));
+    CHECK(imported_work->get_throws_spec()[0] == alias);
+    CHECK(imported_value->constructors()[0]->get_throws_spec()[0] == alias);
+    CHECK_FALSE(k::model::type::are_equal(alias, imported_failure->get_struct_type()));
+
+    auto unhandled = Catch::Matchers::Predicate<k::log::compiler_error>(
+        [](const auto& error) {
+            return error.get_diagnostic().message.find("neither caught nor declared") != std::string::npos;
+        }, "rejects an unhandled aliased exception");
+    REQUIRE_THROWS_MATCHES(make_compiler()->parse_source("alias_call_rejected.k", R"K(
+        module alias_call_rejected;
+        import alias_call_contract;
+        use() throws() { alias_call_contract::work(); }
+    )K", false, false), k::log::compiler_error, unhandled);
+    REQUIRE_THROWS_MATCHES(make_compiler()->parse_source("alias_ctor_rejected.k", R"K(
+        module alias_ctor_rejected;
+        import alias_call_contract;
+        use() throws() { value: alias_call_contract::Value; }
+    )K", false, false), k::log::compiler_error, unhandled);
+    REQUIRE_NOTHROW(make_compiler()->parse_source("alias_call_caught.k", R"K(
+        module alias_call_caught;
+        import alias_call_contract;
+        use() throws() {
+            try {
+                alias_call_contract::work();
+                value: alias_call_contract::Value;
+            } catch (error: alias_call_contract::Failure&) {}
+        }
+    )K", false, false));
+}
 
 TEST_CASE("Exception layout: imported chain and cause addresses match the final DataLayout",
           "[gen][exceptions][exception-layout][import][regression]") {

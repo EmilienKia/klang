@@ -715,4 +715,33 @@ TEST_CASE("docgen: destination path must not be a file", "[docgen]") {
     fs::remove(destination_file, ec);
 }
 
+TEST_CASE("docgen: constructor exception contracts render in markdown and HTML", "[docgen][constructor][throws]") {
+    auto file = make_docgen_model();
+    kdi_aggregate* signature = nullptr;
+    for (auto& entry : file.unit.root_ns.template_defs) {
+        if (entry.name == "Container") signature = entry.aggregate_signature.get();
+    }
+    REQUIRE(signature);
+    kdi_constructor throwing_ctor;
+    throwing_ctor.throws_spec = std::vector<kdi_type>{kdi_type::make_aggregate("demo::mod::Error")};
+    signature->constructors.push_back(throwing_ctor);
 
+    const fs::path output_dir = "kdi-docgen-constructor-contract-ordered-test-output";
+    std::error_code ec;
+    REQUIRE(fs::create_directory(output_dir, ec));
+    struct cleanup {
+        fs::path path;
+        ~cleanup() { std::error_code ignored; fs::remove_all(path, ignored); }
+    } cleanup_output{output_dir};
+
+    std::string error_message;
+    REQUIRE(kdi_generate_markdown_doc(file, output_dir.string(), &error_message));
+    REQUIRE(kdi_generate_html_doc(file, output_dir.string(), &error_message));
+    const fs::path module_root = output_dir / "demo::mod";
+    const auto markdown = read_text_file(module_root / "Container.md");
+    const auto html = read_text_file(module_root / "Container.html");
+    REQUIRE(markdown.find("throws contract unknown") != std::string::npos);
+    REQUIRE(markdown.find("throws(demo::mod::Error)") != std::string::npos);
+    REQUIRE(html.find("throws contract unknown") != std::string::npos);
+    REQUIRE(html.find("throws(demo::mod::Error)") != std::string::npos);
+}

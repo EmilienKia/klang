@@ -109,6 +109,20 @@ void validate_type(const kdi_type& t, const std::string& path,
     validate_type_tree(t, path, types, result, template_params, nested_refs, check_ref, active);
 }
 
+void validate_constructor_throws(const kdi_constructor& ctor,
+                                 const std::string& path,
+                                 const kdi_type_table& types,
+                                 kdi_validation_result& result,
+                                 const std::unordered_set<std::string>* template_params = nullptr,
+                                 bool check_refs = true) {
+    if (!ctor.throws_spec) return;
+    for (size_t i = 0; i < ctor.throws_spec->size(); ++i) {
+        validate_type((*ctor.throws_spec)[i],
+            path + ".throws_spec[" + std::to_string(i) + "]", types, result,
+            template_params, check_refs, check_refs);
+    }
+}
+
 void validate_throws_placeholders(const std::vector<kdi_type>& spec,
                                   const std::string& path, const kdi_type_table& types,
                                   kdi_validation_result& result,
@@ -143,6 +157,7 @@ void validate_template_signature_aggregate(const kdi_aggregate& agg,
     for (size_t i = 0; i < agg.constructors.size(); ++i) {
         auto cp = path + ".constructors[" + std::to_string(i) + "]";
         validate_params(agg.constructors[i].params, cp, types, result, &template_params, check_refs);
+        validate_constructor_throws(agg.constructors[i], cp, types, result, &template_params, check_refs);
     }
     for (size_t i = 0; i < agg.static_vars.size(); ++i) {
         validate_type(agg.static_vars[i].type,
@@ -335,6 +350,7 @@ void validate_aggregate(const kdi_aggregate& agg,
     for (size_t i = 0; i < agg.constructors.size(); ++i) {
         auto cp = path + ".constructors[" + std::to_string(i) + "]";
         validate_params(agg.constructors[i].params, cp, types, result);
+        validate_constructor_throws(agg.constructors[i], cp, types, result);
         if (!agg.constructors[i].is_deleted && agg.constructors[i].mangled_name.empty()) {
             result.add(cp, "mangled_name must not be empty");
         }

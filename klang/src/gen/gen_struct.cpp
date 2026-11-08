@@ -1758,6 +1758,7 @@ void type_reference_resolver::visit_enumeration(enumeration& en) {
                 {entry.name, object->to_string()});
         }
         check_constructor_visibility(*ctor, en);
+        check_call_contract(*ctor, location, &en);
         entry.resolved_constructor = std::move(ctor);
         entry.adapted_ctor_args = std::move(adapted);
         en.attach_adapted_initializer_arguments(entry);

@@ -347,12 +347,27 @@ Constructor = {
   "params"               : array[Param],
   "mangled_name"         : text,     -- C1 variant; may be empty when deleted
   "mangled_name_c2"      : text,     -- C2 variant; may be empty when deleted
+  ?"throws_spec"         : array[Type], -- absent: unknown; empty: no checked exceptions
   "llvm_def"             : text,     -- empty for deleted constructors; otherwise C1 prototype
   ?"doc"                 : DocFunction
 }
 ```
 
-Constructor `is_deleted` and `is_private`, if present, must be booleans.
+Updated producers include `throws_spec` for concrete constructors with resolved
+contracts, including an empty array for an empty contract; unknown contracts
+are omitted, including when an exception type cannot be exported. A template
+non-generic template signature may omit unresolved exception types because its
+source recipe remains authoritative. Generic aggregate signatures have no
+source recipe and must preserve constructor exception types; a producer must
+reject a generic signature if it cannot export that contract. Constructor
+`is_deleted` and `is_private`, if present, must be booleans.
+Legacy descriptors without the field do not establish an empty contract.
+Regenerate their KDI and use an updated compiler to preserve constructor throws.
+The current compiler model retains legacy unknown contracts but call-contract
+checks do not reject them for ordinary calls. Older readers ignore the new field; neither
+ordinary imports with an omitted contract nor older readers are exception-safe
+for a throwing constructor. The schema remains `0.1` and
+this extension is not fail-closed.
 
 ---
 

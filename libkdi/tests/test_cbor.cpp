@@ -100,6 +100,60 @@ static kdi_type rt_type(const kdi_type& t) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+TEST_CASE("CBOR preserves constructor exception contract presence", "[cbor][constructor][throws]") {
+    auto file = make_aggregate_file();
+    auto& ctors = file.unit.root_ns.aggregates[0].constructors;
+    ctors[0].throws_spec = std::vector<kdi_type>{
+        kdi_type::make_aggregate("geo::FirstError"),
+        kdi_type::make_aggregate("geo::SecondError")};
+    kdi_constructor no_throw = ctors[0];
+    no_throw.throws_spec->clear();
+    kdi_constructor legacy = ctors[0];
+    legacy.throws_spec.reset();
+    ctors.push_back(no_throw);
+    ctors.push_back(legacy);
+
+    std::ostringstream bytes(std::ios::binary);
+    kdi_write_cbor(file, bytes);
+    std::istringstream input(bytes.str(), std::ios::binary);
+    auto restored = kdi_read_cbor(input);
+    const auto& result = restored.unit.root_ns.aggregates[0].constructors;
+    REQUIRE(result.size() == 3);
+    REQUIRE(result[0].throws_spec);
+    REQUIRE(result[0].throws_spec->size() == 2);
+    CHECK(std::get<kdi_aggregate_ref>((*result[0].throws_spec)[0].value).fq_name == "geo::FirstError");
+    CHECK(std::get<kdi_aggregate_ref>((*result[0].throws_spec)[1].value).fq_name == "geo::SecondError");
+    REQUIRE(result[1].throws_spec);
+    CHECK(result[1].throws_spec->empty());
+    CHECK_FALSE(result[2].throws_spec);
+
+    std::ostringstream json;
+    kdi_write_json(restored, json);
+    std::istringstream json_input(json.str());
+    auto transcoded = kdi_read_json(json_input);
+    CHECK(transcoded.unit.root_ns.aggregates[0].constructors[0].throws_spec->size() == 2);
+    CHECK(transcoded.unit.root_ns.aggregates[0].constructors[1].throws_spec->empty());
+    CHECK_FALSE(transcoded.unit.root_ns.aggregates[0].constructors[2].throws_spec);
+}
+
+TEST_CASE("CBOR rejects non-array constructor throws metadata", "[cbor][constructor][throws]") {
+    auto file = make_aggregate_file();
+    file.unit.root_ns.aggregates[0].constructors[0].throws_spec.emplace();
+    std::ostringstream out(std::ios::binary);
+    kdi_write_cbor(file, out);
+    auto encoded = out.str();
+    const std::string key = "throws_spec";
+    auto position = encoded.find(key);
+    REQUIRE(position != std::string::npos);
+    position += key.size();
+    REQUIRE(static_cast<unsigned char>(encoded[position]) == 0x9f);
+    REQUIRE(static_cast<unsigned char>(encoded[position + 1]) == 0xff);
+    encoded[position] = static_cast<char>(0xf6);
+    encoded.erase(position + 1, 1);
+    std::istringstream input(encoded, std::ios::binary);
+    CHECK_THROWS_AS(kdi_read_cbor(input), kdi_parse_error);
+}
+
 TEST_CASE("CBOR rejects malformed deletion and privacy flags", "[cbor][copy][regression]") {
     for (bool constructor : {false, true}) {
         for (const std::string key : {"is_deleted", "is_private"}) {

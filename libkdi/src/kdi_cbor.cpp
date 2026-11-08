@@ -781,6 +781,11 @@ cbor_item_t* encode_constructor(const kdi_constructor& c) {
     map_push(m, "mangled_name",    cbor_str(c.mangled_name));
     map_push(m, "mangled_name_c2", cbor_str(c.mangled_name_c2));
     map_push(m, "llvm_def",        cbor_str(c.llvm_def));
+    if (c.throws_spec) {
+        cbor_item_t* ts = cbor_new_indefinite_array();
+        for (const auto& t : *c.throws_spec) cbor_array_push(ts, cbor_move(encode_type(t)));
+        map_push(m, "throws_spec", ts);
+    }
     if (c.doc) map_push(m, "doc", encode_doc_function(*c.doc));
     return m;
 }
@@ -796,6 +801,14 @@ kdi_constructor decode_constructor(cbor_item_t* item, const std::string& path) {
     c.mangled_name       = req_string(item, "mangled_name", path);
     c.mangled_name_c2    = opt_string(item, "mangled_name_c2");
     c.llvm_def           = req_string(item, "llvm_def", path);
+    if (auto* ts = map_get(item, "throws_spec")) {
+        if (!cbor_isa_array(ts))
+            throw kdi_parse_error("constructor throws_spec must be an array at " + path);
+        c.throws_spec.emplace();
+        size_t n = cbor_array_size(ts);
+        for (size_t i = 0; i < n; ++i)
+            c.throws_spec->push_back(decode_type(cbor_array_get(ts, i), path + ".throws_spec[" + std::to_string(i) + "]"));
+    }
     if (auto* doc = map_get(item, "doc")) c.doc = decode_doc_function(doc, path + ".doc");
     return c;
 }

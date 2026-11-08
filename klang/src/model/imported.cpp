@@ -78,6 +78,7 @@ imported_constructor::imported_constructor(std::shared_ptr<aggregate> parent,
     : constructor(std::move(parent))
     , _kdi_ctor(kdi_ctor)
 {
+    set_throws_spec_unknown(!kdi_ctor || !kdi_ctor->throws_spec);
     if (kdi_ctor) {
         _mangled_name = kdi_ctor->mangled_name;
         if (kdi_ctor->is_copy_constructor) _is_copy_constructor = true;

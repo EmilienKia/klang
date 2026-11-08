@@ -2493,8 +2493,10 @@ std::vector<std::shared_ptr<type>> type_reference_resolver::resolve_raw_function
 
 void type_reference_resolver::check_call_contract(
     const function& called_func,
-    const lex::opt_any_lexeme& lexeme)
+    const lex::opt_any_lexeme& lexeme,
+    const element* use_site)
 {
+    if (check_imported_generic_constructor_contract(called_func, lexeme, use_site)) return;
     if (_function_stack.empty()) return;
     auto& current_func = _function_stack.back();
     if (!current_func) return;

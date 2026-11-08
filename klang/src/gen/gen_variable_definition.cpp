@@ -691,7 +691,8 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
                         struct_model->constructors(), ctor_args, true, ctx.var_lexeme);
                     if (auto var_elem = dynamic_cast<const element*>(&ctx.var))
                         check_constructor_visibility(*selected, *var_elem);
-                    check_call_contract(*selected, ctx.var_lexeme);
+                    check_call_contract(*selected, ctx.var_lexeme,
+                                        dynamic_cast<const element*>(&ctx.var));
                     ctx.var.set_var_constructor(selected);
                     if (ctx.init_expr) {
                         ctx.init_expr->set_constructor(selected);
@@ -733,7 +734,8 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
             if (auto var_elem = dynamic_cast<const element*>(&ctx.var)) {
                 check_constructor_visibility(*best_constructor, *var_elem);
             }
-            check_call_contract(*best_constructor, ctx.var_lexeme);
+            check_call_contract(*best_constructor, ctx.var_lexeme,
+                                dynamic_cast<const element*>(&ctx.var));
             ctx.var.set_var_constructor(best_constructor);
             if (ctx.init_expr) {
                 ctx.init_expr->set_constructor(best_constructor);

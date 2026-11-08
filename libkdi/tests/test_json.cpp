@@ -48,6 +48,45 @@ static kdi_file make_minimal_file() {
     return f;
 }
 
+TEST_CASE("JSON preserves constructor exception contract presence", "[json][constructor][throws]") {
+    auto file = make_minimal_file();
+    kdi_aggregate agg;
+    agg.name = "Value";
+    agg.fq_name = "test::json::Value";
+    kdi_constructor throwing;
+    throwing.throws_spec = std::vector<kdi_type>{
+        kdi_type::make_aggregate("test::json::FirstError"),
+        kdi_type::make_aggregate("test::json::SecondError")};
+    kdi_constructor no_throw;
+    no_throw.throws_spec.emplace();
+    kdi_constructor legacy;
+    agg.constructors = {throwing, no_throw, legacy};
+    file.unit.root_ns.aggregates.push_back(agg);
+
+    std::ostringstream out;
+    kdi_write_json(file, out);
+    auto payload = nlohmann::json::parse(out.str());
+    auto& ctors = payload["unit"]["root_ns"]["aggregates"][0]["constructors"];
+    REQUIRE(ctors[0]["throws_spec"].size() == 2);
+    REQUIRE(ctors[1]["throws_spec"].is_array());
+    REQUIRE(ctors[1]["throws_spec"].empty());
+    REQUIRE_FALSE(ctors[2].contains("throws_spec"));
+    std::istringstream input(payload.dump());
+    auto restored = kdi_read_json(input);
+    const auto& result = restored.unit.root_ns.aggregates[0].constructors;
+    REQUIRE(result[0].throws_spec);
+    REQUIRE(result[0].throws_spec->size() == 2);
+    CHECK(std::get<kdi_aggregate_ref>((*result[0].throws_spec)[0].value).fq_name == "test::json::FirstError");
+    CHECK(std::get<kdi_aggregate_ref>((*result[0].throws_spec)[1].value).fq_name == "test::json::SecondError");
+    REQUIRE(result[1].throws_spec);
+    CHECK(result[1].throws_spec->empty());
+    CHECK_FALSE(result[2].throws_spec);
+
+    ctors[1]["throws_spec"] = nullptr;
+    std::istringstream invalid(payload.dump());
+    CHECK_THROWS(kdi_read_json(invalid));
+}
+
 TEST_CASE("JSON preserves deleted private copy metadata and legacy defaults", "[json][copy][regression]") {
     auto file = make_minimal_file();
     kdi_aggregate agg;
