@@ -29,6 +29,7 @@ private struct NativeHmac {}
 /** Imported HMAC key material is copied and cleared when the key is destroyed. */
 public final class HmacKey : Key {
     friend Hmac;
+    friend Hkdf;
 private:
     _native: NativeHmacKey*;
     _size: unsigned int;

@@ -1,7 +1,7 @@
 # Cryptography with libk
 
 This guide covers the current `k::crypto` and `k::io::crypto` APIs: message
-digests, HMAC, capability discovery, symmetric keys and ciphers, encryption
+digests, HMAC, HKDF, capability discovery, symmetric keys and ciphers, encryption
 sessions, and stream adapters. See the [crypto reference](../spec/stdlib/crypto.md)
 for the complete API and parameter rules.
 
@@ -34,6 +34,8 @@ KDI and library search-path setup.
   its digest. It is not a password-hashing scheme.
 - Use **HMAC** to authenticate data shared between parties that hold a secret
   key. HMAC does not encrypt data or provide replay protection.
+- Use **HKDF** to derive purpose-specific keys from suitable existing key
+  material. It is not a password-hashing scheme or a source of entropy.
 - Prefer an **authenticated encryption** mode such as AES-GCM or
   ChaCha20-Poly1305 when confidentiality and integrity are both needed.
   Supply relevant unencrypted metadata as additional authenticated data (AAD).
@@ -191,6 +193,58 @@ verifyHmacInput(source: k::io::InputStream<byte>&,
 In an application that needs the message, stage the bytes instead of discarding
 them, and release them only after verification. Arrange cleanup if an
 exception interrupts the example before its close call.
+
+## HKDF: deriving keys
+
+HKDF first extracts a pseudorandom key (PRK) from input keying material, then
+expands it for a specific purpose. Supply suitable secret input material from
+your key-management or key-agreement protocol; a password is not suitable
+without a password-based KDF. Salt is normally public and may be omitted, in
+which case the RFC default is used. This API does not generate salt.
+
+The `info` bytes bind the output to its purpose and context. Use distinct,
+unambiguous encodings for separate algorithms, directions, protocols, and key
+lengths. The same PRK and `info` yield the same output, and a shorter output is
+a prefix of a longer one. Pass an empty byte array when the protocol omits
+`info`.
+
+```k
+deriveAesKey(ikm: const unsigned byte[], salt: const unsigned byte[],
+             info: const unsigned byte[]) : k::crypto::SymmetricKey!
+        throws(k::crypto::CryptoException) {
+    cipher: k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::AES256GCM();
+    hkdf: k::crypto::Hkdf! = k::crypto::Hkdf::SHA256();
+    if (cipher == null || hkdf == null) return null;
+
+    prk: k::crypto::HkdfPrk! = hkdf.extract(ikm, salt);
+    return prk.expandSymmetricKey(cipher, info);
+}
+```
+
+The caller must handle a null result if the cipher or HKDF is unavailable.
+Retain the PRK only as long as needed; it can derive multiple keys with
+different `info` values. Do not copy PRKs through unions or drain-to-value
+conversions: current compiler limitations can bypass their copy restrictions.
+`expandHmacKey(info, length)` produces an `HmacKey`,
+and `expand(info, length)` returns raw bytes. `Hkdf::derive` and the
+`deriveSymmetricKey` and `deriveHmacKey` helpers perform both stages together.
+These operations also accept existing `HmacKey` or `SymmetricKey` objects as
+input, without publicly exporting their bytes. Use an existing key as input
+only when its key-management protocol permits that purpose.
+
+`importPrk` accepts an external PRK of at least the digest output size;
+`exportBytes()` explicitly exposes a caller-owned sensitive copy. Clear and
+protect any secret byte arrays independently of the library's internal
+clearing. HKDF output is limited to 255 times the digest size. Providers may
+impose additional limits: the standard OpenSSL HKDF provider limits `info` to
+1024 bytes. Failures are reported rather than silently truncating `info`.
+HKDF factory, PRK import, extract, derive, and expand calls must not run inside
+an active OpenSSL `ASYNC_JOB`; valid calls throw `CryptoOperationException`.
+Keep the OpenSSL context alive until the descriptors, PRKs, and their operations
+are finished. For a nondefault context, each thread using it must also exit or
+call `OPENSSL_thread_stop_ex` after its last use before the context is freed.
+Existing OpenSSL errors in the caller may force provider execution on a worker
+thread to preserve the error queue, which can affect thread-affine providers.
 
 ## 4. Discovering supported algorithms
 

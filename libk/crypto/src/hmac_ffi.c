@@ -86,6 +86,10 @@ void __k_hmac_key_free(hmac_key *key) {
     OPENSSL_clear_free(key, sizeof(*key));
 }
 
+const unsigned char *__k_hmac_key_borrow(const hmac_key *key) {
+    return key ? key->bytes : NULL;
+}
+
 /* This helper runs only with an initially empty, isolated error queue. */
 static hmac_session *hmac_new_isolated(const unsigned char *name, const hmac_key *key,
                                        int *status) {

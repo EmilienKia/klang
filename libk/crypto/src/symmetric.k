@@ -136,6 +136,7 @@ private symmetricStaging(staging: DecryptionStaging) : int throws(CryptoExceptio
  */
 public final class SymmetricKey : Key {
     friend SymmetricCipher;
+    friend Hkdf;
 private:
     _native: NativeSymmetricKey*;
     _size: unsigned int;

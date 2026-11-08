@@ -1,7 +1,7 @@
 # `k::crypto`
 
 The separately built `libk-crypto` library provides incremental message
-digests, HMAC, and symmetric encryption. Programs using it must import `k::crypto`
+digests, HMAC, HKDF, and symmetric encryption. Programs using it must import `k::crypto`
 and link the crypto library.
 
 ## `MessageDigest`
@@ -122,6 +122,66 @@ only at successful EOF. A read failure or early close leaves it incomplete.
 It releases bytes before verification: applications must not act on untrusted
 data until its tag has been verified. Neither adapter adds a tag or frames
 messages; protocols must carry the tag and delimit messages separately.
+
+## HKDF
+
+`Hkdf::create(algorithm)` selects provider-backed RFC 5869 HKDF using a
+`MessageDigestAlgorithm`. `SHA256()` and `SHA512()` are convenience
+factories. A factory returns null when the digest or HKDF is unavailable;
+operation failures throw crypto exceptions. `algorithm()`, `hashSize()`, and
+`maxOutputSize()` report the digest name, digest length, and maximum output
+length in bytes.
+
+`extract(ikm, salt)` returns an owned `HkdfPrk`; `extract(ikm)` supplies the
+RFC default salt of `hashSize()` zero bytes. IKM can be an unsigned byte array,
+an `HmacKey`, or a `SymmetricKey`. The operation borrows its inputs and does
+not expose an existing key's contents. Empty byte arrays and embedded zero
+bytes are permitted, subject to provider restrictions. Pass an empty array to
+represent omitted `info`; there is no separate no-info overload.
+
+An `HkdfPrk` owns secret material independently of the original descriptor and
+is intended to be non-copyable. Current compiler limitations can bypass this
+restriction through union copies or drain-to-value conversions; do not use
+PRKs in those paths. `algorithm()` and `keySize()` describe it. `expand(info,
+length)` derives an owned byte array. `expandSymmetricKey(cipher, info)` derives
+exactly `cipher.keySize()` bytes and applies the cipher's key validation;
+`expandHmacKey(info, length)` derives an `HmacKey`. A PRK can expand multiple
+outputs. Internal secret buffers are cleared on destruction or failure.
+
+`importPrk(bytes)` imports an externally supplied PRK of at least
+`hashSize()` bytes and binds it to the selected digest. `exportBytes()` makes
+an explicit caller-owned copy of a PRK. The caller must protect and clear
+exported bytes and any other caller-owned secret buffers.
+
+`derive(ikm, salt, info, length)` performs extract and expand in one operation;
+the overload without salt supplies the RFC default. `deriveSymmetricKey` and
+`deriveHmacKey` provide equivalent combined derivations into key objects.
+Output length must not exceed `255 * hashSize()`; invalid lengths throw
+`CryptoInvalidInputException`. A provider may reject otherwise valid inputs,
+including zero-length output, according to its policy.
+
+`info` is binary context chosen by the protocol, not a string or a secret
+generator. Use distinct, unambiguously encoded values for different purposes
+and key lengths. Output with identical PRK and `info` shares a prefix across
+different requested lengths. HKDF does not authenticate data, increase weak
+input entropy, or replace a password-based KDF.
+
+The standard OpenSSL HKDF provider limits `info` to 1024 bytes. Other
+providers may differ. Inputs are never silently truncated, hashed, or
+processed by a different implementation to bypass this limit. A provider
+failure is reported explicitly. The OpenSSL library context used to create a
+descriptor must outlive it, its PRKs, and their operations; incompatible
+provider changes cause operations to fail rather than silently changing the
+selected digest.
+Valid factory, PRK import, extract, derive, and expand calls inside an active
+OpenSSL `ASYNC_JOB` throw `CryptoOperationException` before provider execution.
+For a nondefault context, every thread using it must either exit before the
+context is freed or call `OPENSSL_thread_stop_ex` on that thread after its last
+use and before the context is freed. OpenSSL also cleans up the thread that
+frees the context. Provider operations normally execute on the calling thread
+when its OpenSSL error queue is empty. Existing caller errors may force
+execution on a worker to preserve the queue and marks; a thread-affine provider
+may then reject the operation.
 
 ## Symmetric encryption
 

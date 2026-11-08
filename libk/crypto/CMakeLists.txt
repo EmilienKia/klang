@@ -42,6 +42,7 @@ set(LIBK_CRYPTO_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/capabilities.k
     ${LIBK_CRYPTO_DIGEST_CORE_SOURCE}
     ${CMAKE_CURRENT_SOURCE_DIR}/src/hmac.k
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hkdf.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/keys.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/symmetric.k
     ${CMAKE_CURRENT_SOURCE_DIR}/src/libcrypto_ffi.k
@@ -58,6 +59,8 @@ set(LIBK_CRYPTO_SYMMETRIC_FFI_C ${CMAKE_CURRENT_SOURCE_DIR}/src/symmetric_ffi.c)
 set(LIBK_CRYPTO_SYMMETRIC_FFI_OBJ ${CMAKE_CURRENT_BINARY_DIR}/symmetric_ffi.o)
 set(LIBK_CRYPTO_HMAC_FFI_C ${CMAKE_CURRENT_SOURCE_DIR}/src/hmac_ffi.c)
 set(LIBK_CRYPTO_HMAC_FFI_OBJ ${CMAKE_CURRENT_BINARY_DIR}/hmac_ffi.o)
+set(LIBK_CRYPTO_HKDF_FFI_C ${CMAKE_CURRENT_SOURCE_DIR}/src/hkdf_ffi.c)
+set(LIBK_CRYPTO_HKDF_FFI_OBJ ${CMAKE_CURRENT_BINARY_DIR}/hkdf_ffi.o)
 set(LIBK_CRYPTO_CCM_C ${CMAKE_CURRENT_SOURCE_DIR}/src/ccm_engine.c)
 set(LIBK_CRYPTO_CCM_H ${CMAKE_CURRENT_SOURCE_DIR}/src/ccm_engine.h)
 set(LIBK_CRYPTO_CCM_OBJ ${CMAKE_CURRENT_BINARY_DIR}/ccm_engine.o)
@@ -91,6 +94,15 @@ add_custom_command(
             -o ${LIBK_CRYPTO_HMAC_FFI_OBJ} ${LIBK_CRYPTO_HMAC_FFI_C}
     DEPENDS ${LIBK_CRYPTO_HMAC_FFI_C}
     COMMENT "Compiling libk-crypto HMAC OpenSSL bridge"
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${LIBK_CRYPTO_HKDF_FFI_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${LIBK_CRYPTO_C_FLAGS}
+            -o ${LIBK_CRYPTO_HKDF_FFI_OBJ} ${LIBK_CRYPTO_HKDF_FFI_C}
+    DEPENDS ${LIBK_CRYPTO_HKDF_FFI_C}
+    COMMENT "Compiling libk-crypto HKDF OpenSSL bridge"
     VERBATIM
 )
 
@@ -134,10 +146,12 @@ add_custom_command(
         ${LIBK_CRYPTO_OPENSSL_FFI_OBJ}
         ${LIBK_CRYPTO_SYMMETRIC_FFI_OBJ}
         ${LIBK_CRYPTO_HMAC_FFI_OBJ}
+        ${LIBK_CRYPTO_HKDF_FFI_OBJ}
         ${LIBK_CRYPTO_CCM_OBJ}
     DEPENDS klangc libk_stdlib ${LIBK_CRYPTO_SOURCES}
             ${LIBK_CRYPTO_OPENSSL_FFI_OBJ} ${LIBK_CRYPTO_SYMMETRIC_FFI_OBJ}
-            ${LIBK_CRYPTO_HMAC_FFI_OBJ} ${LIBK_CRYPTO_CCM_OBJ}
+            ${LIBK_CRYPTO_HMAC_FFI_OBJ} ${LIBK_CRYPTO_HKDF_FFI_OBJ}
+            ${LIBK_CRYPTO_CCM_OBJ}
             ${OPENSSL_CRYPTO_LIBRARY}
     WORKING_DIRECTORY ${LIBK_CRYPTO_OUTPUT_DIR}
     COMMENT "Compiling K crypto standard library (module k::crypto)"
@@ -269,6 +283,10 @@ libk_crypto_add_test(libk-crypto-hmac-tests 120
     tests/test-hmac.cpp tests/test-hmac-stream.cpp tests/test-hmac-capabilities.cpp)
 target_include_directories(libk-crypto-hmac-tests PRIVATE ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(libk-crypto-hmac-tests PRIVATE ${OPENSSL_CRYPTO_LIBRARY})
+libk_crypto_add_test(libk-crypto-hkdf-tests 120
+    tests/test-hkdf.cpp)
+target_include_directories(libk-crypto-hkdf-tests PRIVATE ${OPENSSL_INCLUDE_DIR})
+target_link_libraries(libk-crypto-hkdf-tests PRIVATE ${OPENSSL_CRYPTO_LIBRARY})
 libk_crypto_add_test(libk-crypto-symmetric-tests 120
     tests/test-symmetric-descriptors.cpp tests/test-symmetric-cipher-streams.cpp)
 target_sources(libk-crypto-symmetric-tests PRIVATE tests/test-crypto-capabilities.cpp)

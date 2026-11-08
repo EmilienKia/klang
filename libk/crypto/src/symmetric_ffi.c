@@ -744,6 +744,10 @@ void __k_symmetric_key_free(symmetric_key *key) {
     if (key) OPENSSL_clear_free(key, sizeof(*key));
 }
 
+const unsigned char *__k_symmetric_key_borrow(const symmetric_key *key) {
+    return key ? key->bytes : NULL;
+}
+
 static int spool_init(spool *s, int file_mode) {
     s->file_mode = file_mode;
     if (!file_mode) return OK;
