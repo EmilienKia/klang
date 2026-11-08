@@ -26,8 +26,10 @@
 
 #include <memory>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 // Forward declarations (avoid pulling all of libkdi in model headers)
@@ -42,6 +44,7 @@ namespace kdi {
     struct kdi_template_def;
     struct kdi_union;
     struct kdi_alias;
+    struct kdi_type;
 }
 
 namespace k::model {
@@ -158,6 +161,21 @@ private:
     /// current unit).  These are materialised alongside direct imports so that
     /// base-class types from indirect deps are available during resolution.
     std::vector<std::shared_ptr<kdi::kdi_file>> _transitive_kdis;
+
+    std::vector<std::pair<std::shared_ptr<alias_definition>, const kdi::kdi_alias*>>
+        _pending_type_aliases;
+    std::vector<std::pair<std::shared_ptr<function>, const std::vector<kdi::kdi_type>*>>
+        _pending_generic_contracts;
+    std::vector<std::tuple<std::shared_ptr<variable_definition>, const kdi::kdi_type*,
+                           std::shared_ptr<ns>>>
+        _pending_generic_variables;
+    std::vector<std::tuple<std::shared_ptr<function>, const kdi::kdi_type*, std::shared_ptr<ns>>>
+        _pending_generic_returns;
+    std::vector<std::tuple<std::shared_ptr<element>, tpl_info*, const kdi::kdi_template_def*,
+                           std::shared_ptr<ns>>>
+        _pending_generic_template_params;
+    std::vector<std::pair<std::shared_ptr<function>, std::vector<std::shared_ptr<function>>>>
+        _pending_generic_overloads;
 
     // ── Phase A helpers ──────────────────────────────────────────────────────
 

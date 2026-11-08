@@ -166,6 +166,10 @@ private:
     std::vector<kdi::kdi_param> to_kdi_signature_params(const function& fn,
                                                         const tpl_info& ti) const;
 
+    std::vector<kdi::kdi_type> to_kdi_signature_throws(const function& fn,
+                                                        const tpl_info& ti,
+                                                        const std::string& fq_name);
+
     /** Register an aggregate in the type table (idempotent). */
     void register_aggregate_type(const aggregate& agg);
 
@@ -199,17 +203,17 @@ private:
                                               const std::string& entity_kind,
                                               visibility vis,
                                               const tpl_info& ti,
-                                              const element* entity) const;
+                                              const element* entity);
 
     /** Build the declaration-only aggregate signature embedded in a generic template definition. */
     kdi::kdi_aggregate build_generic_template_aggregate_signature(const aggregate& agg,
                                                                   const tpl_info& ti,
-                                                                  const std::string& fq_name) const;
+                                                                  const std::string& fq_name);
 
     /** Build the declaration-only free-function signature embedded in a generic template definition. */
     kdi::kdi_function build_generic_template_function_signature(const function& fn,
                                                                 const tpl_info& ti,
-                                                                const std::string& fq_name) const;
+                                                                const std::string& fq_name);
 };
 
 /**

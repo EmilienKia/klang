@@ -35,6 +35,7 @@
 #include "../common/operator_names.hpp"
 #include "../parse/ast.hpp"
 #include <kdi.hpp>
+#include <llvm/ADT/ScopeExit.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <queue>
 #include <set>
@@ -130,11 +131,10 @@ std::shared_ptr<type> build_model_type_from_kdi_signature(const kdi::kdi_type& s
     }
 
     ctx->push_template_param_scope(param_names);
-    auto guard = std::unique_ptr<void, std::function<void(void*)>>(
-        nullptr,
-        [&](void*) { ctx->pop_template_param_scope(); });
+    auto guard = llvm::make_scope_exit([&] { ctx->pop_template_param_scope(); });
 
-    return k::model::kdi_type_to_model_type(sig_type, owner, ctx);
+    return k::model::kdi_type_to_model_type(
+        sig_type, owner, ctx, kdi_type_conversion::template_signature);
 }
 
 } // namespace
@@ -1046,6 +1046,8 @@ void type_reference_resolver::check_generic_call_arguments(
                     for (size_t i = 0; i < declared.size(); ++i) {
                         declared[i] = build_model_type_from_kdi_signature(
                             method_sig.params[i].type, *tdef, _unit, _context);
+                        set_type_definition_namespace(
+                            declared[i], std::const_pointer_cast<ns>(called_func.ancestor<ns>()));
                     }
                     break;
                 }
@@ -1057,7 +1059,7 @@ void type_reference_resolver::check_generic_call_arguments(
         if (!declared[i] || !args[i]) continue;
         auto specialized = substitute_type(declared[i], subst);
         if (!specialized) continue;
-        auto resolved = _context->resolve_type(specialized);
+        auto resolved = resolve_type_chain(specialized, &called_func);
         if (!resolved) resolved = specialized;
         if (type::contains_unresolved(resolved) || !type::is_resolved(resolved)) continue;
         if (compute_cast_weight(args[i], resolved) == CAST_IMPOSSIBLE) {
@@ -1108,6 +1110,8 @@ type_reference_resolver::resolve_generic_call_return_type(
                         && method_sig.params.size() == called_func.parameters().size()) {
                         declared_ret = build_model_type_from_kdi_signature(
                             method_sig.return_type, *tdef, _unit, _context);
+                        set_type_definition_namespace(
+                            declared_ret, std::const_pointer_cast<ns>(called_func.ancestor<ns>()));
                         if (declared_ret) break;
                     }
                 }
@@ -1121,6 +1125,8 @@ type_reference_resolver::resolve_generic_call_return_type(
                 if (tdef->function_signature) {
                     declared_ret = build_model_type_from_kdi_signature(
                         tdef->function_signature->return_type, *tdef, _unit, _context);
+                    set_type_definition_namespace(
+                        declared_ret, std::const_pointer_cast<ns>(called_func.ancestor<ns>()));
                 }
             }
         }
@@ -1137,7 +1143,7 @@ type_reference_resolver::resolve_generic_call_return_type(
     auto specialized = substitute_type(declared_ret, subst);
     if (!specialized) return {};
 
-    auto resolved = _context->resolve_type(specialized);
+    auto resolved = resolve_type_chain(specialized, &called_func);
     if (!resolved) resolved = specialized;
     if (!resolved || type::contains_unresolved(resolved) || !type::is_resolved(resolved)) return {};
     return resolved;
@@ -1752,6 +1758,9 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
 {
     const auto& base_name = unres->type_id();
     const auto& ast_args = unres->get_ast_template_args();
+    const auto& model_targs = unres->get_model_template_args();
+    const bool model_only = unres->has_model_only_template_args();
+    const auto arg_count = model_only ? model_targs.size() : ast_args.size();
     const auto resolved_argument = [](const std::shared_ptr<type>& argument) {
         return argument && (type::is_resolved(argument)
             || std::dynamic_pointer_cast<struct_type>(argument));
@@ -1814,9 +1823,9 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     if (!ti) return {};
 
     // 2. Validate argument count (allow fewer args if trailing params have defaults)
-    if (ast_args.size() > ti->params.size()) return {};
-    if (ast_args.size() < ti->params.size()) {
-        for (size_t i = ast_args.size(); i < ti->params.size(); ++i) {
+    if (arg_count > ti->params.size()) return {};
+    if (arg_count < ti->params.size()) {
+        for (size_t i = arg_count; i < ti->params.size(); ++i) {
             auto& param = ti->params[i];
             if (param.is_type_param() && !param.default_type) return {};
             if (param.is_value_param() && !param.default_value.has_value()) return {};
@@ -1830,8 +1839,15 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     // template instantiation when the AST arg name (e.g. "T") is no longer in scope
     // in the concrete entity. Indexed parallel to ast_args; a null slot means "use
     // the normal AST resolution path below".
-    const auto& model_targs = unres->get_model_template_args();
-    for (size_t i = 0; i < ast_args.size(); ++i) {
+    for (size_t i = 0; i < arg_count; ++i) {
+        if (model_only) {
+            if (!ti->params[i].is_type_param() || !model_targs[i]
+                || type::contains_template_placeholder(model_targs[i])) return {};
+            auto arg_type = resolve_type_chain(model_targs[i], &context_elem);
+            if (!arg_type || type::contains_unresolved(arg_type)) return {};
+            model_args.push_back(template_argument::make_type(arg_type));
+            continue;
+        }
         const auto& ast_arg = ast_args[i];
         // Resolve the value parameter's declared type once, up-front, so that
         // enum-typed value params (still an unresolved_type placeholder at
@@ -2004,7 +2020,7 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
         }
     }
     // 3b. Fill in default arguments for missing trailing parameters
-    for (size_t i = ast_args.size(); i < ti->params.size(); ++i) {
+    for (size_t i = arg_count; i < ti->params.size(); ++i) {
         auto& param = ti->params[i];
         if (param.is_type_param() && param.default_type) {
             auto def_type = param.default_type;

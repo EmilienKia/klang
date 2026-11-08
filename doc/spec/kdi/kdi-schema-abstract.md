@@ -124,6 +124,14 @@ KdiType = one of:
     -- a single "void" placeholder entry in `args`.
 ```
 
+Consumers must preserve the order and recursive structure of `generic_ref`
+arguments. A `void` placeholder does not encode the original value and must
+not be treated as a recoverable template argument.
+
+`template_param` must name a type parameter declared by the enclosing template
+definition. It must not occur in a concrete declaration. `erased_param` remains
+valid in a generic synthesis.
+
 ---
 
 ## KdiUnit

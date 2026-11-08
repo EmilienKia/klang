@@ -18,11 +18,17 @@
 
 #include "kdi_validate.hpp"
 
+#include <string_view>
+#include <type_traits>
 #include <unordered_set>
 
 namespace kdi {
 
 namespace {
+
+std::string_view unrooted(std::string_view name) {
+    return name.starts_with("::") ? name.substr(2) : name;
+}
 
 void validate_aggregate(const kdi_aggregate& agg,
                         const std::string& path,
@@ -32,80 +38,134 @@ void validate_aggregate(const kdi_aggregate& agg,
 void validate_params(const std::vector<kdi_param>& params,
                      const std::string& path,
                      const kdi_type_table& types,
-                     kdi_validation_result& result);
+                     kdi_validation_result& result,
+                     const std::unordered_set<std::string>* template_params = nullptr,
+                     bool check_refs = true);
 
 void validate_template_def(const kdi_template_def& def,
                            const std::string& path,
                            const kdi_type_table& types,
                            kdi_validation_result& result);
 
-void validate_type(const kdi_type& t, const std::string& path,
-                   const kdi_type_table& types,
-                   kdi_validation_result& result) {
-    if (auto* aref = std::get_if<kdi_aggregate_ref>(&t.value)) {
+void validate_type_tree(const kdi_type& t, const std::string& path,
+                        const kdi_type_table& types, kdi_validation_result& result,
+                        const std::unordered_set<std::string>* template_params,
+                        bool nested_refs, bool check_ref,
+                        std::unordered_set<const kdi_type*>& active) {
+    if (!active.insert(&t).second) return;
+    if (const auto* param = std::get_if<kdi_template_param_ref>(&t.value);
+        param && (param->name.empty() || !template_params || !template_params->count(param->name))) {
+        result.add(path, "template parameter '" + param->name + "' is not declared in this scope");
+    }
+    if (auto* aref = check_ref ? std::get_if<kdi_aggregate_ref>(&t.value) : nullptr) {
         bool found = false;
         for (auto& e : types.aggregates) {
-            if (e.fq_name == aref->fq_name) { found = true; break; }
+            if (unrooted(e.fq_name) == unrooted(aref->fq_name)) { found = true; break; }
         }
         if (!found) {
             result.add(path, "aggregate reference '" + aref->fq_name
                               + "' not found in type table");
         }
     }
-    if (auto* eref = std::get_if<kdi_enum_ref>(&t.value)) {
+    if (auto* eref = check_ref ? std::get_if<kdi_enum_ref>(&t.value) : nullptr) {
         bool found = false;
         for (auto& e : types.enums) {
-            if (e.fq_name == eref->fq_name) { found = true; break; }
+            if (unrooted(e.fq_name) == unrooted(eref->fq_name)) { found = true; break; }
         }
         if (!found) {
             result.add(path, "enum reference '" + eref->fq_name
                               + "' not found in type table");
         }
     }
-    if (std::holds_alternative<kdi_template_param_ref>(t.value) ||
-        std::holds_alternative<kdi_erased_param_type>(t.value)) {
-        return;
-    }
+    auto descend = [&](const std::shared_ptr<kdi_type>& child, const std::string& suffix) {
+        if (child) validate_type_tree(*child, path + suffix, types, result,
+                                     template_params, nested_refs, nested_refs, active);
+    };
+    std::visit([&](const auto& value) {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (requires { value.inner; }) {
+            descend(value.inner, ".inner");
+        } else if constexpr (requires { value.elem; }) {
+            descend(value.elem, ".elem");
+        } else if constexpr (std::is_same_v<T, kdi_callable_type>) {
+            descend(value.ret, ".ret");
+            for (size_t i = 0; i < value.params.size(); ++i)
+                descend(value.params[i], ".params[" + std::to_string(i) + "]");
+            for (size_t i = 0; i < value.throws.size(); ++i)
+                descend(value.throws[i], ".throws[" + std::to_string(i) + "]");
+        } else if constexpr (std::is_same_v<T, kdi_generic_ref_type>) {
+            for (size_t i = 0; i < value.args.size(); ++i)
+                descend(value.args[i], ".args[" + std::to_string(i) + "]");
+        }
+    }, t.value);
+    active.erase(&t);
+}
+
+void validate_type(const kdi_type& t, const std::string& path,
+                   const kdi_type_table& types, kdi_validation_result& result,
+                   const std::unordered_set<std::string>* template_params = nullptr,
+                   bool nested_refs = false, bool check_ref = true) {
+    std::unordered_set<const kdi_type*> active;
+    validate_type_tree(t, path, types, result, template_params, nested_refs, check_ref, active);
+}
+
+void validate_throws_placeholders(const std::vector<kdi_type>& spec,
+                                  const std::string& path, const kdi_type_table& types,
+                                  kdi_validation_result& result,
+                                  const std::unordered_set<std::string>* template_params = nullptr) {
+    for (size_t i = 0; i < spec.size(); ++i)
+        validate_type(spec[i], path + ".throws_spec[" + std::to_string(i) + "]",
+                      types, result, template_params, false, false);
 }
 
 void validate_template_signature_aggregate(const kdi_aggregate& agg,
                                            const std::string& path,
                                            const kdi_type_table& types,
-                                           kdi_validation_result& result) {
-    if (agg.name.empty()) {
+                                           kdi_validation_result& result,
+                                           const std::unordered_set<std::string>& template_params,
+                                           bool check_refs = true) {
+    if (check_refs && agg.name.empty()) {
         result.add(path + ".name", "must not be empty");
     }
     for (size_t i = 0; i < agg.layout.size(); ++i) {
         if (auto* member = std::get_if<kdi_layout_member>(&agg.layout[i])) {
-            validate_type(member->type, path + ".layout[" + std::to_string(i) + "].type", types, result);
+            validate_type(member->type, path + ".layout[" + std::to_string(i) + "].type",
+                          types, result, &template_params, false, check_refs);
         }
     }
     for (size_t i = 0; i < agg.methods.size(); ++i) {
         auto mp = path + ".methods[" + std::to_string(i) + "]";
-        validate_type(agg.methods[i].return_type, mp + ".return_type", types, result);
-        validate_params(agg.methods[i].params, mp, types, result);
+        validate_type(agg.methods[i].return_type, mp + ".return_type",
+                      types, result, &template_params, false, check_refs);
+        validate_params(agg.methods[i].params, mp, types, result, &template_params, check_refs);
+        validate_throws_placeholders(agg.methods[i].throws_spec, mp, types, result, &template_params);
     }
     for (size_t i = 0; i < agg.constructors.size(); ++i) {
-        validate_params(agg.constructors[i].params,
-                        path + ".constructors[" + std::to_string(i) + "]",
-                        types, result);
+        auto cp = path + ".constructors[" + std::to_string(i) + "]";
+        validate_params(agg.constructors[i].params, cp, types, result, &template_params, check_refs);
     }
     for (size_t i = 0; i < agg.static_vars.size(); ++i) {
         validate_type(agg.static_vars[i].type,
                       path + ".static_vars[" + std::to_string(i) + "].type",
-                      types, result);
+                      types, result, &template_params, false, check_refs);
     }
+    for (size_t i = 0; i < agg.nested.size(); ++i)
+        validate_template_signature_aggregate(agg.nested[i],
+            path + ".nested[" + std::to_string(i) + "]", types, result, template_params, check_refs);
 }
 
 void validate_template_signature_function(const kdi_function& fn,
                                           const std::string& path,
                                           const kdi_type_table& types,
-                                          kdi_validation_result& result) {
-    if (fn.name.empty()) {
+                                          kdi_validation_result& result,
+                                          const std::unordered_set<std::string>& template_params,
+                                          bool check_refs = true) {
+    if (check_refs && fn.name.empty()) {
         result.add(path + ".name", "must not be empty");
     }
-    validate_type(fn.return_type, path + ".return_type", types, result);
-    validate_params(fn.params, path, types, result);
+    validate_type(fn.return_type, path + ".return_type", types, result, &template_params, false, check_refs);
+    validate_params(fn.params, path, types, result, &template_params, check_refs);
+    validate_throws_placeholders(fn.throws_spec, path, types, result, &template_params);
 }
 
 void validate_template_def(const kdi_template_def& def,
@@ -124,6 +184,12 @@ void validate_template_def(const kdi_template_def& def,
     if (def.params.empty()) {
         result.add(path + ".params", "must not be empty");
     }
+    std::unordered_set<std::string> template_params;
+    for (const auto& param : def.params) {
+        if (!param.name.empty() && (param.kind == "typename" || param.kind == "struct" ||
+            param.kind == "class" || param.kind == "interface"))
+            template_params.insert(param.name);
+    }
     if (def.is_generic) {
         if (!def.source.empty()) {
             result.add(path + ".source", "must be empty for generic template definitions");
@@ -141,7 +207,7 @@ void validate_template_def(const kdi_template_def& def,
                 validate_template_signature_function(*def.function_signature,
                                                     path + ".function_signature",
                                                     types,
-                                                    result);
+                                                    result, template_params);
             }
         } else {
             if (!def.aggregate_signature) {
@@ -150,9 +216,16 @@ void validate_template_def(const kdi_template_def& def,
                 validate_template_signature_aggregate(*def.aggregate_signature,
                                                      path + ".aggregate_signature",
                                                      types,
-                                                     result);
+                                                     result, template_params);
             }
         }
+    } else {
+        if (def.function_signature)
+            validate_template_signature_function(*def.function_signature, path + ".function_signature",
+                                                 types, result, template_params, false);
+        if (def.aggregate_signature)
+            validate_template_signature_aggregate(*def.aggregate_signature, path + ".aggregate_signature",
+                                                  types, result, template_params, false);
     }
 }
 
@@ -192,10 +265,12 @@ void validate_enum(const kdi_enum& en,
 void validate_params(const std::vector<kdi_param>& params,
                      const std::string& path,
                      const kdi_type_table& types,
-                     kdi_validation_result& result) {
+                     kdi_validation_result& result,
+                     const std::unordered_set<std::string>* template_params,
+                     bool check_refs) {
     for (size_t i = 0; i < params.size(); ++i) {
         validate_type(params[i].type, path + ".params[" + std::to_string(i) + "]",
-                      types, result);
+                      types, result, template_params, false, check_refs);
     }
 }
 
@@ -249,6 +324,7 @@ void validate_aggregate(const kdi_aggregate& agg,
         auto mp = path + ".methods[" + std::to_string(i) + "]";
         validate_type(agg.methods[i].return_type, mp + ".return_type", types, result);
         validate_params(agg.methods[i].params, mp, types, result);
+        validate_throws_placeholders(agg.methods[i].throws_spec, mp, types, result);
         if (agg.methods[i].mangled_name.empty()) {
             result.add(mp, "mangled_name must not be empty");
         }
@@ -304,6 +380,7 @@ void validate_namespace(const kdi_namespace& ns,
         auto fp = path + ".functions[" + std::to_string(i) + "]";
         validate_type(ns.functions[i].return_type, fp + ".return_type", types, result);
         validate_params(ns.functions[i].params, fp, types, result);
+        validate_throws_placeholders(ns.functions[i].throws_spec, fp, types, result);
         if (ns.functions[i].mangled_name.empty()) {
             result.add(fp, "mangled_name must not be empty");
         }

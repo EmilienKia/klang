@@ -63,6 +63,32 @@ bool type::contains_unresolved(const std::shared_ptr<type>& t) {
     return contains_unresolved(t->get_subtype());
 }
 
+bool type::contains_template_placeholder(const std::shared_ptr<type>& t) {
+    if (!t) return false;
+    if (auto u = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        if (u->is_template_param_placeholder()) return true;
+        if (u->has_model_only_template_args())
+            for (const auto& arg : u->get_model_template_args())
+                if (contains_template_placeholder(arg)) return true;
+        return false;
+    }
+    if (auto callable = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        if (contains_template_placeholder(callable->get_return_type())) return true;
+        for (const auto& arg : callable->parameter_types())
+            if (contains_template_placeholder(arg)) return true;
+        for (const auto& thrown : callable->get_throws())
+            if (contains_template_placeholder(thrown)) return true;
+    }
+    if (auto callable = std::dynamic_pointer_cast<callable_type>(t)) {
+        if (contains_template_placeholder(callable->get_return_type())) return true;
+        for (const auto& arg : callable->get_parameter_types())
+            if (contains_template_placeholder(arg)) return true;
+        for (const auto& thrown : callable->get_throws())
+            if (contains_template_placeholder(thrown)) return true;
+    }
+    return contains_template_placeholder(t->get_subtype());
+}
+
 std::shared_ptr<type> type::canonical(const std::shared_ptr<type>& t) {
     if (!t) return t;
 
@@ -320,8 +346,25 @@ lex::opt_any_lexeme type::get_interest_lexeme() const {
 // Unresolved type
 //
 
+std::shared_ptr<unresolved_type> unresolved_type::make_model_template(
+    const name& type_id, std::vector<std::shared_ptr<type>> args)
+{
+    auto result = std::shared_ptr<unresolved_type>(new unresolved_type(type_id));
+    result->set_model_only_template_args(std::move(args));
+    return result;
+}
+
 std::string unresolved_type::to_string() const {
-    return "<<unresolved:" + _type_id.to_string() + ">>";
+    std::string result = "<<unresolved:" + _type_id.to_string();
+    if (_model_only_template_args) {
+        result += "<";
+        for (size_t i = 0; i < _model_template_args.size(); ++i) {
+            if (i) result += ", ";
+            result += _model_template_args[i] ? _model_template_args[i]->to_string() : "<unknown>";
+        }
+        result += ">";
+    }
+    return result + ">>";
 }
 
 lex::opt_any_lexeme unresolved_type::get_first_lexeme() const {
@@ -410,19 +453,24 @@ std::shared_ptr<type> unresolved_type::substitute_ast_type_spec(
 std::shared_ptr<unresolved_type> unresolved_type::clone_with_substituted_model_args(
     const std::unordered_map<std::string, std::shared_ptr<type>>& subst) const
 {
-    if (_ast_template_args.empty() || subst.empty()) return nullptr;
+    if ((!_model_only_template_args && _ast_template_args.empty()) || subst.empty()) return nullptr;
 
     std::vector<std::shared_ptr<type>> model_args;
-    model_args.reserve(_ast_template_args.size());
+    const auto count = _model_only_template_args ? _model_template_args.size() : _ast_template_args.size();
+    model_args.reserve(count);
     bool any_substituted = false;
 
-    for (size_t i = 0; i < _ast_template_args.size(); ++i) {
+    for (size_t i = 0; i < count; ++i) {
         // A later member-template substitution must compose with the enclosing
         // specialization, not reconstruct its already-bound arguments from AST.
         if (i < _model_template_args.size() && _model_template_args[i]) {
             auto sub = substitute_type(_model_template_args[i], subst);
             any_substituted |= sub != _model_template_args[i];
             model_args.push_back(sub);
+            continue;
+        }
+        if (_model_only_template_args) {
+            model_args.push_back(nullptr);
             continue;
         }
         const auto& ast_arg = _ast_template_args[i];
@@ -448,6 +496,7 @@ std::shared_ptr<unresolved_type> unresolved_type::clone_with_substituted_model_a
     new_ut->_ast_template_args = _ast_template_args;
     new_ut->_has_explicit_template_args = _has_explicit_template_args;
     new_ut->_model_template_args = std::move(model_args);
+    new_ut->_model_only_template_args = _model_only_template_args;
     return new_ut;
 }
 
@@ -1325,6 +1374,8 @@ void set_type_definition_namespace(const std::shared_ptr<type>& t, const std::sh
     if (!t || !scope) return;
     if (auto ut = std::dynamic_pointer_cast<unresolved_type>(t)) {
         if (!ut->get_definition_namespace()) ut->set_definition_namespace(scope);
+        if (ut->has_model_only_template_args())
+            for (const auto& arg : ut->get_model_template_args()) set_type_definition_namespace(arg, scope);
         return;
     }
     if (auto ct = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
@@ -1350,6 +1401,10 @@ std::shared_ptr<type> substitute_type(
     if (auto ut = std::dynamic_pointer_cast<unresolved_type>(t)) {
         const auto& tid = ut->type_id();
 
+        if (ut->has_model_only_template_args()) {
+            if (auto substituted = ut->clone_with_substituted_model_args(subst)) return substituted;
+            return t;
+        }
         auto it = subst.find(tid.to_string());
         if (it != subst.end()) return it->second;
 

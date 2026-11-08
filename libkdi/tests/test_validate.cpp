@@ -55,6 +55,35 @@ TEST_CASE("validate: function with empty mangled_name fails", "[validate]") {
     REQUIRE(!r.is_valid());
 }
 
+TEST_CASE("validate: placeholders in nested signature types require a type parameter",
+          "[validate][template]") {
+    auto file = make_valid_file();
+    file.unit.root_ns.functions[0].return_type =
+        kdi_type::make_owner(kdi_type::make_template_param("T"));
+    auto result = kdi_validate(file);
+    REQUIRE(result.errors.size() == 1);
+    CHECK(result.errors[0].path == "unit.root_ns.functions[0].return_type.inner");
+    file.unit.root_ns.functions[0].return_type = kdi_type::make_void();
+
+    kdi_template_def def;
+    def.name = "make";
+    def.fq_name = "valid::mod::make";
+    def.entity_kind = "function";
+    def.is_generic = true;
+    def.params.push_back({"typename", "T"});
+    def.function_signature = std::make_shared<kdi_function>();
+    def.function_signature->name = "make";
+    def.function_signature->return_type =
+        kdi_type::make_owner(kdi_type::make_template_param("T"));
+    file.unit.root_ns.template_defs.push_back(def);
+    CHECK(kdi_validate(file).is_valid());
+    file.unit.root_ns.template_defs[0].function_signature->return_type =
+        kdi_type::make_owner(kdi_type::make_template_param("Missing"));
+    result = kdi_validate(file);
+    REQUIRE(result.errors.size() == 1);
+    CHECK(result.errors[0].path == "unit.root_ns.template_defs[0].function_signature.return_type.inner");
+}
+
 TEST_CASE("validate: aggregate with unresolved type ref fails", "[validate]") {
     kdi_file f;
     f.header.module_name = "bad::mod";

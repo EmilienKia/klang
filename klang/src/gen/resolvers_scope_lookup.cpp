@@ -441,6 +441,11 @@ bool scope_lookup::same_signature_type(const std::shared_ptr<type>& a, const std
         }
         return true;
     }
+    auto generic_a = std::dynamic_pointer_cast<unresolved_type>(ta);
+    auto generic_b = std::dynamic_pointer_cast<unresolved_type>(tb);
+    if ((generic_a && generic_a->has_model_only_template_args())
+        || (generic_b && generic_b->has_model_only_template_args()))
+        return type::are_equal(ta, tb);
     if (type::are_equal(ta, tb)) return true;
     if (ta->get_subtype() && tb->get_subtype() && typeid(*ta) == typeid(*tb)) {
         if (auto array = std::dynamic_pointer_cast<sized_array_type>(ta)) {
@@ -924,9 +929,10 @@ bool contains_template_parameter(const std::shared_ptr<type>& t,
         }
         const auto& model_args = unres->get_model_template_args();
         const auto& ast_args = unres->get_ast_template_args();
-        for (std::size_t i = 0; i < ast_args.size(); ++i) {
+        const auto count = unres->has_model_only_template_args() ? model_args.size() : ast_args.size();
+        for (std::size_t i = 0; i < count; ++i) {
             auto arg = i < model_args.size() ? model_args[i] : nullptr;
-            if (!arg && ast_args[i] && ast_args[i]->is_type() && ast_args[i]->type_arg) {
+            if (!arg && i < ast_args.size() && ast_args[i] && ast_args[i]->is_type() && ast_args[i]->type_arg) {
                 arg = ctx->from_type_specifier(*ast_args[i]->type_arg);
             }
             if (contains_template_parameter(arg, scope, ctx)) return true;
@@ -988,7 +994,7 @@ std::shared_ptr<type> scope_lookup::resolve_alias_template(
     // arguments; they take precedence over the AST arguments, which still name
     // the enclosing alias's own parameters.
     const auto& model_args = unres->get_model_template_args();
-    const bool use_model_args = unres->has_model_template_args();
+    const bool use_model_args = unres->has_model_only_template_args() || unres->has_model_template_args();
 
     const auto& ast_args = unres->get_ast_template_args();
     const std::size_t given = use_model_args ? model_args.size() : ast_args.size();
@@ -1010,6 +1016,12 @@ std::shared_ptr<type> scope_lookup::resolve_alias_template(
 
         if (use_model_args) {
             if (i < model_args.size()) arg_type = model_args[i];
+            if (!arg_type && i < model_args.size() && unres->has_model_only_template_args()) {
+                report_error(static_cast<unsigned int>(::k::diag::alias_diag::ERR_ALIAS_TEMPLATE_ARG_MISMATCH),
+                             "Template argument for parameter '{}' of parameterised {} '{}' could not be resolved",
+                             {param.name, kind, alias->get_short_name()});
+                return {};
+            }
             // A substituted argument list carries a null slot for every argument
             // that names no template parameter ('bool' in 'Fn<T,bool>'): the AST
             // argument at the same index still describes it exactly.

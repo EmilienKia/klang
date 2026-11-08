@@ -189,6 +189,7 @@ public:
     inline static bool is_null(const std::shared_ptr<type>& type);
     /** True if the type chain contains any unresolved_type nodes. */
     static bool contains_unresolved(const std::shared_ptr<type>& type);
+    static bool contains_template_placeholder(const std::shared_ptr<type>& type);
 
     inline static bool are_equal(const std::shared_ptr<type>& type1, const std::shared_ptr<type>& type2);
 
@@ -291,6 +292,7 @@ protected:
      * body where the original template params are no longer in scope.
      */
     std::vector<std::shared_ptr<type>> _model_template_args;
+    bool _model_only_template_args = false;
 
     friend class context;
 
@@ -300,6 +302,9 @@ protected:
     void resolve(std::shared_ptr<type> res_type) {_resolved = res_type;}
 
 public:
+    static std::shared_ptr<unresolved_type> make_model_template(
+        const name& type_id, std::vector<std::shared_ptr<type>> args);
+
     const name& type_id() const {return _type_id;}
     void set_type_id(const name& n) { _type_id = n; }
     std::shared_ptr<ns> get_definition_namespace() const { return _definition_namespace.lock(); }
@@ -336,6 +341,14 @@ public:
 
     /** True if model-level template argument overrides are present (set by substitute_type). */
     bool has_model_template_args() const { return !_model_template_args.empty(); }
+
+    /** Imported structural type arguments, without a corresponding source AST. */
+    bool has_model_only_template_args() const { return _model_only_template_args; }
+    void set_model_only_template_args(std::vector<std::shared_ptr<type>> args) {
+        _model_template_args = std::move(args);
+        _model_only_template_args = true;
+        _has_explicit_template_args = true;
+    }
 
     /** Model-level template arguments, indexed parallel to get_ast_template_args().
      *  A null entry means the corresponding AST arg was not substituted. */
@@ -1386,6 +1399,17 @@ inline bool type::are_equal(const std::shared_ptr<type>& type1, const std::share
             // Both unresolved: if both resolved, compare resolved types
             if (u1->is_resolved() && u2->is_resolved()) {
                 return are_equal(u1->get_resolved(), u2->get_resolved());
+            }
+            if (u1->has_model_only_template_args() || u2->has_model_only_template_args()) {
+                if (!u1->has_model_only_template_args() || !u2->has_model_only_template_args()
+                    || u1->type_id() != u2->type_id()) return false;
+                const auto& a = u1->get_model_template_args();
+                const auto& b = u2->get_model_template_args();
+                if (a.size() != b.size()) return false;
+                for (size_t i = 0; i < a.size(); ++i) {
+                    if (!a[i] || !b[i] || !are_equal(a[i], b[i])) return false;
+                }
+                return true;
             }
             // Otherwise compare by type name
             return u1->type_id() == u2->type_id();

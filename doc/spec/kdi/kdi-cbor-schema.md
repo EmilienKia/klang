@@ -212,7 +212,9 @@ from the type it renames. A soft alias (`alias`) is fully transparent and is
 always encoded as the type it renames.
 
 `template_param` references a template parameter by name (e.g. `T`) as it
-appears inside an uninstantiated template's own declaration.
+appears inside an uninstantiated template's own declaration. The name must
+identify a type parameter of the enclosing template, not a value parameter;
+concrete declarations must not contain `template_param`.
 
 `erased_param` is the erased stand-in of a generic type parameter: the opaque pointer
 (`byte*` at the LLVM level) that every type parameter of a `generic<...>` declaration is
@@ -230,7 +232,9 @@ instantiated with concrete arguments. Each entry in `args` is itself a full
 `Type`, so nested template-parameter references (e.g. `Node<T>` inside
 `List<T>`) are preserved structurally. Only type arguments are represented;
 a non-type (value) argument in such a nested reference falls back to a
-`void` placeholder entry.
+`void` placeholder entry. Consumers must preserve the order and recursive
+structure of the arguments; a `void` placeholder does not encode the original
+value and must not be treated as a recoverable template argument.
 
 ---
 

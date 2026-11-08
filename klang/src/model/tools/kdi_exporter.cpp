@@ -30,6 +30,7 @@
 #include "../context.hpp"
 #include "../../gen/resolvers_scope_lookup.hpp"
 #include "../../gen/resolvers_symbol.hpp"
+#include "../../gen/resolvers_aggregate.hpp"
 
 #include "../../compiler.hpp"
 
@@ -78,6 +79,14 @@ public:
                            {_template_name});
             throw log::compiler_error(std::move(error));
         }
+    }
+};
+
+class signature_diagnostics : public log::logger {
+public:
+    void report(const log::diagnostic& diagnostic) override {
+        if (diagnostic.level >= log::diagnostic::severity::error)
+            throw log::compiler_error(diagnostic);
     }
 };
 
@@ -530,6 +539,11 @@ bool kdi_builder::is_exported_aggregate(const aggregate& agg) {
 bool kdi_builder::is_exported_type(const std::shared_ptr<type>& t) {
     auto canonical = type::canonical(t);
     if (!canonical) return true;
+    if (auto unresolved = std::dynamic_pointer_cast<unresolved_type>(canonical);
+        unresolved && unresolved->has_model_only_template_args()) {
+        for (const auto& arg : unresolved->get_model_template_args())
+            if (!is_exported_type(arg)) return false;
+    }
     if (auto st = std::dynamic_pointer_cast<struct_type>(canonical)) {
         if (auto agg = st->get_struct()) return is_exported_aggregate(*agg);
     }
@@ -582,7 +596,21 @@ kdi::kdi_callable_type kdi_builder::to_kdi_callable(
     return k;
 }
 
-kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {    if (!t) return kdi::kdi_type::make_void();
+kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {
+    if (!t) return kdi::kdi_type::make_void();
+
+    if (auto unresolved = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        if (unresolved->is_resolved()) return to_kdi_type(unresolved->get_resolved());
+        if (unresolved->is_template_param_placeholder())
+            return kdi::kdi_type::make_template_param(unresolved->type_id().to_string());
+        if (unresolved->has_model_only_template_args()) {
+            kdi::kdi_generic_ref_type ref;
+            ref.name = unresolved->type_id().to_string();
+            for (const auto& arg : unresolved->get_model_template_args())
+                ref.args.push_back(std::make_shared<kdi::kdi_type>(to_kdi_type(arg)));
+            return kdi::kdi_type{std::move(ref)};
+        }
+    }
 
     if (auto ct = std::dynamic_pointer_cast<const_type>(t)) {
         kdi::kdi_const_type kct;
@@ -637,6 +665,17 @@ kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {  
         return kdi::kdi_type{to_kdi_callable(
             *frt, [this](const std::shared_ptr<type>& sub) { return to_kdi_type(sub); })};
     }
+    if (auto frt = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        kdi::kdi_callable_type k;
+        k.addresser = to_kdi_addresser(frt->get_addresser());
+        k.ret = std::make_shared<kdi::kdi_type>(to_kdi_type(frt->get_return_type()));
+        for (const auto& parameter : frt->parameter_types())
+            k.params.push_back(std::make_shared<kdi::kdi_type>(to_kdi_type(parameter)));
+        for (const auto& thrown : frt->get_throws())
+            k.throws.push_back(std::make_shared<kdi::kdi_type>(to_kdi_type(thrown)));
+        if (!frt->owner_name().empty()) k.member_of = frt->owner_name().to_string();
+        return kdi::kdi_type{std::move(k)};
+    }
     if (auto st = std::dynamic_pointer_cast<struct_type>(t)) {
         // Use the fully-qualified name so importing compilers can unambiguously
         // resolve the aggregate type.  aggregate::get_fq_name() returns "::ns::Type"
@@ -659,7 +698,11 @@ kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {  
         // reaches this point: it resolves directly to the renamed type.
         std::string fq = at->get_fq_name();
         if (auto ad = at->get_alias()) {
-            if (!ad->get_fq_name().empty()) fq = ad->get_fq_name();
+            if (!ad->get_fq_name().empty()) {
+                fq = ad->get_fq_name();
+            } else if (auto scope = ad->parent<named_element>(); scope && !scope->get_fq_name().empty()) {
+                fq = scope->get_fq_name() + "::" + ad->get_short_name();
+            }
         }
         if (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':') fq = fq.substr(2);
         if (!fq.empty()) return kdi::kdi_type::make_alias(std::move(fq));
@@ -687,7 +730,7 @@ kdi::kdi_type kdi_builder::to_kdi_signature_type(const std::shared_ptr<type>& t,
     if (auto ut = std::dynamic_pointer_cast<unresolved_type>(t)) {
         const std::string id = ut->type_id().to_string();
         for (const auto& param : ti.params) {
-            if (param.name == id) {
+            if (!ut->has_template_args() && param.name == id) {
                 return kdi::kdi_type::make_template_param(id);
             }
         }
@@ -702,15 +745,20 @@ kdi::kdi_type kdi_builder::to_kdi_signature_type(const std::shared_ptr<type>& t,
         if (!ut->is_resolved()) {
             kdi::kdi_generic_ref_type gref;
             gref.name = id;
-            for (const auto& arg : ut->get_ast_template_args()) {
-                if (arg && arg->is_type() && arg->type_arg) {
-                    auto arg_type = _ctx.from_type_specifier(*arg->type_arg);
+            if (ut->has_model_only_template_args()) {
+                for (const auto& arg : ut->get_model_template_args())
                     gref.args.push_back(std::make_shared<kdi::kdi_type>(
-                        to_kdi_signature_type(arg_type, ti)));
-                } else {
-                    // Value (non-type) template argument: not structurally
-                    // representable in kdi_generic_ref_type (see kdi_types.hpp).
-                    gref.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_void()));
+                        arg ? to_kdi_signature_type(arg, ti) : kdi::kdi_type::make_void()));
+            } else {
+                for (const auto& arg : ut->get_ast_template_args()) {
+                    if (arg && arg->is_type() && arg->type_arg) {
+                        auto arg_type = _ctx.from_type_specifier(*arg->type_arg);
+                        gref.args.push_back(std::make_shared<kdi::kdi_type>(
+                            to_kdi_signature_type(arg_type, ti)));
+                    } else {
+                        // Value arguments are not represented in schema 0.1.
+                        gref.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_void()));
+                    }
                 }
             }
             return kdi::kdi_type{std::move(gref)};
@@ -749,14 +797,14 @@ kdi::kdi_type kdi_builder::to_kdi_signature_type(const std::shared_ptr<type>& t,
         kdi::kdi_drain_type k; k.inner = std::make_shared<kdi::kdi_type>(to_kdi_signature_type(dt->get_subtype(), ti));
         return kdi::kdi_type{std::move(k)};
     }
-    if (auto at = std::dynamic_pointer_cast<array_type>(t)) {
-        kdi::kdi_array_type k; k.elem = std::make_shared<kdi::kdi_type>(to_kdi_signature_type(at->get_subtype(), ti));
-        return kdi::kdi_type{std::move(k)};
-    }
     if (auto sat = std::dynamic_pointer_cast<sized_array_type>(t)) {
         kdi::kdi_sized_array_type k;
         k.elem = std::make_shared<kdi::kdi_type>(to_kdi_signature_type(sat->get_subtype(), ti));
         k.size = sat->get_size();
+        return kdi::kdi_type{std::move(k)};
+    }
+    if (auto at = std::dynamic_pointer_cast<array_type>(t)) {
+        kdi::kdi_array_type k; k.elem = std::make_shared<kdi::kdi_type>(to_kdi_signature_type(at->get_subtype(), ti));
         return kdi::kdi_type{std::move(k)};
     }
     if (auto frt = std::dynamic_pointer_cast<callable_type>(t)) {
@@ -820,9 +868,83 @@ std::vector<kdi::kdi_param> kdi_builder::to_kdi_signature_params(const function&
     return result;
 }
 
+static bool supported_signature_throw(const kdi::kdi_type& t) {
+    if (std::holds_alternative<kdi::kdi_aggregate_ref>(t.value)
+        || std::holds_alternative<kdi::kdi_alias_ref>(t.value)
+        || std::holds_alternative<kdi::kdi_template_param_ref>(t.value)) return true;
+    if (const auto* generic = std::get_if<kdi::kdi_generic_ref_type>(&t.value))
+        return !generic->name.empty();
+    if (const auto* ref = std::get_if<kdi::kdi_ref_type>(&t.value))
+        return ref->inner && supported_signature_throw(*ref->inner);
+    if (const auto* cnst = std::get_if<kdi::kdi_const_type>(&t.value))
+        return cnst->inner && supported_signature_throw(*cnst->inner);
+    return false;
+}
+
+std::vector<kdi::kdi_type> kdi_builder::to_kdi_signature_throws(
+    const function& fn, const tpl_info& ti, const std::string& fq_name) {
+    std::vector<kdi::kdi_type> result;
+    auto append = [&](const std::shared_ptr<type>& thrown) {
+        if (ti.is_generic && !is_exported_type(thrown))
+            throw std::runtime_error("Cannot export generic throws type in '" + fq_name + "'");
+        auto encoded = to_kdi_signature_type(thrown, ti);
+        if (ti.is_generic && !supported_signature_throw(encoded))
+            throw std::runtime_error("Cannot encode generic throws type in '" + fq_name + "'");
+        if (ti.is_generic) {
+            std::function<void(const std::shared_ptr<type>&)> register_types = [&](const auto& value) {
+                auto current = type::canonical(value);
+                if (!current) return;
+                if (auto st = std::dynamic_pointer_cast<struct_type>(current)) {
+                    if (auto definition = st->get_struct()) register_aggregate_type(*definition);
+                } else if (auto unresolved = std::dynamic_pointer_cast<unresolved_type>(current);
+                           unresolved && unresolved->has_model_only_template_args()) {
+                    for (const auto& arg : unresolved->get_model_template_args()) register_types(arg);
+                } else if (auto callable = std::dynamic_pointer_cast<unresolved_callable_type>(current)) {
+                    register_types(callable->get_return_type());
+                    for (const auto& arg : callable->parameter_types()) register_types(arg);
+                    for (const auto& exception : callable->get_throws()) register_types(exception);
+                } else if (auto callable = std::dynamic_pointer_cast<callable_type>(current)) {
+                    register_types(callable->get_return_type());
+                    for (const auto& arg : callable->get_parameter_types()) register_types(arg);
+                    for (const auto& exception : callable->get_throws()) register_types(exception);
+                } else {
+                    register_types(current->get_subtype());
+                }
+            };
+            register_types(thrown);
+        }
+        result.push_back(std::move(encoded));
+    };
+    if (!fn.get_throws_spec().empty()) {
+        for (const auto& thrown : fn.get_throws_spec()) append(thrown);
+    } else {
+        for (const auto& raw : fn.get_throws_spec_raw()) {
+            const auto param = std::find_if(ti.params.begin(), ti.params.end(),
+                [&](const auto& p) { return p.name == raw; });
+            if (param != ti.params.end()) {
+                result.push_back(kdi::kdi_type::make_template_param(raw));
+                continue;
+            }
+            auto owner = std::const_pointer_cast<unit>(fn.ancestor<unit>());
+            auto context = owner ? owner->get_context() : nullptr;
+            std::shared_ptr<type> resolved;
+            if (owner && context) {
+                signature_diagnostics diagnostics;
+                gen::aggregate_type_resolver resolver(diagnostics, context, *owner);
+                resolved = resolver.resolve_type_by_name(k::name(raw), fn);
+            }
+            if (!resolved)
+                throw std::runtime_error("Cannot export generic throws type '" + raw +
+                                         "' in '" + fq_name + "'");
+            append(resolved);
+        }
+    }
+    return result;
+}
+
 kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const aggregate& agg,
                                                                              const tpl_info& ti,
-                                                                             const std::string& fq_name) const {
+                                                                             const std::string& fq_name) {
     kdi::kdi_aggregate sig;
     if (agg.is_annotation()) sig.kind = kdi::kdi_aggregate_kind::annotation_;
     else if (dynamic_cast<const interface*>(&agg) != nullptr) sig.kind = kdi::kdi_aggregate_kind::interface_;
@@ -902,6 +1024,8 @@ kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const
         km.vtable_slot = fn->get_vtable_slot();
         km.return_type = to_kdi_signature_type(std::const_pointer_cast<type>(fn->get_return_type()), ti);
         km.params = to_kdi_signature_params(*fn, ti);
+        if (ti.is_generic || fn->get_throws_spec_raw().empty() || !fn->get_throws_spec().empty())
+            km.throws_spec = to_kdi_signature_throws(*fn, ti, fq_name);
         km.doc = to_kdi_doc_function(*fn);
         sig.methods.push_back(std::move(km));
     }
@@ -911,7 +1035,7 @@ kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const
 
 kdi::kdi_function kdi_builder::build_generic_template_function_signature(const function& fn,
                                                                           const tpl_info& ti,
-                                                                          const std::string& fq_name) const {
+                                                                          const std::string& fq_name) {
     kdi::kdi_function sig;
     sig.name = fn.get_short_name();
     sig.fq_name = fq_name;
@@ -920,6 +1044,8 @@ kdi::kdi_function kdi_builder::build_generic_template_function_signature(const f
     sig.is_operator = fn.is_operator();
     sig.return_type = to_kdi_signature_type(std::const_pointer_cast<type>(fn.get_return_type()), ti);
     sig.params = to_kdi_signature_params(fn, ti);
+    if (ti.is_generic || fn.get_throws_spec_raw().empty() || !fn.get_throws_spec().empty())
+        sig.throws_spec = to_kdi_signature_throws(fn, ti, fq_name);
     sig.doc = to_kdi_doc_function(fn);
     return sig;
 }
@@ -2151,7 +2277,7 @@ kdi::kdi_template_def kdi_builder::build_template_def(
     const std::string& entity_kind,
     visibility vis,
     const tpl_info& ti,
-    const element* entity) const
+    const element* entity)
 {
     kdi::kdi_template_def def;
     def.name = name;

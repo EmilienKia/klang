@@ -319,6 +319,7 @@ public:
     /** Resolved exception types. */
     const std::vector<std::shared_ptr<type>>& get_throws_spec() const { return _throws_spec; }
     void add_throws_type(std::shared_ptr<type> t) { _throws_spec.push_back(std::move(t)); }
+    void set_throws_spec(std::vector<std::shared_ptr<type>> types) { _throws_spec = std::move(types); }
 
     const std::vector<std::shared_ptr<parameter>>& parameters() const {
         return _parameters;

@@ -414,6 +414,9 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
 {
     const auto& base_name = unres->type_id();
     const auto& ast_args = unres->get_ast_template_args();
+    const auto& model_targs = unres->get_model_template_args();
+    const bool model_only = unres->has_model_only_template_args();
+    const auto arg_count = model_only ? model_targs.size() : ast_args.size();
     const auto resolved_argument = [](const std::shared_ptr<type>& argument) {
         return argument && (type::is_resolved(argument)
             || std::dynamic_pointer_cast<struct_type>(argument));
@@ -550,10 +553,10 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
     if (!ti) return {};
 
     // 2. Validate argument count (allow fewer args if trailing params have defaults)
-    if (ast_args.size() > ti->params.size()) return {};
-    if (ast_args.size() < ti->params.size()) {
+    if (arg_count > ti->params.size()) return {};
+    if (arg_count < ti->params.size()) {
         // Check that all missing params have defaults
-        for (size_t i = ast_args.size(); i < ti->params.size(); ++i) {
+        for (size_t i = arg_count; i < ti->params.size(); ++i) {
             auto& param = ti->params[i];
             if (param.is_type_param() && !param.default_type) return {};
             if (param.is_value_param() && !param.default_value.has_value()) return {};
@@ -565,8 +568,15 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
     model_args.reserve(ti->params.size());
     // Pre-resolved model-level template arguments, set by substitute_type() during
     // template instantiation when the AST arg name (e.g. "T") is no longer in scope.
-    const auto& model_targs = unres->get_model_template_args();
-    for (size_t i = 0; i < ast_args.size(); ++i) {
+    for (size_t i = 0; i < arg_count; ++i) {
+        if (model_only) {
+            if (!ti->params[i].is_type_param() || !model_targs[i]
+                || type::contains_template_placeholder(model_targs[i])) return {};
+            auto arg_type = resolve_one_type(model_targs[i], *this, context_elem, _context);
+            if (!arg_type || type::contains_unresolved(arg_type)) return {};
+            model_args.push_back(template_argument::make_type(arg_type));
+            continue;
+        }
         const auto& ast_arg = ast_args[i];
         // Resolve the value parameter's declared type once, up-front, so that
         // enum-typed value params (still an unresolved_type placeholder at
@@ -745,7 +755,7 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
         }
     }
     // 3b. Fill in default arguments for missing trailing parameters
-    for (size_t i = ast_args.size(); i < ti->params.size(); ++i) {
+    for (size_t i = arg_count; i < ti->params.size(); ++i) {
         auto& param = ti->params[i];
         if (param.is_type_param() && param.default_type) {
             // Resolve the default type if needed
@@ -1920,6 +1930,7 @@ void aggregate_type_resolver::visit_function(function& fn) {
             for (const auto& pt : ufrt->parameter_types()) {
                 if (!type::is_resolved(pt)) {
                     if (auto u = std::dynamic_pointer_cast<unresolved_type>(pt)) {
+                        if (u->has_template_args()) { all_resolved = false; break; }
                         auto rpt = resolve_type_by_name(u->type_id(), fn);
                         if (!rpt || !type::is_resolved(rpt)) { all_resolved = false; break; }
                         builder.append_parameter_type(rpt);
@@ -1932,7 +1943,7 @@ void aggregate_type_resolver::visit_function(function& fn) {
                 auto rt = ufrt->get_return_type();
                 if (!type::is_resolved(rt)) {
                     if (auto u = std::dynamic_pointer_cast<unresolved_type>(rt)) {
-                        rt = resolve_type_by_name(u->type_id(), fn);
+                        rt = u->has_template_args() ? nullptr : resolve_type_by_name(u->type_id(), fn);
                     } else {
                         rt = nullptr;
                     }
@@ -1957,14 +1968,15 @@ void aggregate_type_resolver::visit_function(function& fn) {
         if (unres_ret && unres_ret->has_template_args()) {
             resolved = try_instantiate_template_type(unres_ret, fn);
         }
-        if (!resolved || !type::is_resolved(resolved)) {
+        if ((!resolved || !type::is_resolved(resolved)) &&
+            (!unres_ret || !unres_ret->has_template_args())) {
             resolved = resolve_type_by_name(
                 unres_ret ? unres_ret->type_id() : k::name{},
                 fn);
         }
         if (resolved && type::is_resolved(resolved)) {
             fn.set_return_type(resolved);
-        } else {
+        } else if (!unres_ret || !unres_ret->has_template_args()) {
             auto resolved2 = _context->resolve_type(fn.get_return_type());
             if (type::is_resolved(resolved2)) fn.set_return_type(resolved2);
         }

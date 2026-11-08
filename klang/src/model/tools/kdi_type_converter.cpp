@@ -22,10 +22,12 @@
 #include "../imported.hpp"
 #include "../context.hpp"
 #include "../type.hpp"
+#include "../../parse/ast.hpp"
 
 #include <kdi.hpp>
 
 #include <stdexcept>
+#include <string_view>
 
 namespace k::model {
 
@@ -34,7 +36,15 @@ namespace k::model {
 // ─────────────────────────────────────────────────────────────────────────────
 
 static std::shared_ptr<type>
-convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx);
+convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx,
+        kdi_type_conversion mode);
+
+static bool needs_pinning(const std::shared_ptr<type>& t)
+{
+    if (t->is_pinned() || std::dynamic_pointer_cast<unresolved_callable_type>(t)) return true;
+    auto unresolved = std::dynamic_pointer_cast<unresolved_type>(t);
+    return unresolved && unresolved->has_model_only_template_args();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Primitive helpers
@@ -194,35 +204,46 @@ static callable_type::addresser model_addresser(kdi::kdi_callable_addresser a)
  */
 static std::shared_ptr<type>
 convert_callable(const kdi::kdi_callable_type& c, unit& owner,
-                 std::shared_ptr<context> ctx)
+                 std::shared_ptr<context> ctx, kdi_type_conversion mode)
 {
     callable_type_builder builder(ctx);
     builder.addresser(model_addresser(c.addresser));
+    std::shared_ptr<type> result_type;
+    std::vector<std::shared_ptr<type>> parameters;
+    bool unresolved = false;
 
     if (c.ret && !std::holds_alternative<kdi::kdi_void_type>(c.ret->value)) {
-        auto ret = convert(*c.ret, owner, ctx);
+        auto ret = convert(*c.ret, owner, ctx, mode);
         if (!ret) return nullptr;
         builder.return_type(ret);
+        result_type = ret;
+        unresolved |= mode == kdi_type_conversion::ordinary
+            ? type::contains_unresolved(ret) : !type::is_resolved(ret);
     }
 
     for (const auto& p : c.params) {
         if (!p) return nullptr;
-        auto pt = convert(*p, owner, ctx);
+        auto pt = convert(*p, owner, ctx, mode);
         if (!pt) return nullptr;
         builder.append_parameter_type(pt);
+        parameters.push_back(pt);
+        unresolved |= mode == kdi_type_conversion::ordinary
+            ? type::contains_unresolved(pt) : !type::is_resolved(pt);
     }
 
     std::vector<std::shared_ptr<type>> throws;
     for (const auto& th : c.throws) {
         if (!th) return nullptr;
-        auto tt = convert(*th, owner, ctx);
+        auto tt = convert(*th, owner, ctx, mode);
         if (!tt) return nullptr;
+        unresolved |= mode == kdi_type_conversion::ordinary
+            ? type::contains_unresolved(tt) : !type::is_resolved(tt);
         throws.push_back(tt);
     }
     builder.throws(throws);
 
+    std::vector<std::string> parts;
     if (!c.member_of.empty()) {
-        std::vector<std::string> parts;
         std::size_t start = 0;
         while (true) {
             auto pos = c.member_of.find("::", start);
@@ -230,6 +251,12 @@ convert_callable(const kdi::kdi_callable_type& c, unit& owner,
             parts.push_back(c.member_of.substr(start, pos - start));
             start = pos + 2;
         }
+    }
+    if (unresolved) {
+        return unresolved_callable_type::make_shared(
+            k::name{false, parts}, model_addresser(c.addresser), parameters, result_type, throws);
+    }
+    if (!parts.empty()) {
         auto agg = owner.get_or_create_imported_aggregate(k::name{false, std::move(parts)}, ctx);
         if (!agg) return nullptr;
         builder.member_of(std::static_pointer_cast<aggregate>(agg));
@@ -243,7 +270,8 @@ convert_callable(const kdi::kdi_callable_type& c, unit& owner,
 // ─────────────────────────────────────────────────────────────────────────────
 
 static std::shared_ptr<type>
-convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx)
+convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx,
+        kdi_type_conversion mode)
 {
     return std::visit([&](const auto& v) -> std::shared_ptr<type> {
         using T = std::decay_t<decltype(v)>;
@@ -265,61 +293,71 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx)
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_ref_type>) {
             if (!v.inner) return nullptr;
-            auto inner = convert(*v.inner, owner, ctx);
+            auto inner = convert(*v.inner, owner, ctx, mode);
             if (!inner) return nullptr;
-            return inner->get_reference();
+            return mode == kdi_type_conversion::ordinary && !needs_pinning(inner) ? inner->get_reference()
+                                                         : type::make_pinned_reference(inner);
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_ptr_type>) {
             if (!v.inner) return nullptr;
-            auto inner = convert(*v.inner, owner, ctx);
+            auto inner = convert(*v.inner, owner, ctx, mode);
             if (!inner) return nullptr;
-            return inner->get_pointer();
+            return mode == kdi_type_conversion::ordinary && !needs_pinning(inner) ? inner->get_pointer()
+                                                         : type::make_pinned_pointer(inner);
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_link_type>) {
             // link (~T) — represented as pointer in K model for now
             if (!v.inner) return nullptr;
-            auto inner = convert(*v.inner, owner, ctx);
+            auto inner = convert(*v.inner, owner, ctx, mode);
             if (!inner) return nullptr;
-            return inner->get_pointer();
+            if (mode == kdi_type_conversion::ordinary)
+                return needs_pinning(inner) ? type::make_pinned_pointer(inner) : inner->get_pointer();
+            return type::make_pinned_link(inner);
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_view_type>) {
             if (!v.inner) return nullptr;
-            auto inner = convert(*v.inner, owner, ctx);
+            auto inner = convert(*v.inner, owner, ctx, mode);
             if (!inner) return nullptr;
-            return inner->get_view();
+            return mode == kdi_type_conversion::ordinary && !needs_pinning(inner) ? inner->get_view()
+                                                         : type::make_pinned_view(inner);
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_owner_type>) {
             if (!v.inner) return nullptr;
-            auto inner = convert(*v.inner, owner, ctx);
+            auto inner = convert(*v.inner, owner, ctx, mode);
             if (!inner) return nullptr;
-            return inner->get_owner();
+            return mode == kdi_type_conversion::ordinary && !needs_pinning(inner) ? inner->get_owner()
+                                                         : type::make_pinned_owner(inner);
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_drain_type>) {
             if (!v.inner) return nullptr;
-            auto inner = convert(*v.inner, owner, ctx);
+            auto inner = convert(*v.inner, owner, ctx, mode);
             if (!inner) return nullptr;
-            return inner->get_drain();
+            return mode == kdi_type_conversion::ordinary && !needs_pinning(inner) ? inner->get_drain()
+                                                         : type::make_pinned_drain(inner);
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_const_type>) {
             if (!v.inner) return nullptr;
-            auto inner = convert(*v.inner, owner, ctx);
+            auto inner = convert(*v.inner, owner, ctx, mode);
             if (!inner) return nullptr;
-            return inner->get_const();
+            return mode == kdi_type_conversion::ordinary && !needs_pinning(inner) ? inner->get_const()
+                                                         : type::make_pinned_const(inner);
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_array_type>) {
             if (!v.elem) return nullptr;
-            auto elem = convert(*v.elem, owner, ctx);
+            auto elem = convert(*v.elem, owner, ctx, mode);
             if (!elem) return nullptr;
-            return elem->get_array();
+            return mode == kdi_type_conversion::ordinary && !needs_pinning(elem) ? elem->get_array()
+                                                         : type::make_pinned_array(elem);
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_sized_array_type>) {
             if (!v.elem) return nullptr;
-            auto elem = convert(*v.elem, owner, ctx);
+            auto elem = convert(*v.elem, owner, ctx, mode);
             if (!elem) return nullptr;
-            return elem->get_array(static_cast<unsigned long>(v.size));
+            return mode == kdi_type_conversion::ordinary && !needs_pinning(elem) ? elem->get_array(static_cast<unsigned long>(v.size))
+                : type::make_pinned_sized_array(elem, static_cast<unsigned long>(v.size));
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_callable_type>) {
-            return convert_callable(v, owner, ctx);
+            return convert_callable(v, owner, ctx, mode);
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_aggregate_ref>) {
             return convert_aggregate_ref(v, owner, ctx);
@@ -347,7 +385,14 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx)
             return convert_alias_ref(v, owner, ctx);
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_template_param_ref>) {
-            return ctx->from_string(v.name);
+            if (mode == kdi_type_conversion::ordinary) return ctx->from_string(v.name);
+            if (v.name.empty()) return nullptr;
+            k::parse::ast::qualified_identifier name{
+                std::nullopt, std::vector<k::lex::identifier>{k::lex::identifier(v.name)}};
+            k::parse::ast::identified_type_specifier specifier{name};
+            auto placeholder = std::dynamic_pointer_cast<unresolved_type>(ctx->from_type_specifier(specifier));
+            if (placeholder) placeholder->set_template_param_placeholder();
+            return placeholder;
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_erased_param_type>) {
             auto byte_type = ctx->from_type(primitive_type::BYTE);
@@ -355,7 +400,21 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx)
             return byte_type->get_erased_param();
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_generic_ref_type>) {
-            return ctx->from_string(v.name);
+            auto name = k::name::from(v.name);
+            std::vector<std::shared_ptr<type>> args;
+            args.reserve(v.args.size());
+            for (const auto& arg : v.args) {
+                if (!arg) return nullptr;
+                if (std::holds_alternative<kdi::kdi_void_type>(arg->value)) {
+                    args.push_back(nullptr);
+                    continue;
+                }
+                auto converted = convert(*arg, owner, ctx,
+                    mode == kdi_type_conversion::ordinary ? kdi_type_conversion::template_signature : mode);
+                if (!converted) return nullptr;
+                args.push_back(std::move(converted));
+            }
+            return unresolved_type::make_model_template(name, std::move(args));
         }
         else {
             return nullptr;
@@ -370,9 +429,10 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx)
 std::shared_ptr<type>
 kdi_type_to_model_type(const kdi::kdi_type& kdi_t,
                        unit& owner,
-                       std::shared_ptr<context> ctx)
+                       std::shared_ptr<context> ctx,
+                       kdi_type_conversion mode)
 {
-    return convert(kdi_t, owner, ctx);
+    return convert(kdi_t, owner, ctx, mode);
 }
 
 } // namespace k::model

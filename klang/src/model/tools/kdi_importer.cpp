@@ -135,22 +135,29 @@ template_param_kind template_param_kind_from_kdi(const std::string& kind) {
 
 std::unique_ptr<tpl_info> build_tpl_info_from_kdi(const kdi::kdi_template_def& tdef,
                                                   unit& owner,
-                                                  const std::shared_ptr<context>& ctx) {
+                                                  const std::shared_ptr<context>& ctx,
+                                                  const std::shared_ptr<ns>& definition_scope) {
     auto ti = std::make_unique<tpl_info>();
     ti->is_generic = tdef.is_generic;
     ti->is_imported_signature_only = tdef.is_generic;
+    const auto convert_param_type = [&](const kdi::kdi_type& descriptor) {
+        auto result = kdi_type_to_model_type(descriptor, owner, ctx,
+                                             kdi_type_conversion::template_signature);
+        set_type_definition_namespace(result, definition_scope);
+        return result;
+    };
     for (const auto& param : tdef.params) {
         template_param_descriptor desc;
         desc.kind = template_param_kind_from_kdi(param.kind);
         desc.name = param.name;
         if (param.constraint_type) {
-            desc.constraint_type = kdi_type_to_model_type(*param.constraint_type, owner, ctx);
+            desc.constraint_type = convert_param_type(*param.constraint_type);
         }
         if (param.default_type) {
-            desc.default_type = kdi_type_to_model_type(*param.default_type, owner, ctx);
+            desc.default_type = convert_param_type(*param.default_type);
         }
         if (param.value_type) {
-            desc.value_type = kdi_type_to_model_type(*param.value_type, owner, ctx);
+            desc.value_type = convert_param_type(*param.value_type);
         }
         ti->params.push_back(std::move(desc));
     }
@@ -160,7 +167,36 @@ std::unique_ptr<tpl_info> build_tpl_info_from_kdi(const kdi::kdi_template_def& t
 void populate_template_signature_aggregate(aggregate& agg,
                                            const kdi::kdi_aggregate& sig,
                                            unit& owner,
-                                           const std::shared_ptr<context>& ctx) {
+                                           const std::shared_ptr<context>& ctx,
+                                           std::vector<std::pair<std::shared_ptr<function>,
+                                                                 const std::vector<kdi::kdi_type>*>>& pending,
+                                           std::vector<std::tuple<std::shared_ptr<variable_definition>,
+                                                                  const kdi::kdi_type*, std::shared_ptr<ns>>>& pending_variables,
+                                           std::vector<std::tuple<std::shared_ptr<function>,
+                                                                  const kdi::kdi_type*, std::shared_ptr<ns>>>& pending_returns) {
+    const auto assign_type = [&](const std::shared_ptr<variable_definition>& var,
+                                 const kdi::kdi_type& descriptor) {
+        auto result = kdi_type_to_model_type(descriptor, owner, ctx,
+                                             kdi_type_conversion::template_signature);
+        if (result) {
+            set_type_definition_namespace(result, agg.ancestor<ns>());
+            var->set_type(std::move(result));
+        } else {
+            pending_variables.emplace_back(var, &descriptor, agg.ancestor<ns>());
+        }
+    };
+    const auto assign_return = [&](const std::shared_ptr<function>& fn,
+                                   const kdi::kdi_type& descriptor) {
+        if (std::holds_alternative<kdi::kdi_void_type>(descriptor.value)) return;
+        auto result = kdi_type_to_model_type(descriptor, owner, ctx,
+                                             kdi_type_conversion::template_signature);
+        if (result) {
+            set_type_definition_namespace(result, agg.ancestor<ns>());
+            fn->set_return_type(std::move(result));
+        } else {
+            pending_returns.emplace_back(fn, &descriptor, agg.ancestor<ns>());
+        }
+    };
     // Restore base class declarations (raw_name only — resolved during instantiation)
     for (const auto& kb : sig.bases) {
         visibility vis = (kb.visibility == kdi::kdi_visibility::protected_) ? PROTECTED : PUBLIC;
@@ -176,7 +212,7 @@ void populate_template_signature_aggregate(aggregate& agg,
         if (!mv) continue;
         mv->set_visibility(member->visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
         mv->set_const(member->is_const);
-        mv->set_type(kdi_type_to_model_type(member->type, owner, ctx));
+        assign_type(mv, member->type);
     }
 
     for (const auto& ctor_sig : sig.constructors) {
@@ -189,8 +225,11 @@ void populate_template_signature_aggregate(aggregate& agg,
                                               : (ctor_sig.is_defaulted ? function::function_aliasing::DEFAULT
                                                                        : function::function_aliasing::NONE));
         for (const auto& param : ctor_sig.params) {
-            auto p = ctor->append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
-            if (p) p->set_varargs(param.is_varargs);
+            auto p = ctor->append_parameter(param.name, nullptr);
+            if (p) {
+                p->set_varargs(param.is_varargs);
+                assign_type(p, param.type);
+            }
         }
     }
 
@@ -203,17 +242,15 @@ void populate_template_signature_aggregate(aggregate& agg,
         fn->set_abstract_func(method_sig.is_abstract);
         fn->set_final_func(method_sig.is_final);
         fn->set_operator(method_sig.is_operator);
-        auto ret_type = kdi_type_to_model_type(method_sig.return_type, owner, ctx);
-        if (ret_type) fn->set_return_type(ret_type);
+        assign_return(fn, method_sig.return_type);
         for (const auto& param : method_sig.params) {
-            auto p = fn->append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
-            if (p) p->set_varargs(param.is_varargs);
+            auto p = fn->append_parameter(param.name, nullptr);
+            if (p) {
+                p->set_varargs(param.is_varargs);
+                assign_type(p, param.type);
+            }
         }
-        // Import throws spec
-        for (const auto& ts : method_sig.throws_spec) {
-            auto exc_type = kdi_type_to_model_type(ts, owner, ctx);
-            if (exc_type) fn->add_throws_type(exc_type);
-        }
+        pending.emplace_back(fn, &method_sig.throws_spec);
         if (auto doc = to_function_doc(method_sig.doc)) {
             fn->set_documentation(std::move(doc));
         }
@@ -223,20 +260,37 @@ void populate_template_signature_aggregate(aggregate& agg,
 void populate_template_signature_function(function& fn,
                                           const kdi::kdi_function& sig,
                                           unit& owner,
-                                          const std::shared_ptr<context>& ctx) {
+                                          const std::shared_ptr<context>& ctx,
+                                          const std::shared_ptr<ns>& definition_scope,
+                                          std::vector<std::pair<std::shared_ptr<function>,
+                                                                const std::vector<kdi::kdi_type>*>>& pending,
+                                          std::vector<std::tuple<std::shared_ptr<variable_definition>,
+                                                                 const kdi::kdi_type*, std::shared_ptr<ns>>>& pending_variables,
+                                          std::vector<std::tuple<std::shared_ptr<function>,
+                                                                 const kdi::kdi_type*, std::shared_ptr<ns>>>& pending_returns) {
+    const auto convert_signature = [&](const kdi::kdi_type& descriptor) {
+        auto result = kdi_type_to_model_type(descriptor, owner, ctx,
+                                             kdi_type_conversion::template_signature);
+        set_type_definition_namespace(result, definition_scope);
+        return result;
+    };
     fn.set_visibility(sig.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
     fn.set_operator(sig.is_operator);
-    auto ret_type = kdi_type_to_model_type(sig.return_type, owner, ctx);
-    if (ret_type) fn.set_return_type(ret_type);
+    if (!std::holds_alternative<kdi::kdi_void_type>(sig.return_type.value)) {
+        auto ret_type = convert_signature(sig.return_type);
+        if (ret_type) fn.set_return_type(ret_type);
+        else pending_returns.emplace_back(fn.shared_as<function>(), &sig.return_type, definition_scope);
+    }
     for (const auto& param : sig.params) {
-        auto p = fn.append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
-        if (p) p->set_varargs(param.is_varargs);
+        auto p = fn.append_parameter(param.name, nullptr);
+        if (p) {
+            p->set_varargs(param.is_varargs);
+            auto param_type = convert_signature(param.type);
+            if (param_type) p->set_type(std::move(param_type));
+            else pending_variables.emplace_back(p, &param.type, definition_scope);
+        }
     }
-    // Import throws spec
-    for (const auto& ts : sig.throws_spec) {
-        auto exc_type = kdi_type_to_model_type(ts, owner, ctx);
-        if (exc_type) fn.add_throws_type(exc_type);
-    }
+    pending.emplace_back(fn.shared_as<function>(), &sig.throws_spec);
     if (auto doc = to_function_doc(sig.doc)) {
         fn.set_documentation(std::move(doc));
     }
@@ -767,6 +821,12 @@ void kdi_importer::restore_parameter_defaults(function& fn,
 }
 
 void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
+    _pending_type_aliases.clear();
+    _pending_generic_contracts.clear();
+    _pending_generic_variables.clear();
+    _pending_generic_returns.clear();
+    _pending_generic_template_params.clear();
+    _pending_generic_overloads.clear();
     // ── Step B1: collect all llvm_def strings from every loaded KDI ─────────
     // Parse them together in one LLVM IR module so that forward-references
     // between types (e.g. %Derived referencing %Base) are resolved immediately,
@@ -846,6 +906,134 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
         if (!imp.kdi) continue;
         materialise_namespace(imp.kdi->unit.root_ns, ctx);
     }
+
+    // Targets can refer to aliases declared later, including chains across
+    // namespaces. Resolve only after all declarations have been registered.
+    bool progress;
+    do {
+        progress = false;
+        for (auto& [alias, descriptor] : _pending_type_aliases) {
+            if (!alias || alias->is_resolved()) continue;
+            auto target = kdi_type_to_model_type(*descriptor->target_type, _unit, ctx);
+            if (!target || !type::is_resolved(target)) continue;
+            alias->set_target_type(target);
+            alias->_target_kind = alias_definition::target_kind_t::TYPE;
+            if (alias->is_strong()) alias->_alias_type = ctx->create_alias_type(alias, target);
+            alias->_resolved = true;
+            progress = true;
+        }
+    } while (progress);
+    _pending_type_aliases.clear();
+
+    for (const auto& [owner, info, definition, scope] : _pending_generic_template_params) {
+        (void)owner;
+        for (size_t i = 0; i < definition->params.size(); ++i) {
+            const auto& source = definition->params[i];
+            template_param_descriptor scratch;
+            auto& target = info ? info->params[i] : scratch;
+            const auto complete_type = [&](const std::optional<kdi::kdi_type>& descriptor,
+                                           std::shared_ptr<type>& destination,
+                                           const char* role) {
+                if (!descriptor || destination) return;
+                destination = kdi_type_to_model_type(*descriptor, _unit, ctx,
+                                                     kdi_type_conversion::template_signature);
+                if (!destination) {
+                    auto diag = k::log::diagnostic::make_error(
+                        static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_TYPE_UNRESOLVED),
+                        "Cannot materialise imported template parameter '{}' {} of '{}': "
+                        "its KDI type is unavailable",
+                        {source.name, role, definition->fq_name});
+                    diag.add_note("KDI type: '{0}'", {kdi::kdi_type_to_string(*descriptor)});
+                    _logger.report(diag);
+                    throw k::log::compiler_error(std::move(diag));
+                }
+                set_type_definition_namespace(destination, scope);
+            };
+            complete_type(source.constraint_type, target.constraint_type, "constraint");
+            complete_type(source.default_type, target.default_type, "default");
+            complete_type(source.value_type, target.value_type, "value type");
+        }
+    }
+    _pending_generic_template_params.clear();
+
+    // Retried descriptors can refer to aliases declared in a later namespace.
+    for (const auto& [var, descriptor, scope] : _pending_generic_variables) {
+        auto resolved = kdi_type_to_model_type(*descriptor, _unit, ctx,
+                                               kdi_type_conversion::template_signature);
+        if (!resolved) {
+            const bool is_param = std::dynamic_pointer_cast<parameter>(var) != nullptr;
+            auto diag = k::log::diagnostic::make_error(
+                is_param ? static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_VOID_NOT_ALLOWED)
+                         : static_cast<unsigned int>(k::diag::variable_diag::ERR_VAR_TYPE_UNRESOLVED),
+                "Cannot materialise imported generic {} '{}': its KDI type is unavailable",
+                {is_param ? "parameter" : "field", var->get_fq_name()});
+            diag.add_note("KDI type: '{0}'", {kdi::kdi_type_to_string(*descriptor)});
+            _logger.report(diag);
+            throw k::log::compiler_error(std::move(diag));
+        }
+        set_type_definition_namespace(resolved, scope);
+        var->set_type(std::move(resolved));
+    }
+    _pending_generic_variables.clear();
+
+    for (const auto& [fn, descriptor, scope] : _pending_generic_returns) {
+        auto resolved = kdi_type_to_model_type(*descriptor, _unit, ctx,
+                                               kdi_type_conversion::template_signature);
+        if (!resolved) {
+            auto diag = k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B),
+                "Cannot materialise imported generic return type of '{}': its KDI type is unavailable",
+                {fn->get_fq_name()});
+            diag.add_note("KDI return type: '{0}'", {kdi::kdi_type_to_string(*descriptor)});
+            _logger.report(diag);
+            throw k::log::compiler_error(std::move(diag));
+        }
+        set_type_definition_namespace(resolved, scope);
+        fn->set_return_type(std::move(resolved));
+    }
+    _pending_generic_returns.clear();
+
+    // Null parameter types must not be compared as void before completion.
+    for (const auto& [fn, candidates] : _pending_generic_overloads) {
+        for (const auto& candidate : candidates) {
+            bool same = true;
+            for (size_t i = 0; i < fn->get_parameter_size(); ++i) {
+                if (!gen::scope_lookup::same_signature_type(
+                        candidate->parameters()[i]->get_type(), fn->parameters()[i]->get_type())) {
+                    same = false;
+                    break;
+                }
+            }
+            if (same) {
+                if (auto owner = fn->parent<ns>()) owner->remove_function(fn);
+                break;
+            }
+        }
+    }
+    _pending_generic_overloads.clear();
+
+    const auto complete_throws = [&](function& fn, const std::vector<kdi::kdi_type>& spec) {
+        std::vector<std::shared_ptr<type>> resolved_types;
+        resolved_types.reserve(spec.size());
+        for (const auto& ts : spec) {
+            auto exc_type = kdi_type_to_model_type(ts, _unit, ctx,
+                                                    kdi_type_conversion::template_signature);
+            if (!exc_type) {
+                auto diag = k::log::diagnostic::make_error(
+                    static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND),
+                    "Cannot materialise imported exception type '{}' of '{}'",
+                    {kdi::kdi_type_to_string(ts), fn.get_fq_name()});
+                _logger.report(diag);
+                throw k::log::compiler_error(std::move(diag));
+            }
+            set_type_definition_namespace(exc_type, fn.ancestor<ns>());
+            resolved_types.push_back(std::move(exc_type));
+        }
+        fn.set_throws_spec(std::move(resolved_types));
+    };
+    for (const auto& [fn, spec] : _pending_generic_contracts)
+        complete_throws(*fn, *spec);
+    _pending_generic_contracts.clear();
 
     // Signatures can refer to unions or aliases in namespaces materialised later.
     // Complete their metadata only after every imported declaration exists.
@@ -1171,6 +1359,8 @@ void kdi_importer::materialise_alias(const kdi::kdi_alias& al,
             adef->_alias_type = ctx->create_alias_type(adef, adef->_target_type);
         }
         adef->_resolved = true;
+    } else if (al.target_type) {
+        _pending_type_aliases.emplace_back(adef, &al);
     }
 
     target_ns->add_alias(adef);
@@ -1500,10 +1690,17 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
                 if (!param.name.empty()) param_names.insert(param.name);
             }
             ctx->push_template_param_scope(param_names);
-            auto ti = build_tpl_info_from_kdi(tdef, _unit, ctx);
+            auto definition_scope = imported_namespace(_unit,
+                tdef.origin_module.empty() ? parent_kdi_ns.fq_name : tdef.origin_module);
+            auto ti = build_tpl_info_from_kdi(tdef, _unit, ctx, definition_scope);
             if (auto tpl_fn = host->define_function(tdef.name, tdef.function_signature->is_static)) {
                 tpl_fn->set_tpl_info(std::move(ti));
-                populate_template_signature_function(*tpl_fn, *tdef.function_signature, _unit, ctx);
+                _pending_generic_template_params.emplace_back(
+                    tpl_fn, tpl_fn->get_tpl_info(), &tdef, definition_scope);
+                populate_template_signature_function(*tpl_fn, *tdef.function_signature, _unit, ctx,
+                                                     definition_scope,
+                                                     _pending_generic_contracts,
+                                                     _pending_generic_variables, _pending_generic_returns);
                 restore_parameter_defaults(*tpl_fn, tdef.function_signature->params, ctx);
             }
             ctx->pop_template_param_scope();
@@ -1528,7 +1725,7 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
         }
         ctx->push_template_param_scope(param_names);
 
-        auto ti = build_tpl_info_from_kdi(tdef, _unit, ctx);
+        auto ti = build_tpl_info_from_kdi(tdef, _unit, ctx, target_ns);
         // Tag the template with its originating module namespace (normalised, no root
         // prefix) so the local instantiator can build an origin-qualified registry key.
         // Prefer the TRUE origin recorded on a re-exported template's KDI; fall back to
@@ -1543,6 +1740,7 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
         if (tdef.aggregate_signature) {
             if (auto existing = target_ns->get_aggregate(tdef.name)) {
                 if (existing->is_template()) {
+                    _pending_generic_template_params.emplace_back(existing, nullptr, &tdef, target_ns);
                     ctx->pop_template_param_scope();
                     return;
                 }
@@ -1568,7 +1766,11 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             if (tpl_agg) {
                 tpl_agg->set_visibility(tdef.visibility == "protected" ? PROTECTED : PUBLIC);
                 tpl_agg->set_tpl_info(std::move(ti));
-                populate_template_signature_aggregate(*tpl_agg, *tdef.aggregate_signature, _unit, ctx);
+                _pending_generic_template_params.emplace_back(
+                    tpl_agg, tpl_agg->get_tpl_info(), &tdef, target_ns);
+                populate_template_signature_aggregate(*tpl_agg, *tdef.aggregate_signature, _unit, ctx,
+                                                      _pending_generic_contracts,
+                                                      _pending_generic_variables, _pending_generic_returns);
                 materialise_annotations(tdef.aggregate_signature->annotations, *tpl_agg);
                 for (size_t i = 0; i < tpl_agg->constructors().size(); ++i)
                     restore_parameter_defaults(*tpl_agg->constructors()[i],
@@ -1579,6 +1781,7 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             }
         } else if (tdef.function_signature) {
             const auto& signature = *tdef.function_signature;
+            std::vector<std::shared_ptr<function>> pending_candidates;
             for (const auto& existing : target_ns->get_functions(tdef.name)) {
                 auto existing_ti = existing->get_tpl_info();
                 if (!existing_ti || existing_ti->params.size() != ti->params.size()
@@ -1586,24 +1789,30 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
                     || existing->get_parameter_size() != signature.params.size()) continue;
                 bool same = true;
                 for (size_t i = 0; i < signature.params.size(); ++i) {
-                    if (!gen::scope_lookup::same_signature_type(
-                            existing->parameters()[i]->get_type(),
-                            kdi_type_to_model_type(signature.params[i].type, _unit, ctx))) {
+                    auto existing_type = existing->parameters()[i]->get_type();
+                    auto incoming_type = kdi_type_to_model_type(signature.params[i].type, _unit, ctx,
+                                                                 kdi_type_conversion::template_signature);
+                    if (existing_type && incoming_type
+                        && !gen::scope_lookup::same_signature_type(existing_type, incoming_type)) {
                         same = false;
                         break;
                     }
                 }
-                if (same) {
-                    ctx->pop_template_param_scope();
-                    return;
-                }
+                if (same) pending_candidates.push_back(existing);
             }
 
             auto tpl_fn = target_ns->define_function(tdef.name, tdef.function_signature->is_static);
             if (tpl_fn) {
                 tpl_fn->set_tpl_info(std::move(ti));
-                populate_template_signature_function(*tpl_fn, *tdef.function_signature, _unit, ctx);
+                _pending_generic_template_params.emplace_back(
+                    tpl_fn, tpl_fn->get_tpl_info(), &tdef, target_ns);
+                populate_template_signature_function(*tpl_fn, *tdef.function_signature, _unit, ctx,
+                                                     target_ns,
+                                                     _pending_generic_contracts,
+                                                     _pending_generic_variables, _pending_generic_returns);
                 restore_parameter_defaults(*tpl_fn, tdef.function_signature->params, ctx, target_ns);
+                if (!pending_candidates.empty())
+                    _pending_generic_overloads.emplace_back(tpl_fn, std::move(pending_candidates));
             }
         }
 
