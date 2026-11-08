@@ -2137,45 +2137,6 @@ TEST_CASE("Deleted parameterized constructor prevents invocation", "[gen][resolu
             }, "selected deleted constructor"));
 }
 
-TEST_CASE("Non-deleted constructor still usable when another overload is deleted", "[gen][resolution][aliasing][delete]") {
-    // Foo() -> delete; but Foo(int) is a regular constructor — Foo(int) must still work.
-    REQUIRE_THROWS(gen_jit_throws(R"SRC(
-        module __ctor_delete_one__;
-
-        struct Foo {
-            a : int = 0;
-            Foo() -> delete;
-        }
-
-        test() : int {
-            p : Foo;   // ERROR: only Foo() exists but is deleted
-            return p.a;
-        }
-    )SRC"));
-}
-
-TEST_CASE("Defaulted constructor (-> default) behaves like compiler-generated", "[gen][resolution][aliasing][default]") {
-    // A struct with -> default; constructor should still allow default construction
-    // and initialize fields to their declared defaults.
-    auto jit = gen_jit(R"SRC(
-        module __ctor_default__;
-
-        struct Bar {
-            x : int = 7;
-            Bar() -> default;
-        }
-
-        test() : int {
-            b : Bar;
-            return b.x;
-        }
-    )SRC");
-    REQUIRE( jit );
-    auto test = jit->lookup_symbol<int(*)()>("test");
-    REQUIRE( test != nullptr );
-    REQUIRE( test() == 7 );
-}
-
 TEST_CASE("Deleted copy constructor rejects lvalue initialization", "[gen][resolution][copy][delete][regression]") {
     REQUIRE_THROWS(gen_jit_throws(R"SRC(
         module deleted_local_copy;
@@ -2339,4 +2300,43 @@ TEST_CASE("A returned lvalue rejects the selected deleted copy constructor",
             [](const auto& error) {
                 return error.get_diagnostic().message.find("deleted") != std::string::npos;
             }, "deleted returned-lvalue copy constructor"));
+}
+
+TEST_CASE("Non-deleted constructor still usable when another overload is deleted", "[gen][resolution][aliasing][delete]") {
+    // Foo() -> delete; but Foo(int) is a regular constructor — Foo(int) must still work.
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module __ctor_delete_one__;
+
+        struct Foo {
+            a : int = 0;
+            Foo() -> delete;
+        }
+
+        test() : int {
+            p : Foo;   // ERROR: only Foo() exists but is deleted
+            return p.a;
+        }
+    )SRC"));
+}
+
+TEST_CASE("Defaulted constructor (-> default) behaves like compiler-generated", "[gen][resolution][aliasing][default]") {
+    // A struct with -> default; constructor should still allow default construction
+    // and initialize fields to their declared defaults.
+    auto jit = gen_jit(R"SRC(
+        module __ctor_default__;
+
+        struct Bar {
+            x : int = 7;
+            Bar() -> default;
+        }
+
+        test() : int {
+            b : Bar;
+            return b.x;
+        }
+    )SRC");
+    REQUIRE( jit );
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE( test != nullptr );
+    REQUIRE( test() == 7 );
 }

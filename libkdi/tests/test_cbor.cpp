@@ -100,6 +100,40 @@ static kdi_type rt_type(const kdi_type& t) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+TEST_CASE("CBOR rejects malformed deletion and privacy flags", "[cbor][copy][regression]") {
+    for (bool constructor : {false, true}) {
+        for (const std::string key : {"is_deleted", "is_private"}) {
+            auto file = make_aggregate_file();
+            auto& agg = file.unit.root_ns.aggregates[0];
+            if (constructor) {
+                if (key == "is_deleted") agg.constructors[0].is_deleted = true;
+                else agg.constructors[0].is_private = true;
+            } else {
+                if (key == "is_deleted") agg.methods[0].is_deleted = true;
+                else agg.methods[0].is_private = true;
+            }
+            std::ostringstream out(std::ios::binary);
+            kdi_write_cbor(file, out);
+            auto encoded = out.str();
+            auto position = encoded.find(key);
+            REQUIRE(position != std::string::npos);
+            REQUIRE(encoded.find(key, position + key.size()) == std::string::npos);
+            position += key.size();
+            REQUIRE(static_cast<unsigned char>(encoded[position]) == 0xf5);
+            CAPTURE(constructor, key);
+            for (unsigned char invalid : {0x01, 0xf6}) {
+                auto malformed = encoded;
+                malformed[position] = static_cast<char>(invalid);
+                std::istringstream input(malformed, std::ios::binary);
+                CHECK_THROWS_AS(kdi_read_cbor(input), kdi_parse_error);
+            }
+            encoded[position] = static_cast<char>(0xf4);
+            std::istringstream valid(encoded, std::ios::binary);
+            CHECK_NOTHROW(kdi_read_cbor(valid));
+        }
+    }
+}
+
 TEST_CASE("CBOR: minimal file round-trips", "[cbor]") {
     auto original = make_minimal_file();
 
@@ -206,6 +240,34 @@ TEST_CASE("CBOR: aggregate file round-trips", "[cbor]") {
     REQUIRE(agg.annotations.size() == 1u);
     CHECK(agg.annotations[0].name == "annotations::Retention");
     CHECK(agg.annotations[0].source == "@annotations::Retention(Policy::SOURCE)");
+}
+
+TEST_CASE("CBOR preserves deleted private copy metadata and legacy defaults", "[cbor][copy][regression]") {
+    auto file = make_aggregate_file();
+    auto& agg = file.unit.root_ns.aggregates[0];
+    agg.constructors[0].is_copy_constructor = true;
+    agg.constructors[0].is_deleted = true;
+    agg.constructors[0].is_private = true;
+    agg.methods[0].is_deleted = true;
+    agg.methods[0].is_private = true;
+    auto round_trip = [](const kdi_file& original) {
+        std::ostringstream out(std::ios::binary);
+        kdi_write_cbor(original, out);
+        std::istringstream in(out.str(), std::ios::binary);
+        return kdi_read_cbor(in);
+    };
+    auto restored = round_trip(file);
+    CHECK(restored.unit.root_ns.aggregates[0].constructors[0].is_deleted);
+    CHECK(restored.unit.root_ns.aggregates[0].constructors[0].is_private);
+    CHECK(restored.unit.root_ns.aggregates[0].methods[0].is_deleted);
+    CHECK(restored.unit.root_ns.aggregates[0].methods[0].is_private);
+    agg.constructors[0].is_private = false;
+    agg.methods[0].is_private = false;
+    agg.methods[0].is_deleted = false;
+    restored = round_trip(file);
+    CHECK_FALSE(restored.unit.root_ns.aggregates[0].constructors[0].is_private);
+    CHECK_FALSE(restored.unit.root_ns.aggregates[0].methods[0].is_private);
+    CHECK_FALSE(restored.unit.root_ns.aggregates[0].methods[0].is_deleted);
 }
 
 TEST_CASE("CBOR: aggregate annotations default empty for legacy payloads", "[cbor][aggregate][annotations]") {
@@ -877,66 +939,4 @@ TEST_CASE("CBOR: polymorphic union round-trips", "[cbor][union][polymorphic]") {
     REQUIRE(run.alternatives.size() == 2);
     REQUIRE(run.alternatives[0].name == "dog");
     REQUIRE(run.alternatives[1].name == "cat");
-}
-
-TEST_CASE("CBOR rejects malformed deletion and privacy flags", "[cbor][copy][regression]") {
-    for (bool constructor : {false, true}) {
-        for (const std::string key : {"is_deleted", "is_private"}) {
-            auto file = make_aggregate_file();
-            auto& agg = file.unit.root_ns.aggregates[0];
-            if (constructor) {
-                if (key == "is_deleted") agg.constructors[0].is_deleted = true;
-                else agg.constructors[0].is_private = true;
-            } else {
-                if (key == "is_deleted") agg.methods[0].is_deleted = true;
-                else agg.methods[0].is_private = true;
-            }
-            std::ostringstream out(std::ios::binary);
-            kdi_write_cbor(file, out);
-            auto encoded = out.str();
-            auto position = encoded.find(key);
-            REQUIRE(position != std::string::npos);
-            REQUIRE(encoded.find(key, position + key.size()) == std::string::npos);
-            position += key.size();
-            REQUIRE(static_cast<unsigned char>(encoded[position]) == 0xf5);
-            CAPTURE(constructor, key);
-            for (unsigned char invalid : {0x01, 0xf6}) {
-                auto malformed = encoded;
-                malformed[position] = static_cast<char>(invalid);
-                std::istringstream input(malformed, std::ios::binary);
-                CHECK_THROWS_AS(kdi_read_cbor(input), kdi_parse_error);
-            }
-            encoded[position] = static_cast<char>(0xf4);
-            std::istringstream valid(encoded, std::ios::binary);
-            CHECK_NOTHROW(kdi_read_cbor(valid));
-        }
-    }
-}
-
-TEST_CASE("CBOR preserves deleted private copy metadata and legacy defaults", "[cbor][copy][regression]") {
-    auto file = make_aggregate_file();
-    auto& agg = file.unit.root_ns.aggregates[0];
-    agg.constructors[0].is_copy_constructor = true;
-    agg.constructors[0].is_deleted = true;
-    agg.constructors[0].is_private = true;
-    agg.methods[0].is_deleted = true;
-    agg.methods[0].is_private = true;
-    auto round_trip = [](const kdi_file& original) {
-        std::ostringstream out(std::ios::binary);
-        kdi_write_cbor(original, out);
-        std::istringstream in(out.str(), std::ios::binary);
-        return kdi_read_cbor(in);
-    };
-    auto restored = round_trip(file);
-    CHECK(restored.unit.root_ns.aggregates[0].constructors[0].is_deleted);
-    CHECK(restored.unit.root_ns.aggregates[0].constructors[0].is_private);
-    CHECK(restored.unit.root_ns.aggregates[0].methods[0].is_deleted);
-    CHECK(restored.unit.root_ns.aggregates[0].methods[0].is_private);
-    agg.constructors[0].is_private = false;
-    agg.methods[0].is_private = false;
-    agg.methods[0].is_deleted = false;
-    restored = round_trip(file);
-    CHECK_FALSE(restored.unit.root_ns.aggregates[0].constructors[0].is_private);
-    CHECK_FALSE(restored.unit.root_ns.aggregates[0].methods[0].is_private);
-    CHECK_FALSE(restored.unit.root_ns.aggregates[0].methods[0].is_deleted);
 }

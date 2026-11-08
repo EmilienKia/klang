@@ -1489,6 +1489,30 @@ TEST_CASE("import generic — template_def exported as signature-only metadata",
     REQUIRE(found_def);
 }
 
+TEST_CASE("generic KDI signatures retain every private deleted constructor",
+          "[import][template][generic][copy][delete][regression]") {
+    TmpKdi lib(R"K(
+        module genericdeletedcopy;
+        generic<typename T>
+        struct Guard {
+        private:
+            Guard(other: Guard&) -> delete;
+            Guard(other: const Guard&) -> delete;
+        public:
+            Guard() {}
+        }
+    )K");
+    auto metadata = kdi::kdi_read_cbor_file(lib.kdi_path);
+    auto def = std::find_if(metadata.unit.root_ns.template_defs.begin(),
+        metadata.unit.root_ns.template_defs.end(),
+        [](const auto& entry) { return entry.name == "Guard"; });
+    REQUIRE(def != metadata.unit.root_ns.template_defs.end());
+    REQUIRE(def->aggregate_signature);
+    CHECK(std::count_if(def->aggregate_signature->constructors.begin(),
+        def->aggregate_signature->constructors.end(),
+        [](const auto& ctor) { return ctor.is_deleted && ctor.is_private; }) == 2);
+}
+
 TEST_CASE("KDI generic references preserve nested arguments through import and re-export",
           "[import][template][generic][kdi][regression]") {
     TmpKdi lib(R"K(
@@ -6545,27 +6569,3 @@ TEST_CASE("import struct — indirect members targeting an imported aggregate re
 // ═════════════════════════════════════════════════════════════════════════════
 // Exported aliasing across a module boundary — 'alias' and 'typedef'
 // ═════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("generic KDI signatures retain every private deleted constructor",
-          "[import][template][generic][copy][delete][regression]") {
-    TmpKdi lib(R"K(
-        module genericdeletedcopy;
-        generic<typename T>
-        struct Guard {
-        private:
-            Guard(other: Guard&) -> delete;
-            Guard(other: const Guard&) -> delete;
-        public:
-            Guard() {}
-        }
-    )K");
-    auto metadata = kdi::kdi_read_cbor_file(lib.kdi_path);
-    auto def = std::find_if(metadata.unit.root_ns.template_defs.begin(),
-        metadata.unit.root_ns.template_defs.end(),
-        [](const auto& entry) { return entry.name == "Guard"; });
-    REQUIRE(def != metadata.unit.root_ns.template_defs.end());
-    REQUIRE(def->aggregate_signature);
-    CHECK(std::count_if(def->aggregate_signature->constructors.begin(),
-        def->aggregate_signature->constructors.end(),
-        [](const auto& ctor) { return ctor.is_deleted && ctor.is_private; }) == 2);
-}

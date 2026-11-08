@@ -94,6 +94,29 @@ TEST_CASE("check-symbols: abstract method not checked", "[symbols]") {
     REQUIRE( r.is_ok() );
 }
 
+TEST_CASE("check-symbols: deleted members have no binary symbols", "[symbols][deleted]") {
+    kdi_file file;
+    kdi_aggregate agg;
+    agg.name = "Key";
+    agg.fq_name = "test::Key";
+    kdi_constructor ctor;
+    ctor.is_deleted = true;
+    ctor.mangled_name = "deleted_c1";
+    ctor.mangled_name_c2 = "deleted_c2";
+    agg.constructors.push_back(ctor);
+    kdi_method method;
+    method.is_deleted = true;
+    method.mangled_name = "deleted_assign";
+    agg.methods.push_back(method);
+    file.unit.root_ns.aggregates.push_back(agg);
+    const std::set<std::string> empty_symbols;
+    CHECK(kdi_check_symbols(file, empty_symbols).is_ok());
+
+    file.unit.root_ns.aggregates[0].constructors[0].is_deleted = false;
+    file.unit.root_ns.aggregates[0].methods[0].is_deleted = false;
+    CHECK(kdi_check_symbols(file, empty_symbols).missing.size() == 3);
+}
+
 TEST_CASE("check-symbols: constructor C1+C2 both checked", "[symbols]") {
     kdi_file f;
     f.header.module_name = "p"; f.unit.name = "p";
@@ -190,27 +213,4 @@ TEST_CASE("collect_binary_symbols: non-existent file throws", "[symbols][live]")
 TEST_CASE("kdi_symbol_error: message includes context", "[symbols]") {
     kdi_symbol_error err("test context message");
     REQUIRE( std::string(err.what()).find("test context message") != std::string::npos );
-}
-
-TEST_CASE("check-symbols: deleted members have no binary symbols", "[symbols][deleted]") {
-    kdi_file file;
-    kdi_aggregate agg;
-    agg.name = "Key";
-    agg.fq_name = "test::Key";
-    kdi_constructor ctor;
-    ctor.is_deleted = true;
-    ctor.mangled_name = "deleted_c1";
-    ctor.mangled_name_c2 = "deleted_c2";
-    agg.constructors.push_back(ctor);
-    kdi_method method;
-    method.is_deleted = true;
-    method.mangled_name = "deleted_assign";
-    agg.methods.push_back(method);
-    file.unit.root_ns.aggregates.push_back(agg);
-    const std::set<std::string> empty_symbols;
-    CHECK(kdi_check_symbols(file, empty_symbols).is_ok());
-
-    file.unit.root_ns.aggregates[0].constructors[0].is_deleted = false;
-    file.unit.root_ns.aggregates[0].methods[0].is_deleted = false;
-    CHECK(kdi_check_symbols(file, empty_symbols).missing.size() == 3);
 }

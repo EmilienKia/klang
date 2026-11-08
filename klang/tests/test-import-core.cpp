@@ -45,6 +45,42 @@
 
 namespace fs = std::filesystem;
 
+TEST_CASE("Imported opaque Counter rejects tutorial copy probes", "[import][copy][delete][regression]") {
+    for (const auto* kind : {"final class", "struct"}) {
+        std::string producer = std::string(R"K(
+            module toy;
+            private struct NativeCounter {}
+            public )K") + kind + R"K( Counter {
+            private:
+                _handle: NativeCounter* = null;
+            public:
+                Counter() {}
+                Counter(other: const Counter&) -> delete;
+                operator =(const other: Counter&) -> delete;
+            }
+        )K";
+        TmpKdi lib(producer);
+        for (const auto* statement : {"b: toy::Counter; b = a;",
+                                       "b: toy::Counter(a);",
+                                       "b: toy::Counter = a;"}) {
+            std::string consumer = "module copyprobe; import toy; main(): int { "
+                "a: toy::Counter; " + std::string(statement) + " return 0; }";
+            auto compiler = k::compiler::create();
+            auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+            resolver->add_explicit_path("toy", lib.kdi_path);
+            compiler->set_file_resolver(resolver);
+            INFO(kind);
+            INFO(statement);
+            REQUIRE_THROWS_MATCHES(compiler->parse_source("copyprobe.k", consumer),
+                k::log::compiler_error,
+                Catch::Matchers::Predicate<k::log::compiler_error>(
+                    [](const auto& error) {
+                        return error.get_diagnostic().message.find("deleted") != std::string::npos;
+                    }, "deleted copy operation, not a missing LLVM declaration"));
+        }
+    }
+}
+
 TEST_CASE("KDI duplicate layouts require compatible referenced definitions",
           "[import][kdi-layout][regression]") {
     auto provider = std::make_shared<kdi::kdi_file>();
@@ -2578,39 +2614,3 @@ TEST_CASE("circular import — linear chain A→B→C→D has no cycle, must suc
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-
-TEST_CASE("Imported opaque Counter rejects tutorial copy probes", "[import][copy][delete][regression]") {
-    for (const auto* kind : {"final class", "struct"}) {
-        std::string producer = std::string(R"K(
-            module toy;
-            private struct NativeCounter {}
-            public )K") + kind + R"K( Counter {
-            private:
-                _handle: NativeCounter* = null;
-            public:
-                Counter() {}
-                Counter(other: const Counter&) -> delete;
-                operator =(const other: Counter&) -> delete;
-            }
-        )K";
-        TmpKdi lib(producer);
-        for (const auto* statement : {"b: toy::Counter; b = a;",
-                                       "b: toy::Counter(a);",
-                                       "b: toy::Counter = a;"}) {
-            std::string consumer = "module copyprobe; import toy; main(): int { "
-                "a: toy::Counter; " + std::string(statement) + " return 0; }";
-            auto compiler = k::compiler::create();
-            auto resolver = std::make_shared<k::path_lookup_file_resolver>();
-            resolver->add_explicit_path("toy", lib.kdi_path);
-            compiler->set_file_resolver(resolver);
-            INFO(kind);
-            INFO(statement);
-            REQUIRE_THROWS_MATCHES(compiler->parse_source("copyprobe.k", consumer),
-                k::log::compiler_error,
-                Catch::Matchers::Predicate<k::log::compiler_error>(
-                    [](const auto& error) {
-                        return error.get_diagnostic().message.find("deleted") != std::string::npos;
-                    }, "deleted copy operation, not a missing LLVM declaration"));
-        }
-    }
-}
