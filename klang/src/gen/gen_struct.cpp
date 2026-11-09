@@ -498,6 +498,7 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
                             bool all_resolved = true;
                             for (const auto& arg_name : arg_names) {
                                 std::shared_ptr<type> arg_type;
+                                bool nominal_aggregate_argument = false;
                                 // Try primitive type names
                                 static const std::unordered_map<std::string, primitive_type::PRIMITIVE_TYPE> prim_map = {
                                     {"bool", primitive_type::BOOL}, {"byte", primitive_type::BYTE},
@@ -516,13 +517,14 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
                                     // Try as user-defined aggregate type
                                     auto agg = scope_lookup::lookup_structure(st.shared_as<element>(), arg_name);
                                     if (agg && agg->get_struct_type()) {
-                                        arg_type = agg->get_struct_type();
+                                        auto arg_struct = agg->get_struct_type();
+                                        arg_type = arg_struct;
+                                        nominal_aggregate_argument = arg_struct->get_struct() == agg;
                                     }
                                 }
-                                // A nominal aggregate is usable as a template
-                                // argument before its LLVM layout is materialized.
-                                if (arg_type && (type::is_resolved(arg_type)
-                                    || std::dynamic_pointer_cast<struct_type>(arg_type))) {
+                                // A lexically bound aggregate has a nominal identity before its LLVM
+                                // layout; the struct type must belong to the aggregate found by name.
+                                if (arg_type && (type::is_resolved(arg_type) || nominal_aggregate_argument)) {
                                     model_args.push_back(template_argument::make_type(arg_type));
                                 } else {
                                     all_resolved = false;

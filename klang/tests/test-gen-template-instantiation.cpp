@@ -65,6 +65,41 @@ TEST_CASE("[A] M5: template struct instantiation via type reference",
     CHECK(get_value() == 42);
 }
 
+TEST_CASE("Imported template interface accepts a local noncopyable argument before layout",
+          "[gen][template][instantiation][local-interface-base][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module template_local_iterator_base;
+        struct Payload {
+            public:
+            value : int;
+            Payload(input : int) : value(input) {}
+            Payload(other : const Payload&) -> delete;
+        }
+        class Reader : public ConstIterator<Payload> {
+            private:
+            item : const Payload&;
+            public:
+            Reader(value : const Payload&) : item(value) {}
+            next() : OptionalConstRef<Payload> {
+                return OptionalConstRef<Payload>(item);
+            }
+        }
+        run() : int {
+            payload : Payload(17);
+            reader : Reader(payload);
+            view : ConstIterator<Payload>& = reader;
+            result : OptionalConstRef<Payload> = view.next();
+            if (!result.hasValue() || &result.get() != &payload) return 1;
+            payload.value = 42;
+            return result.get().value == 42 ? 42 : 2;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 42);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  [B] Template struct member variable has correct concrete type
 // ════════════════════════════════════════════════════════════════════════════

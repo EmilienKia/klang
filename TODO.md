@@ -1990,6 +1990,20 @@
   prerequisite (`union_array_assign` blocks); it needs semantic reconciliation and an
   isolated commit after the rebase. Do not copy it blindly.
 
+- [ ] **A variable declared `const` with a drain type is typed as a reference.**
+  In `type_reference_resolver::visit_symbol_expression`
+  (`klang/src/gen/gen_expressions.cpp`, declaration-const propagation, ~lines 397-421),
+  `type::is_any_indirection` includes drain types, but the kind reconstruction only
+  handles link, pointer, view and owner; a drain falls into the final `else` branch
+  and is rebuilt as `const_sub->get_reference()`. The symbol of a `const` drain
+  variable therefore loses its drain kind (the unflagged form keeps it, see the
+  `is_reference || is_drain` branch just below). Found while auditing rebase step 25;
+  the behaviour predates it. Not executed: no runtime repro has been run. Expected
+  semantics: the `const` flag applies to the drained referent and the symbol keeps its
+  drain type (`const_sub->get_drain()`), like `x : const T&&`. A regression should
+  check that a `const` drain variable and its `const T&&` spelling are identical for
+  overload resolution and Argument capture metadata.
+
 - [ ] **Assigning a struct or class value leaks the replaced destination.**
   `g = h` for an aggregate with a copy constructor copy-constructs a staging value
   and stores it over `g` without destroying the previous contents of `g` (only the
