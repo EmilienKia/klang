@@ -1138,10 +1138,31 @@ libk_add_test_sharded(libk-tests-collections-sequential 120 3
 )
 
 # ── libk associative collection tests (Set, Map) ─────────────────────────────
-libk_add_test(libk-tests-collections-associative 120
+add_executable(libk-tests-collections-associative
     tests/test-set.cpp
     tests/test-map.cpp
 )
+target_link_libraries(libk-tests-collections-associative klang-test-helpers Catch2::Catch2WithMain dl)
+add_dependencies(libk-tests-collections-associative libk_stdlib)
+target_compile_definitions(libk-tests-collections-associative PRIVATE
+    LIBK_KDI_DIR="${LIBK_OUTPUT_DIR}"
+    LIBK_LIB_DIR="${LIBK_OUTPUT_DIR}"
+    LIBK_TIME_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/time/fixtures"
+)
+# The complement retains untagged and multi-family cases without duplication.
+add_test(NAME libk-tests-collections-associative-set-shard-0
+         COMMAND libk-tests-collections-associative "[set]" --order lex --rng-seed 42
+                 --shard-count 2 --shard-index 0)
+add_test(NAME libk-tests-collections-associative-set-shard-1
+         COMMAND libk-tests-collections-associative "[set]" --order lex --rng-seed 42
+                 --shard-count 2 --shard-index 1)
+add_test(NAME libk-tests-collections-associative-non-set
+         COMMAND libk-tests-collections-associative "~[set]")
+set_tests_properties(
+    libk-tests-collections-associative-set-shard-0
+    libk-tests-collections-associative-set-shard-1
+    libk-tests-collections-associative-non-set
+    PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 
 # ── libk threading and I/O tests ─────────────────────────────────────────────
 libk_add_test_sharded(libk-thread-io-tests 120 2

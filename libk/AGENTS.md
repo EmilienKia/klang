@@ -164,7 +164,8 @@ Unless fully qualified, paths below are relative to `libk/libk/src/`.
 - `libk-tests-module`: dynamic module loading (`Application::loadModule`, `Module`); builds K/C fixture libraries from `libk/tests/modules/`.
 - `libk-tests-io`: synchronous stream/file/path I/O tests (2 Catch2 shards: `-shard-0/1`).
 - `libk-tests-collections-sequential`: sequential collection tests (List, Vector, Sequences).
-- `libk-tests-collections-associative`: associative collection tests (Set, Map).
+- `libk-tests-collections-associative`: associative collection test binary;
+  CTest entries `-set-shard-0/1` and `-non-set` cover Set and its complement.
 - `libk-thread-io-tests`: thread/future/sync/file/network tests (2 Catch2 shards).
 - `libk-tests-time`: time API tests (2 Catch2 shards).
 - `libk-tests-application-lifecycle`: isolated native/mock and compiled K exit
@@ -173,7 +174,8 @@ Unless fully qualified, paths below are relative to `libk/libk/src/`.
 - `libk-tests-io`: synchronous stream/file/path I/O tests.
 - `libk-tests-io-text`: print, text, codec, reader/scanner and UTF-8 pipeline tests.
 - `libk-tests-collections-sequential`: sequential collection tests (List, Vector, Sequences).
-- `libk-tests-collections-associative`: associative collection tests (Set, Map).
+- `libk-tests-collections-associative`: associative collection test binary;
+  CTest entries `-set-shard-0/1` and `-non-set` cover Set and its complement.
 - `libk-thread-io-tests`: thread/future/sync/file/network tests.
 - `libk-tests-file-channel-fully`: isolated FileChannel fully callback/Future/Sync API cases (120-second budget).
 - `libk-tests-stream-channels`: isolated TCP/Unix proactive API cases (120-second
@@ -218,6 +220,9 @@ diagnostic and verify that the parent's backend and owned descriptor survive.
 
 Focused examples:
 ```bash
+# All associative categories
+/usr/bin/ctest --test-dir cmake-build-debug -j1 -R '^libk-tests-collections-associative-' --output-on-failure
+
 # Sync/thread-related only
 cd cmake-build-debug && ./libk/libk/libk-thread-io-tests "[sync]"
 
