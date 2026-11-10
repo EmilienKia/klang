@@ -109,9 +109,10 @@ state is incompatible with earlier code even when that code uses an identical
 64-bit layout. Rebuild affected libraries, their KDI descriptors, and consumers
 together; regenerating a descriptor alone does not update the library.
 
-The importer rejects explicit non-64-bit-tag layouts, but does not yet identify
-older 64-bit lifecycle semantics or descriptors without a layout. Acceptance of
-a descriptor therefore does not establish binary compatibility.
+The importer rejects, with a diagnostic, descriptors whose union layout is missing,
+malformed, not an `{ i64, [N x i8] }` header/payload pair, or smaller than one of
+its alternatives. It does not yet identify older 64-bit lifecycle semantics, so
+acceptance of a descriptor does not establish binary compatibility.
 
 ---
 
@@ -727,7 +728,12 @@ check() : int {
 ```
 
 - Union layout (discriminant + storage size) is preserved across module
-  boundaries.
+  boundaries. A missing or invalid layout is a compile-time error.
+- A private union nested in an exported struct or class is cleaned up by that
+  aggregate's exported destructor; the importing module never inspects it. An
+  imported aggregate with such hidden resources and no exported copy constructor
+  is not copyable: copying it is a compile-time error, and copying a union that
+  holds it raises the `UCOP` fatal error.
 - Template unions can also be exported and instantiated by importing modules.
 - Union inheritance and polymorphic base relationships are preserved in KDI: a derived
   or polymorphic union's base is recorded and resolved at import time.

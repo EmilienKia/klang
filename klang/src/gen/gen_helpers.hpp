@@ -695,6 +695,17 @@ inline bool aggregate_type_has_resource_field(const std::shared_ptr<type>& t) {
     auto st = st_type->get_struct();
     if (!st) return false;
 
+    // An imported aggregate exposes only its public members; its private fields (owners,
+    // unions holding owners, ...) are opaque. A compiler-generated destructor exists only
+    // because some hidden member needs cleanup, so a bytewise copy would duplicate it.
+    if (st->is_imported()) {
+        auto imported_dtor = std::dynamic_pointer_cast<imported_destructor>(st->get_destructor());
+        if (imported_dtor && imported_dtor->get_kdi_destructor()
+            && imported_dtor->get_kdi_destructor()->is_compiler_generated) {
+            return true;
+        }
+    }
+
     for (auto& bs : st->get_bases()) {
         if (bs.base && bs.base->get_struct_type()) {
             if (aggregate_type_has_resource_field(bs.base->get_struct_type())) return true;

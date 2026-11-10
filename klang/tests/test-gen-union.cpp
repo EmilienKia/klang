@@ -1996,6 +1996,90 @@ TEST_CASE("Union passed by reference across modules", "[gen][union][import]") {
 }
 
 // ============================================================
+// Imported aggregates whose private nested union owns resources
+// ============================================================
+
+static const char* const k_private_union_holder_lib = R"K(
+    module gen_union_priv_lib;
+    drops: int = 0;
+    getDrops(): int { return drops; }
+    class Resource {
+        public:
+        Resource() {}
+        ~Resource() { ++drops; }
+    }
+    struct Holder {
+        private:
+        union Storage {
+            key: Resource!;
+            number: int;
+        }
+        _storage: Storage;
+        public:
+        Holder() {}
+        setKey() { _storage.key = new Resource(); }
+    }
+)K";
+
+TEST_CASE("Imported struct with a private owner union is cleaned up by its exported destructor",
+          "[gen][union][import][owner]") {
+    auto result = build_exec_with_lib(k_private_union_holder_lib, R"K(
+        module gen_union_priv_app1;
+        import gen_union_priv_lib;
+        union Slot { number: int; holder: gen_union_priv_lib::Holder; }
+        main(): int {
+            {
+                h: gen_union_priv_lib::Holder;
+                h.setKey();
+            }
+            if (gen_union_priv_lib::getDrops() != 1) return 10 + gen_union_priv_lib::getDrops();
+            {
+                s: Slot;
+                s.holder = gen_union_priv_lib::Holder();
+                s.holder.setKey();
+            }
+            return gen_union_priv_lib::getDrops() == 2 ? 42 : 20 + gen_union_priv_lib::getDrops();
+        }
+    )K");
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("Imported struct with hidden owner state is not bytewise copyable",
+          "[gen][union][import][owner]") {
+    REQUIRE_THROWS(build_exec_with_lib(k_private_union_holder_lib, R"K(
+        module gen_union_priv_app2;
+        import gen_union_priv_lib;
+        main(): int {
+            h: gen_union_priv_lib::Holder;
+            h.setKey();
+            c: gen_union_priv_lib::Holder = h;
+            return 0;
+        }
+    )K"));
+}
+
+TEST_CASE("Copying a union holding an imported struct with hidden owner state is rejected at runtime",
+          "[gen][union][import][owner]") {
+    auto result = build_exec_with_lib(k_private_union_holder_lib, R"K(
+        module gen_union_priv_app3;
+        import gen_union_priv_lib;
+        union Slot { number: int; holder: gen_union_priv_lib::Holder; }
+        main(): int {
+            caught: bool = false;
+            {
+                s: Slot;
+                s.holder = gen_union_priv_lib::Holder();
+                s.holder.setKey();
+                try { c: Slot = s; }
+                catch (e: FatalError&) { caught = true; }
+            }
+            return caught && gen_union_priv_lib::getDrops() == 1 ? 42 : 1;
+        }
+    )K");
+    REQUIRE(result.exit_code == 42);
+}
+
+// ============================================================
 // Nested unions inside aggregates
 // ============================================================
 

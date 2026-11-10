@@ -28,6 +28,11 @@
 
 #include <kdi.hpp>  // kdi_read_cbor_file, kdi_file, kdi_namespace, kdi_aggregate, …
 
+#include <llvm/IR/DataLayout.h>
+
+#include <cctype>
+#include <cstdint>
+#include <string_view>
 #include <sstream>
 #include <algorithm>
 #include <utility>
@@ -569,6 +574,47 @@ static std::string extract_llvm_type_name(const std::string& llvm_def) {
     return llvm_def.substr(1, eq - 1); // strip leading '%'
 }
 
+enum class union_layout_state { valid, missing, legacy_abi, malformed };
+
+struct union_layout_info {
+    union_layout_state state = union_layout_state::missing;
+    uint64_t storage_size = 0;
+};
+
+/// Parse the only union layout the compiler produces: `{ i64, [N x i8] }` with N >= 1.
+/// The i64 header holds the discriminant and the live state.
+static union_layout_info parse_union_layout(const std::string& llvm_def) {
+    if (llvm_def.empty()) return {union_layout_state::missing, 0};
+    const auto marker = llvm_def.find(" = type ");
+    if (marker == std::string::npos) return {union_layout_state::malformed, 0};
+    size_t pos = marker + 8;
+    const auto skip_space = [&]() {
+        while (pos < llvm_def.size() && std::isspace(static_cast<unsigned char>(llvm_def[pos]))) ++pos;
+    };
+    const auto consume = [&](std::string_view token) {
+        skip_space();
+        if (llvm_def.compare(pos, token.size(), token) != 0) return false;
+        pos += token.size();
+        return true;
+    };
+    if (!consume("{")) return {union_layout_state::malformed, 0};
+    if (!consume("i64")) return {union_layout_state::legacy_abi, 0};
+    if (!consume(",") || !consume("[")) return {union_layout_state::malformed, 0};
+    skip_space();
+    uint64_t size = 0;
+    const size_t digits = pos;
+    while (pos < llvm_def.size() && std::isdigit(static_cast<unsigned char>(llvm_def[pos]))) {
+        if (size > (UINT64_MAX - 9) / 10) return {union_layout_state::malformed, 0};
+        size = size * 10 + static_cast<uint64_t>(llvm_def[pos] - '0');
+        ++pos;
+    }
+    if (pos == digits || size == 0 || !consume("x") || !consume("i8") || !consume("]")
+        || !consume("}")) return {union_layout_state::malformed, 0};
+    skip_space();
+    if (pos != llvm_def.size()) return {union_layout_state::malformed, 0};
+    return {union_layout_state::valid, size};
+}
+
 struct llvm_type_identity {
     std::string fq_name;
     std::string conflicting_fq_name;
@@ -834,19 +880,19 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
     _pending_generic_overloads.clear();
     // Older union descriptors may use a 32-bit tag. Do not silently rebuild
     // those types with the lifecycle layout: their payload offsets can differ.
+    // A union without a complete `{ i64, [N x i8] }` layout cannot be rebuilt either.
     const auto validate_union_layout = [this](const kdi::kdi_union& un) {
-        const auto body = un.llvm_def.find('{');
-        if (body == std::string::npos) return;
-        const auto field = un.llvm_def.find_first_not_of(" \t\r\n", body + 1);
-        const auto separator = field == std::string::npos
-            ? std::string::npos : un.llvm_def.find_first_not_of(" \t\r\n", field + 3);
-        if (field != std::string::npos
-            && un.llvm_def.compare(field, 3, "i64") == 0
-            && separator != std::string::npos && un.llvm_def[separator] == ',') return;
+        const auto layout = parse_union_layout(un.llvm_def);
+        if (layout.state == union_layout_state::valid) return;
+        const std::string name = un.fq_name.empty() ? un.name : un.fq_name;
+        const char* message = layout.state == union_layout_state::legacy_abi
+            ? "Imported union '{}' has an incompatible lifecycle ABI; rebuild its library and KDI descriptor"
+            : layout.state == union_layout_state::missing
+            ? "Imported union '{}' has no LLVM layout; rebuild its library and KDI descriptor"
+            : "Imported union '{}' has an invalid LLVM layout; rebuild its library and KDI descriptor";
         auto diag = k::log::diagnostic::make_error(
             static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT),
-            "Imported union '{}' has an incompatible lifecycle ABI; rebuild its library and KDI descriptor",
-            {un.fq_name.empty() ? un.name : un.fq_name});
+            message, {name});
         _logger.report(diag);
         throw k::log::compiler_error(std::move(diag));
     };
@@ -1541,17 +1587,17 @@ void kdi_importer::materialise_union(const kdi::kdi_union& un,
         auto& llvm_ctx = ctx->llvm_context();
         auto* union_llvm_type = llvm::StructType::create(llvm_ctx, un.mangled_name + "_union");
 
-        size_t storage_size = 1;
-        if (!un.llvm_def.empty()) {
-            auto lbracket = un.llvm_def.find('[');
-            auto x_pos = un.llvm_def.find(" x i8]", lbracket);
-            if (lbracket != std::string::npos && x_pos != std::string::npos && x_pos > lbracket) {
-                std::string num_str = un.llvm_def.substr(lbracket + 1, x_pos - (lbracket + 1));
-                try {
-                    storage_size = std::stoull(num_str);
-                } catch (...) {}
-            }
+        // validate_union_layout has already rejected descriptors without a valid layout.
+        const auto layout = parse_union_layout(un.llvm_def);
+        if (layout.state != union_layout_state::valid) {
+            auto diag = k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT),
+                "Imported union '{}' has no usable LLVM layout; rebuild its library and KDI descriptor",
+                {normalised});
+            _logger.report(diag);
+            throw k::log::compiler_error(std::move(diag));
         }
+        const size_t storage_size = layout.storage_size;
         auto* disc_type = llvm::Type::getInt64Ty(llvm_ctx);
         auto* storage_type = llvm::ArrayType::get(llvm::Type::getInt8Ty(llvm_ctx), storage_size);
         union_llvm_type->setBody({disc_type, storage_type}, false);
@@ -1671,6 +1717,28 @@ void kdi_importer::materialise_union(const kdi::kdi_union& un,
                     }
                 }
             }
+        }
+    }
+
+    // The imported storage must hold every alternative of the chain: a smaller payload
+    // would make copies and cleanup read or write past the object.
+    {
+        // The module layout is not available yet; the default layout never overestimates
+        // the target size, so it can only miss an undersized payload, never reject a valid one.
+        const llvm::DataLayout data_layout("");
+        const uint64_t storage_size = parse_union_layout(un.llvm_def).storage_size;
+        for (const auto* alt : udef->all_alternatives_ptrs()) {
+            if (!alt || !alt->resolved_type || !type::is_resolved(alt->resolved_type)) continue;
+            auto* alt_llvm = alt->resolved_type->get_llvm_type();
+            if (!alt_llvm || !alt_llvm->isSized()) continue;
+            if (data_layout.getTypeAllocSize(alt_llvm) <= storage_size) continue;
+            auto diag = k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT),
+                "Imported union '{}' has a {}-byte payload that cannot hold alternative '{}'; "
+                "rebuild its library and KDI descriptor",
+                {normalised, std::to_string(storage_size), alt->name});
+            _logger.report(diag);
+            throw k::log::compiler_error(std::move(diag));
         }
     }
 

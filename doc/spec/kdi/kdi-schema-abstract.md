@@ -614,7 +614,7 @@ KdiUnion {
   alternatives             : [KdiUnionAlternative]
   base_union_fq_name       : string?   -- parent union for union inheritance
   polymorphic_base_fq_name : string?   -- base class or interface for polymorphic unions
-  llvm_def                 : string    -- LLVM IR struct definition, e.g. "{ i32, [8 x i8] }"
+  llvm_def                 : string    -- LLVM IR union layout, e.g. "%U = type { i64, [8 x i8] }"
   template_origin          : KdiTemplateOrigin?
   doc                      : KdiDocBlock?
 }
@@ -625,6 +625,22 @@ KdiUnionAlternative {
   is_const : bool
 }
 ```
+
+`llvm_def` is mandatory in practice. Its layout is always `{ i64, [N x i8] }` with
+`N >= 1`: the `i64` header holds the discriminant and the lifecycle state, and the
+byte payload holds the largest alternative. Importers must fail closed with a
+diagnostic when the layout is missing, empty, malformed, uses another header (older
+32-bit tag layouts), or when `N` is smaller than the size of an alternative they
+can resolve. They must not fall back to a default payload size.
+
+A private union nested in an exported aggregate is exported as a layout-only entry in
+the aggregate's `nested_unions`: `llvm_def` is set, `alternatives` is empty, and no
+importer-side union model is created. Its lifecycle is fully handled by the
+aggregate's exported (possibly compiler-generated) destructor and copy operations,
+so an importer never needs to inspect its alternatives. For the same reason, an
+imported aggregate whose exported destructor is compiler-generated and which has no
+exported copy constructor must be treated as holding hidden resources: importers
+must not copy it bytewise.
 
 ---
 

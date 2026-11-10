@@ -45,6 +45,9 @@
 #include <llvm/Support/raw_ostream.h>
 
 #include <algorithm>
+#include <fstream>
+#include <functional>
+#include <sstream>
 
 namespace fs = std::filesystem;
 
@@ -179,6 +182,67 @@ TEST_CASE("Import rejects a legacy union lifecycle layout",
         }, "rejects the legacy union layout");
     REQUIRE_THROWS_MATCHES(make_compiler()->parse_source("union_abi_legacy.k", consumer, false, false),
                            k::log::compiler_error, incompatible);
+}
+
+TEST_CASE("Import fails closed on a missing or malformed or undersized union layout",
+          "[import][union][abi][regression]") {
+    TmpKdi lib(R"K(
+        module unionlayoutguard;
+        public union Value { number: int; text: byte; }
+        public struct Holder {
+            private:
+            union Storage { number: int; flag: byte; }
+            _storage: Storage;
+            public:
+            Holder() {}
+        }
+    )K", true);
+    const auto original = kdi::kdi_read_cbor_file(lib.kdi_path);
+    REQUIRE(original.unit.root_ns.unions.size() == 1);
+    REQUIRE(original.unit.root_ns.aggregates.size() == 1);
+    REQUIRE(original.unit.root_ns.aggregates[0].nested_unions.size() == 1);
+
+    auto consumer_error = [&](const std::function<void(kdi::kdi_file&)>& tamper) -> std::string {
+        auto metadata = original;
+        tamper(metadata);
+        REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("unionlayoutguard", lib.kdi_path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        compiler->set_file_resolver(resolver);
+        try {
+            compiler->parse_source("union_layout_guard.k", R"K(
+                module unionlayoutguard_consumer;
+                import unionlayoutguard;
+                use(value: unionlayoutguard::Value&, holder: unionlayoutguard::Holder&) {}
+            )K", false, false);
+        } catch (const k::log::compiler_error& error) {
+            return error.get_diagnostic().message;
+        }
+        return {};
+    };
+    auto public_union = [](kdi::kdi_file& file) -> kdi::kdi_union& {
+        return file.unit.root_ns.unions[0];
+    };
+    auto private_union = [](kdi::kdi_file& file) -> kdi::kdi_union& {
+        return file.unit.root_ns.aggregates[0].nested_unions[0];
+    };
+
+    CHECK(consumer_error([](kdi::kdi_file&) {}).empty());
+    CHECK(consumer_error([&](kdi::kdi_file& f) { public_union(f).llvm_def.clear(); })
+          .find("has no LLVM layout") != std::string::npos);
+    CHECK(consumer_error([&](kdi::kdi_file& f) { private_union(f).llvm_def.clear(); })
+          .find("has no LLVM layout") != std::string::npos);
+    CHECK(consumer_error([&](kdi::kdi_file& f) {
+              auto& def = public_union(f).llvm_def;
+              def = def.substr(0, def.find('{')) + "{ i64 }";
+          }).find("has an invalid LLVM layout") != std::string::npos);
+    CHECK(consumer_error([&](kdi::kdi_file& f) {
+              auto& def = public_union(f).llvm_def;
+              const auto open = def.find('[');
+              def = def.substr(0, open) + "[1 x i8] }";
+          }).find("cannot hold alternative") != std::string::npos);
 }
 
 TEST_CASE("KDI preserves imported default and copy constructor exception contracts",

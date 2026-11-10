@@ -668,3 +668,18 @@ UnionAlternative = {
   ?"is_const" : bool
 }
 ```
+
+Layout rules (importer side, schema version unchanged):
+
+- `llvm_def` is always emitted by the compiler as `%name = type { i64, [N x i8] }`
+  with `N >= 1`. The CDDL keeps it optional only for the decoder; an importer must
+  reject a union without it, with a malformed layout, with a non-`i64` header
+  (legacy 32-bit tag layout), or whose payload is smaller than a resolvable
+  alternative, and must not assume a default payload size.
+- A private union nested in an exported aggregate is exported as a layout-only
+  entry of the aggregate's `nested_unions` (`llvm_def` only, empty `alternatives`).
+  Its lifecycle is owned by the aggregate's exported destructor and copy
+  operations; importers do not create a union node for it.
+- An imported aggregate with a compiler-generated destructor and no exported copy
+  constructor holds hidden resources (private owners or unions) and is not
+  bytewise copyable.

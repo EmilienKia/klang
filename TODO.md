@@ -150,13 +150,13 @@
       Verify the separate standalone virtual-base path described above and
       constructor selection in slot intrinsics; their interaction with
       imported generics is not established.
-- [ ] **Validate imported union layouts.**
-      `klang/src/model/tools/kdi_importer.cpp` accepts unions without layout
-      metadata and synthesizes a fallback layout. Verify that current producers
-      and consumers agree on size, alignment, discriminant and lifecycle state,
-      including nested and private union-containing wrappers. Old and new union
-      lifecycle ABIs are not compatible; rebuild affected libraries, KDI
-      descriptors and consumers together rather than mixing artifacts.
+- [x] **Validate imported union layouts.**
+      The importer now rejects unions whose `llvm_def` is missing, malformed,
+      uses a non-`i64` header, or whose payload cannot hold a resolvable
+      alternative (no fallback layout). Remaining: old 64-bit lifecycle
+      semantics cannot be distinguished from the current ones; rebuild
+      affected libraries, KDI descriptors and consumers together rather than
+      mixing artifacts. The alignment of the payload is not validated.
 - [ ] **Investigate foreach cleanup during exception unwinding.** Static review
       found that `visit_foreach_statement` in `klang/src/gen/gen_statements.cpp`
       registers the iterator and loop variable on `_cleanup_vars_stack`, but
@@ -438,10 +438,28 @@
       - [x] Permanent regressions in `klang/tests/test-gen-union.cpp`
         (reference escape, direct access, class first alternative, nested
         owner structs, wrapper copy, trivial first alternative, owner array).
-      - [ ] Step 2: imported and private layout-only unions. The importer
-        (`kdi_importer.cpp` validate_union_layout / materialise_union) must
-        fail closed or receive the first-alternative metadata, since such
-        unions still fall back to opaque storage and are not tracked.
+      - [x] Step 2: imported and private layout-only unions. The importer
+        (`kdi_importer.cpp` `parse_union_layout`, `validate_union_layout`,
+        `materialise_union`) fails closed on missing, malformed, legacy or
+        undersized layouts. Layout-only private unions need no metadata: the
+        exported compiler-generated destructor of the owning aggregate cleans
+        them up, and copies of imported aggregates with a compiler-generated
+        destructor are rejected (`aggregate_type_has_resource_field`).
+        Regressions: `test-import-core.cpp` (layout guard) and
+        `test-gen-union.cpp` (imported private-union holder).
+      - [ ] Imported aggregate as the FIRST alternative of a consumer union.
+        Its layout is opaque, so a never-constructed instance mutated through
+        a reference or member call (`u.holder.setKey()`) is not tracked and its
+        owner leaks at scope exit (no double free). Running the exported
+        destructor on zero-filled storage is unsafe (user destructors,
+        vptrs). Owner decision needed between: (1) export zero-state leaf
+        descriptors in KDI (format change); (2) construct on first mutable
+        access when a default constructor exists (behaviour change); (3) keep
+        the gap documented.
+      - [ ] An imported aggregate whose hidden resources are not covered by a
+        compiler-generated destructor (user-written destructor, private owner,
+        no exported copy constructor) is still bytewise copied. KDI has no
+        "has resource field" bit; adding one is a format change.
 
       Remaining gaps in step 1: arrays nested inside tracked aggregates,
       imported / virtual-base / inner aggregates and owning callable fields of
