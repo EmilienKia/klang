@@ -100,6 +100,42 @@ TEST_CASE("Imported template interface accepts a local noncopyable argument befo
     CHECK(run() == 42);
 }
 
+TEST_CASE("Inherited default dispatches through a nested nominal template base",
+          "[gen][template][instantiation][inherited-default-nominal-base][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module inherited_default_nominal_base;
+        template<typename K, typename V>
+        interface Pair {
+            const key() : const K&;
+            const value() : const V&;
+        }
+        template<typename T>
+        interface Channel {
+            const read() : int;
+        }
+        template<typename K, typename V>
+        interface Nested : public Channel<Pair<K,V>> {
+            default const result() : int { return read(); }
+        }
+        class Reader : public Nested<int,int> {
+            private:
+            value : int;
+            public:
+            Reader(input : int) : value(input) {}
+            const override read() : int { return value; }
+        }
+        run() : int {
+            reader : Reader(42);
+            view : const Nested<int,int>& = reader;
+            return view.result();
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 42);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 //  [B] Template struct member variable has correct concrete type
 // ════════════════════════════════════════════════════════════════════════════

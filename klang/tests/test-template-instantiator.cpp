@@ -162,6 +162,67 @@ TEST_CASE("[C] M4: instantiate template struct Box<int>",
     CHECK(name.find("int") != std::string::npos);
 }
 
+TEST_CASE("Nested template base retains its pre-layout nominal argument",
+          "[milestone4][instantiator][nested-nominal-base][regression]") {
+    auto comp = compile_model(R"SRC(
+        module nested_nominal_base_model;
+        template<typename K, typename V>
+        interface Pair {
+            const key() : const K&;
+            const value() : const V&;
+        }
+        template<typename T>
+        interface Channel {
+            const read() : int;
+        }
+        template<typename K, typename V>
+        interface Nested : public Channel<Pair<K,V>> {}
+    )SRC");
+    REQUIRE(comp);
+
+    auto unit = comp->get_unit();
+    REQUIRE(unit);
+    auto root = unit->get_root_namespace();
+    REQUIRE(root);
+    auto ctx = comp->get_context_for_test();
+    REQUIRE(ctx);
+    auto pair_template = root->get_aggregate("Pair");
+    auto channel_template = root->get_aggregate("Channel");
+    auto nested_template = root->get_aggregate("Nested");
+    REQUIRE(pair_template);
+    REQUIRE(channel_template);
+    REQUIRE(nested_template);
+
+    auto int_type = ctx->from_type(k::model::primitive_type::INT);
+    REQUIRE(int_type);
+    std::vector<k::model::template_argument> args{
+        k::model::template_argument::make_type(int_type),
+        k::model::template_argument::make_type(int_type)};
+    test_logger logger;
+
+    auto pair = k::model::template_instantiator::instantiate_aggregate(
+        *pair_template, args, root, *unit, ctx, logger);
+    REQUIRE(pair);
+    if (auto pair_type = pair->get_struct_type()) {
+        REQUIRE_FALSE(pair_type->get_llvm_type());
+    }
+
+    auto nested = k::model::template_instantiator::instantiate_aggregate(
+        *nested_template, args, root, *unit, ctx, logger);
+    REQUIRE(nested);
+    auto pair_type = pair->get_struct_type();
+    REQUIRE(pair_type);
+    REQUIRE_FALSE(pair_type->get_llvm_type());
+    const auto& bases = nested->get_bases();
+    REQUIRE(bases.size() == 1);
+    REQUIRE(bases.front().base);
+    const auto& channel = bases.front().base;
+    CHECK(channel->get_tpl_definition() == channel_template);
+    const auto& channel_args = channel->get_tpl_args();
+    REQUIRE(channel_args.size() == 1);
+    CHECK(channel_args.front().type_arg == pair_type);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  [D] Template instantiator: instantiate template function with T=int
 // ═══════════════════════════════════════════════════════════════════════════

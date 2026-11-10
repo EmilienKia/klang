@@ -403,15 +403,15 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
 
         for (auto& bs : st.get_bases_mutable()) {
 
-            // Resolve the base name from the current structure scope upward.
+            // Reuse a bound nominal base; otherwise resolve from the current scope.
             // bs.raw_name may be a simple name ("Base") or a qualified name
             // ("ns::Base") if the base comes from an imported module.
             // It may also contain template arguments ("Collection<int>").
-            std::shared_ptr<aggregate> base_st;
+            std::shared_ptr<aggregate> base_st = bs.base;
 
             // Check if the raw_name contains template arguments
             auto lt_pos = bs.raw_name.find('<');
-            if (lt_pos != std::string::npos) {
+            if (!base_st && lt_pos != std::string::npos) {
                 // Template base class: "Name<Arg1,Arg2,...>"
                 auto gt_pos = bs.raw_name.rfind('>');
                 if (gt_pos != std::string::npos && gt_pos > lt_pos) {

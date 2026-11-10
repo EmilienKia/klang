@@ -497,6 +497,9 @@ std::shared_ptr<type> template_instantiator::resolve_base_type_name(
     std::vector<template_argument> base_args;
     for (const auto& arg_name : split_top_level_args(args_str)) {
         auto arg_type = resolve_base_type_name(arg_name, subst, parent_ns, unit_ref, ctx, logger);
+        // A recursively instantiated aggregate already has its nominal model
+        // identity, even when its LLVM layout has not yet been materialized.
+        // Use the same semantic readiness rule as the template type resolvers.
         if (!arg_type || (!type::is_resolved(arg_type)
             && !std::dynamic_pointer_cast<struct_type>(arg_type))) return nullptr;
         base_args.push_back(template_argument::make_type(arg_type));
