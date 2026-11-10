@@ -795,7 +795,18 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
                 _builder->SetInsertPoint(ok_bb);
             }
             // GEP to the storage field (index 1)
-            auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, _value, 1, "union_storage");
+            auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, object.address, 1, "union_storage");
+            // Fields of a default first alternative can be written through the
+            // result, so later cleanup and copies must see it as live. A direct
+            // alternative assignment performs its own transition instead.
+            if (!_skip_union_disc_check && alt->index == 0 && !alt->is_const) {
+                auto object_type = expr.sub_expr()->get_type();
+                if (type::is_reference(object_type)) object_type = object_type->get_subtype();
+                if (!type::is_const(object_type)
+                    && union_first_alternative_tracks_default(*union_def, _unit.get_root_namespace())) {
+                    activate_default_union_alternative(object.address, *union_def);
+                }
+            }
             // The storage pointer is i8*; cast it to a pointer to the alternative's type
             // In LLVM opaque pointers mode, no bitcast needed — just use the pointer directly
             _value = storage_ptr;

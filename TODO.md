@@ -422,16 +422,66 @@
       Preserve exactly-once cleanup, self-assignment, checked exceptions, and
       inactive state after a failed transition.
 
-      Source inspection indicates that indirect mutation of a default first
-      owner alternative may bypass its live-state tracking, while extraction
-      of an owner through a union value cast or argument adaptation may
-      duplicate ownership; these cases still need reproductions and fixes.
+      Focused regressions pass for recursive first-nested-union dispatch and
+      owner extraction through value casts and argument adaptation.
+
+      Step 1 done (default state of a resource-bearing first alternative):
+      - [x] A third live state, "default, escaped" (live flag 2), is set by any
+        mutable access to alternative 0 when it is a struct, class or sized array
+        with owner leaves (`union_first_alternative_tracks_default`,
+        `activate_default_union_alternative`).
+      - [x] Cleanup releases the leaf owners field by field without running the
+        never-executed constructor or destructor (null vptr safe); copy of a
+        dtor-less/ctor-less escaped aggregate is by value only when every leaf
+        is empty, otherwise UCOP; user copy constructors go through the live
+        path; assignment of the first alternative releases then copy-constructs.
+      - [x] Permanent regressions in `klang/tests/test-gen-union.cpp`
+        (reference escape, direct access, class first alternative, nested
+        owner structs, wrapper copy, trivial first alternative, owner array).
+      - [ ] Step 2: imported and private layout-only unions. The importer
+        (`kdi_importer.cpp` validate_union_layout / materialise_union) must
+        fail closed or receive the first-alternative metadata, since such
+        unions still fall back to opaque storage and are not tracked.
+
+      Remaining gaps in step 1: arrays nested inside tracked aggregates,
+      imported / virtual-base / inner aggregates and owning callable fields of
+      tracked classes are not tracked; an escaped owner-element array first
+      alternative is rejected on copy and its cleanup does not unwind-protect
+      remaining elements; any non-const access (even a read) escapes the
+      alternative; stale aliases after reset are not handled.
+
+      A naive direct-field cleanup is unsafe under destination reentrancy.
+      Suppose a default first struct has two owners, and the second owner's
+      destructor writes another alternative through a pointer to the same
+      union. That write can overwrite the first owner's slot before its cleanup;
+      reading the slot afterward can free a corrupted pointer. Staging and
+      clearing both slots avoids that read, but the destructor can activate a
+      new owned alternative that the original replacement would overwrite
+      without cleaning; throwing during this transition also requires coordinated
+      unwind cleanup. A repair needs a proven transition protocol covering
+      reactivation, staged resources, and exceptions. No such repair has been
+      installed.
+
+      Private/imported opaque layouts, inherited fields, nested resource-bearing
+      aggregates, arrays, callable owners, alternatives without a parent
+      destructor and stale aliases need separate proven handling. Independently,
+      exceptional virtual-owner deallocation is a pre-existing, source-level
+      suspicion shared with ordinary owner cleanup; see the separate
+      polymorphic-owner entry below. It is not reproduced or fixed here.
       Cover nested and multiple-union wrappers, inherited alternatives,
       const-qualified fields, arrays, temporaries, and imported wrappers with
       private layouts. In particular, do not raw-copy an unconstructed
       aggregate that may contain indirectly initialized owned state.
       Throwing owner replacement still requires coverage for these distinct
       union ownership paths.
+
+- [ ] **Struct with owner fields and no destructor never releases them.**
+      A `struct Pair { a: Resource!; b: Resource!; }` without a user destructor
+      leaks its owner fields when a local goes out of scope, outside unions
+      (inside a union alternative the field-wise release now applies). Repro:
+      declare such a struct, assign `new Resource()` to a field in a block and
+      count `Resource` destructor calls at the end of the block: 0 drops.
+      Needs an owner decision on generating an implicit field-wise release.
 
 - [ ] **Language FFI reference still confuses UTF-32 characters with C byte strings.**
       `doc/spec/language/functions/ffi.md`, sections 2-5, describes K

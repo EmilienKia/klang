@@ -275,8 +275,32 @@ void implementation_generator::emit_union_copy(
         if (alt->index == 0 && (type::is_struct(bare) || type::is_sized_array(bare))) {
             auto* default_copy = llvm::BasicBlock::Create(**_context, "union_copy_default", fn);
             auto* live_copy = llvm::BasicBlock::Create(**_context, "union_copy_live", fn);
+            auto src_struct = std::dynamic_pointer_cast<struct_type>(bare);
+            auto src_agg = src_struct ? src_struct->get_struct() : nullptr;
+            auto src_copy_ctor = src_agg ? src_agg->get_copy_constructor() : nullptr;
+            // An escaped default aggregate without a user copy constructor is copied by value
+            // only while none of its resource slots holds an owner.
+            const bool escaped_by_value = src_agg
+                && union_first_alternative_tracks_default(source_def, _unit.get_root_namespace())
+                && (!src_copy_ctor || src_copy_ctor->is_compiler_generated());
+            auto* not_default = live_copy;
+            if (escaped_by_value) {
+                not_default = llvm::BasicBlock::Create(**_context, "union_copy_escaped", fn);
+            }
             _builder->CreateCondBr(_builder->CreateICmpEQ(src_state, _builder->getInt32(0)),
-                                   default_copy, live_copy);
+                                   default_copy, not_default);
+            if (escaped_by_value) {
+                _builder->SetInsertPoint(not_default);
+                auto* escaped_check = llvm::BasicBlock::Create(**_context, "union_copy_escaped_check", fn);
+                _builder->CreateCondBr(_builder->CreateICmpEQ(src_state, _builder->getInt32(2)),
+                                       escaped_check, live_copy);
+                _builder->SetInsertPoint(escaped_check);
+                auto* escaped_failure = llvm::BasicBlock::Create(**_context, "union_copy_escaped_failure", fn);
+                _builder->CreateCondBr(emit_default_aggregate_empty(src_payload, src_struct),
+                                       default_copy, escaped_failure);
+                _builder->SetInsertPoint(escaped_failure);
+                emit_union_copy_failure();
+            }
             _builder->SetInsertPoint(default_copy);
             if (destroy_dest_first) emit_union_cleanup(dest, dest_def);
             _builder->CreateStore(llvm::ConstantAggregateZero::get(dst_type), dest);
@@ -293,7 +317,11 @@ void implementation_generator::emit_union_copy(
             || type::is_const(type::canonical(alt->resolved_type));
         if (emit_union_payload_copy(dst_payload, src_payload, bare, alternative_source_const)) {
             _builder->CreateStore(disc, dst_disc_ptr);
-            _builder->CreateStore(src_state, union_live_state_ptr(dest, dest_def));
+            // An escaped default source yields a constructed (live) destination.
+            _builder->CreateStore(
+                _builder->CreateSelect(_builder->CreateICmpEQ(src_state, _builder->getInt32(2)),
+                                       _builder->getInt32(1), src_state),
+                union_live_state_ptr(dest, dest_def));
             _builder->CreateBr(done);
         }
     }
@@ -1323,6 +1351,19 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
             _builder->CreateICmpNE(old_disc, _builder->getInt32(0)),
             _builder->CreateICmpNE(live, _builder->getInt32(0)));
         is_active = _builder->CreateAnd(is_active, has_payload);
+        if (union_alt_for_assign->index == 0
+            && union_first_alternative_tracks_default(*union_def_for_assign, _unit.get_root_namespace())) {
+            // An escaped default alternative is not constructed: it is released field by field
+            // and then copy-constructed, never assigned in place.
+            auto* escaped = _builder->CreateICmpEQ(live, _builder->getInt32(2));
+            is_active = _builder->CreateAnd(is_active, _builder->CreateNot(escaped));
+            if (source->getType()->isPointerTy()) {
+                auto* dispatch_bb = llvm::BasicBlock::Create(**_context, "union_assign_dispatch", func);
+                auto* alias = _builder->CreateAnd(escaped, _builder->CreateICmpEQ(dest, source));
+                _builder->CreateCondBr(alias, done_bb, dispatch_bb);
+                _builder->SetInsertPoint(dispatch_bb);
+            }
+        }
         _builder->CreateCondBr(is_active, active_bb, construct_bb);
 
         auto construct_value = [&]() {

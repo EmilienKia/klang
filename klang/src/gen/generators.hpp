@@ -917,7 +917,14 @@ public:
     void emit_union_cleanup(llvm::Value* storage, union_type_def& udef);
     void emit_union_cleanup_on_reassign(llvm::Value* union_base, union_type_def& udef, size_t new_alt_idx);
     void emit_union_payload_cleanup(llvm::Value* storage, const std::shared_ptr<type>& payload_type,
-                                    bool protect_remaining = true);
+                                    bool protect_remaining = true, bool default_state = false);
+    /** Release the resource slots of a never-constructed aggregate field by field. */
+    void emit_default_aggregate_cleanup(llvm::Value* storage, const std::shared_ptr<struct_type>& agg_type,
+                                        bool protect_remaining);
+    /** i1: every resource slot of an unconstructed aggregate is empty. */
+    llvm::Value* emit_default_aggregate_empty(llvm::Value* storage, const std::shared_ptr<struct_type>& agg_type);
+    /** Mark a default-state first alternative "default, escaped" (live state 2). */
+    void activate_default_union_alternative(llvm::Value* storage, union_type_def& udef);
     void emit_union_copy(llvm::Value* dest, llvm::Value* source, union_type_def& dest_def,
                          union_type_def& source_def,
                          bool destroy_dest_first, bool source_const);

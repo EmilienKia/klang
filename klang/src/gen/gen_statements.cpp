@@ -4331,8 +4331,101 @@ void implementation_generator::emit_union_copy_failure() {
     _builder->CreateUnreachable();
 }
 
+void implementation_generator::activate_default_union_alternative(
+    llvm::Value* storage, union_type_def& udef) {
+    auto* live = _builder->CreateLoad(_builder->getInt32Ty(), union_live_state_ptr(storage, udef));
+    auto* fn = _builder->GetInsertBlock()->getParent();
+    auto* activate = llvm::BasicBlock::Create(**_context, "union_default_activate", fn);
+    auto* done = llvm::BasicBlock::Create(**_context, "union_default_activated", fn);
+    _builder->CreateCondBr(_builder->CreateICmpEQ(live, _builder->getInt32(0)), activate, done);
+    _builder->SetInsertPoint(activate);
+    const auto* first = udef.get_alternative_by_global_index(0);
+    auto bare = type::canonical(type::remove_const(type::canonical(first->resolved_type)));
+    if (auto array = std::dynamic_pointer_cast<sized_array_type>(bare)) {
+        // A zero-filled array has no elements to destroy until its size is published.
+        auto* union_type = udef.get_struct_type()->get_llvm_type();
+        auto* payload = _builder->CreateStructGEP(union_type, storage, 1, "union_default_payload");
+        auto* count_ptr = _builder->CreateStructGEP(
+            array->get_llvm_struct_type(), payload, sized_array_type::FIELD_SIZE, "union_default_count");
+        _builder->CreateStore(_builder->getInt32(array->get_size()), count_ptr);
+    }
+    _builder->CreateStore(_builder->getInt32(2), union_live_state_ptr(storage, udef));
+    _builder->CreateBr(done);
+    _builder->SetInsertPoint(done);
+}
+
+void implementation_generator::emit_default_aggregate_cleanup(
+    llvm::Value* storage, const std::shared_ptr<struct_type>& agg_type, bool protect_remaining) {
+    auto profile = zero_state_of(agg_type, _unit.get_root_namespace(), false);
+    if (!profile.valid) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), {},
+            "Cannot release the default state of '{}' field by field", {agg_type->to_string()});
+    }
+    std::vector<llvm::Value*> slots;
+    for (const auto& leaf : profile.leaves) {
+        llvm::Value* slot = storage;
+        for (const auto& [step_type, index] : leaf.steps)
+            slot = _builder->CreateStructGEP(step_type->get_llvm_type(), slot, index, "default_field");
+        slots.push_back(slot);
+    }
+    // A throwing release must not prevent the remaining slots from being released.
+    call_argument_cleanup_scope remaining(*this, protect_remaining);
+    for (size_t i = 0; i < slots.size(); ++i) remaining.track_storage(profile.leaves[i].leaf_type, slots[i]);
+    for (size_t i = slots.size(); i-- > 0;)
+        emit_union_payload_cleanup(slots[i], profile.leaves[i].leaf_type, false);
+    remaining.transfer();
+}
+
+llvm::Value* implementation_generator::emit_default_aggregate_empty(
+    llvm::Value* storage, const std::shared_ptr<struct_type>& agg_type) {
+    auto profile = zero_state_of(agg_type, _unit.get_root_namespace(), false);
+    if (!profile.valid) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), {},
+            "Cannot inspect the default state of '{}' field by field", {agg_type->to_string()});
+    }
+    auto* ptr_type = llvm::PointerType::get(_builder->getContext(), 0);
+    auto load_unaligned = [&](llvm::Type* value_type, llvm::Value* ptr) {
+        auto* value = _builder->CreateLoad(value_type, ptr);
+        value->setAlignment(llvm::Align(1));
+        return value;
+    };
+    llvm::Value* empty = _builder->getTrue();
+    for (const auto& leaf : profile.leaves) {
+        llvm::Value* slot = storage;
+        for (const auto& [step_type, index] : leaf.steps)
+            slot = _builder->CreateStructGEP(step_type->get_llvm_type(), slot, index, "default_field");
+        auto leaf_bare = type::canonical(type::remove_const(type::canonical(leaf.leaf_type)));
+        llvm::Value* leaf_empty = nullptr;
+        if (std::dynamic_pointer_cast<callable_type>(leaf_bare)) {
+            auto* callable_llvm = _context->get_or_create_callable_llvm_type();
+            auto* fn_value = load_unaligned(ptr_type, _builder->CreateStructGEP(callable_llvm, slot, 0));
+            auto* ctx_value = load_unaligned(ptr_type, _builder->CreateStructGEP(callable_llvm, slot, 1));
+            leaf_empty = _builder->CreateAnd(_builder->CreateIsNull(fn_value), _builder->CreateIsNull(ctx_value));
+        } else if (type::is_owner(leaf_bare)) {
+            leaf_empty = _builder->CreateIsNull(load_unaligned(ptr_type, slot));
+        } else {
+            auto leaf_struct = std::dynamic_pointer_cast<struct_type>(leaf_bare);
+            auto nested = leaf_struct ? find_union_by_struct_type(_unit.get_root_namespace(), leaf_struct) : nullptr;
+            if (!nested) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), {},
+                    "Cannot find union metadata while inspecting '{}'", {agg_type->to_string()});
+            }
+            auto* nested_type = nested->get_struct_type()->get_llvm_type();
+            auto* disc = load_unaligned(_builder->getInt32Ty(), _builder->CreateStructGEP(nested_type, slot, 0));
+            auto* state = load_unaligned(_builder->getInt32Ty(), union_live_state_ptr(slot, *nested));
+            leaf_empty = _builder->CreateOr(
+                _builder->CreateICmpEQ(disc, _builder->getInt32(-1)),
+                _builder->CreateAnd(_builder->CreateICmpEQ(disc, _builder->getInt32(0)),
+                                    _builder->CreateICmpEQ(state, _builder->getInt32(0))));
+        }
+        empty = _builder->CreateAnd(empty, leaf_empty);
+    }
+    return empty;
+}
+
 void implementation_generator::emit_union_payload_cleanup(
-    llvm::Value* storage, const std::shared_ptr<type>& payload_type, bool protect_remaining) {
+    llvm::Value* storage, const std::shared_ptr<type>& payload_type, bool protect_remaining,
+    bool default_state) {
     auto bare = type::canonical(type::remove_const(type::canonical(payload_type)));
     if (auto owner = std::dynamic_pointer_cast<owner_type>(bare)) {
         emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
@@ -4343,7 +4436,8 @@ void implementation_generator::emit_union_payload_cleanup(
                 _context->get_or_create_callable_llvm_type(), "union_callable", make_virtual_call_emitter());
         }
     } else if (auto array = std::dynamic_pointer_cast<sized_array_type>(bare)) {
-        call_argument_cleanup_scope remaining(*this, protect_remaining);
+        // Unwinding would destroy the elements of an unconstructed array as live objects.
+        call_argument_cleanup_scope remaining(*this, protect_remaining && !default_state);
         remaining.track_storage(bare, storage);
         auto* array_type = array->get_llvm_struct_type();
         auto* data_type = array->get_llvm_data_array_type();
@@ -4364,18 +4458,37 @@ void implementation_generator::emit_union_payload_cleanup(
         _builder->CreateStore(index, count_ptr);
         auto* element = _builder->CreateInBoundsGEP(data_type, data_ptr,
             {_builder->getInt32(0), index}, "union_array_element");
-        emit_union_payload_cleanup(element, array->get_subtype(), protect_remaining);
+        emit_union_payload_cleanup(element, array->get_subtype(), protect_remaining, default_state);
         _builder->CreateBr(test);
         _builder->SetInsertPoint(done);
         remaining.transfer();
     } else if (auto st = std::dynamic_pointer_cast<struct_type>(bare)) {
         if (auto agg = st->get_struct()) {
-            if (auto dtor = agg->get_destructor()) {
+            if (default_state) {
+                emit_default_aggregate_cleanup(storage, st, protect_remaining);
+            } else if (auto dtor = agg->get_destructor()) {
                 if (auto* llvm_dtor = _context->lookup_llvm_function(dtor)) {
                     if (agg->has_vtable())
                         emit_virtual_destructor_call(_builder.get(), *agg, storage, make_virtual_call_emitter());
                     else
                         create_call_or_invoke(llvm_dtor->getFunctionType(), llvm_dtor, {storage});
+                }
+            } else if (struct_releases_fields_without_destructor(*agg)) {
+                // Owners of a destructor-less struct are released field by field,
+                // in reverse declaration order.
+                std::vector<std::pair<unsigned, std::shared_ptr<type>>> fields;
+                for (const auto& entry : agg->variables()) {
+                    auto member = std::dynamic_pointer_cast<member_variable_definition>(entry.second);
+                    if (!member || !type_releases_fields_without_destructor(member->get_type())) continue;
+                    auto field = st->get_member(member->get_short_name());
+                    if (field) fields.emplace_back(static_cast<unsigned>(field->index), member->get_type());
+                }
+                std::sort(fields.begin(), fields.end(),
+                    [](const auto& a, const auto& b) { return a.first < b.first; });
+                for (auto it = fields.rbegin(); it != fields.rend(); ++it) {
+                    auto* field_ptr = _builder->CreateStructGEP(
+                        st->get_llvm_type(), storage, it->first, "union_struct_field");
+                    emit_union_payload_cleanup(field_ptr, it->second, protect_remaining);
                 }
             }
         } else if (auto nested = find_union_for_struct_type(_unit, st)) {
@@ -4399,6 +4512,7 @@ void implementation_generator::emit_union_cleanup(llvm::Value* storage, union_ty
         _builder->CreateICmpEQ(live, _builder->getInt32(0)));
     _builder->CreateCondBr(default_unconstructed, merge_bb, dispatch_bb);
     _builder->SetInsertPoint(dispatch_bb);
+    const bool tracks_default = union_first_alternative_tracks_default(udef, _unit.get_root_namespace());
     auto alternatives = udef.all_alternatives_ptrs();
     auto* switch_inst = _builder->CreateSwitch(disc_val, merge_bb, alternatives.size());
     for (const auto* alt : alternatives) {
@@ -4409,10 +4523,25 @@ void implementation_generator::emit_union_cleanup(llvm::Value* storage, union_ty
             case_bb);
 
         _builder->SetInsertPoint(case_bb);
+        llvm::Value* escaped_default = nullptr;
+        if (alt->index == 0 && tracks_default) {
+            escaped_default = _builder->CreateICmpEQ(
+                _builder->CreateLoad(_builder->getInt32Ty(), union_live_state_ptr(storage, udef)),
+                _builder->getInt32(2));
+        }
         _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
         set_union_live_state(storage, udef, false);
         auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, storage, 1, "union_dtor_storage");
-        emit_union_payload_cleanup(storage_ptr, alt->resolved_type);
+        if (escaped_default) {
+            auto* default_bb = llvm::BasicBlock::Create(**_context, "union_dtor_default", cur_fn);
+            auto* live_bb = llvm::BasicBlock::Create(**_context, "union_dtor_live", cur_fn);
+            _builder->CreateCondBr(escaped_default, default_bb, live_bb);
+            _builder->SetInsertPoint(default_bb);
+            emit_union_payload_cleanup(storage_ptr, alt->resolved_type, true, true);
+            _builder->CreateBr(merge_bb);
+            _builder->SetInsertPoint(live_bb);
+        }
+        emit_union_payload_cleanup(storage_ptr, alt->resolved_type, true);
         _builder->CreateBr(merge_bb);
     }
     _builder->SetInsertPoint(merge_bb);
@@ -4431,10 +4560,18 @@ void implementation_generator::emit_union_cleanup_on_reassign(llvm::Value* union
     auto* alt = udef.get_alternative_by_global_index(new_alt_idx);
     auto alt_type = alt ? type::canonical(type::remove_const(alt->resolved_type)) : nullptr;
     auto callable = std::dynamic_pointer_cast<callable_type>(alt_type);
+    llvm::Value* skip_cleanup = already_new;
+    if (new_alt_idx == 0 && union_first_alternative_tracks_default(udef, _unit.get_root_namespace())) {
+        // An escaped default alternative is not an object that can be reassigned in place.
+        auto* escaped = _builder->CreateICmpEQ(
+            _builder->CreateLoad(_builder->getInt32Ty(), union_live_state_ptr(union_base, udef)),
+            _builder->getInt32(2));
+        skip_cleanup = _builder->CreateAnd(already_new, _builder->CreateNot(escaped));
+    }
     if (type::is_owner(alt_type) || (callable && callable->is_owner()))
         _builder->CreateBr(need_cleanup_bb);
     else
-        _builder->CreateCondBr(already_new, merge_bb, need_cleanup_bb);
+        _builder->CreateCondBr(skip_cleanup, merge_bb, need_cleanup_bb);
 
     _builder->SetInsertPoint(need_cleanup_bb);
     emit_union_cleanup(union_base, udef);

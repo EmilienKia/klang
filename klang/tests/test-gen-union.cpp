@@ -2388,3 +2388,209 @@ TEST_CASE("Union owner-array alternative updates discriminant", "[gen][union][ow
     CHECK(jit->lookup_symbol<int(*)()>("test_value")() == 65);
     CHECK(jit->lookup_symbol<int(*)()>("test_switch")() == 0);
 }
+
+TEST_CASE("Default first struct alternative owners written through references are released",
+          "[gen][union][default][struct][owner][reference][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_default_struct_owners;
+        drops: int = 0;
+        class Resource { public: Resource() {} ~Resource() { ++drops; } }
+        struct Pair { a: Resource!; b: Resource!; }
+        union U { pair: Pair; number: int; }
+        borrow(u: U&): Pair& { return u.pair; }
+        viaReference(): int {
+            drops = 0;
+            {
+                u: U;
+                p: Pair& = borrow(u);
+                p.a = new Resource();
+                p.b = new Resource();
+            }
+            return drops == 2 ? 42 : -(100 + drops);
+        }
+        viaDirectAccess(): int {
+            drops = 0;
+            {
+                u: U;
+                u.pair.a = new Resource();
+            }
+            return drops == 1 ? 42 : -(200 + drops);
+        }
+        replaced(): int {
+            drops = 0;
+            {
+                u: U;
+                borrow(u).a = new Resource();
+                u.number = 7;
+                if (drops != 1) return -(300 + drops);
+            }
+            return drops == 1 ? 42 : -(400 + drops);
+        }
+        untouched(): int {
+            drops = 0;
+            {
+                u: U;
+                copy: U = u;
+                if (copy.index() != 0) return -1;
+            }
+            return drops == 0 ? 42 : -(500 + drops);
+        }
+    )K");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int (*)()>("viaReference")() == 42);
+    CHECK(jit->lookup_symbol<int (*)()>("viaDirectAccess")() == 42);
+    CHECK(jit->lookup_symbol<int (*)()>("replaced")() == 42);
+    CHECK(jit->lookup_symbol<int (*)()>("untouched")() == 42);
+}
+
+TEST_CASE("Copying a default first struct alternative holding owners is rejected",
+          "[gen][union][default][struct][owner][copy][exceptions][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_default_struct_copy;
+        drops: int = 0;
+        class Resource { public: Resource() {} ~Resource() { ++drops; } }
+        struct Pair { a: Resource!; }
+        union U { pair: Pair; number: int; }
+        struct Wrapper { value: U; tag: int; }
+        borrow(u: U&): Pair& { return u.pair; }
+        direct(): int {
+            drops = 0;
+            code: int = 0;
+            {
+                u: U;
+                borrow(u).a = new Resource();
+                try { c: U = u; }
+                catch (error: FatalError&) { code = error.getCode(); }
+            }
+            return code == 0x55434f50 && drops == 1 ? 42 : -(100 + drops);
+        }
+        nested(): int {
+            drops = 0;
+            code: int = 0;
+            {
+                w: Wrapper;
+                borrow(w.value).a = new Resource();
+                try { c: Wrapper = w; }
+                catch (error: FatalError&) { code = error.getCode(); }
+            }
+            return code == 0x55434f50 && drops == 1 ? 42 : -(200 + drops);
+        }
+        assignment(): int {
+            drops = 0;
+            code: int = 0;
+            {
+                source: U;
+                borrow(source).a = new Resource();
+                target: U;
+                try { target = source; }
+                catch (error: FatalError&) { code = error.getCode(); }
+                if (target.index() != -1 && target.index() != 0) return -1;
+            }
+            return code == 0x55434f50 && drops == 1 ? 42 : -(300 + drops);
+        }
+    )K");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int (*)()>("direct")() == 42);
+    CHECK(jit->lookup_symbol<int (*)()>("nested")() == 42);
+    CHECK(jit->lookup_symbol<int (*)()>("assignment")() == 42);
+}
+
+TEST_CASE("Default first class alternative owners written through references are released",
+          "[gen][union][default][class][owner][reference][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_default_class_owners;
+        drops: int = 0;
+        class Resource { public: Resource() {} ~Resource() { ++drops; } }
+        class Holder { public: owned: Resource!; Holder() {} }
+        union U { holder: Holder; number: int; }
+        borrow(u: U&): Holder& { return u.holder; }
+        test(): int {
+            drops = 0;
+            {
+                u: U;
+                h: Holder& = borrow(u);
+                h.owned = new Resource();
+            }
+            return drops == 1 ? 42 : -(100 + drops);
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Default first struct alternative with nested owner structs releases every field once",
+          "[gen][union][default][struct][nested][owner][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_default_nested_struct_owners;
+        drops: int = 0;
+        class Resource { public: Resource() {} ~Resource() { ++drops; } }
+        struct Inner { a: Resource!; }
+        struct Outer { inner: Inner; b: Resource!; count: int; }
+        union U { outer: Outer; number: int; }
+        borrow(u: U&): Outer& { return u.outer; }
+        test(): int {
+            drops = 0;
+            {
+                u: U;
+                o: Outer& = borrow(u);
+                o.inner.a = new Resource();
+                o.b = new Resource();
+                o.count = 2;
+            }
+            return drops == 2 ? 42 : -(100 + drops);
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Default first trivial struct alternative is still copied by value",
+          "[gen][union][default][struct][copy][trivial][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_default_trivial_struct;
+        struct Plain { a: int; b: int; }
+        union U { plain: Plain; number: int; }
+        borrow(u: U&): Plain& { return u.plain; }
+        peek(u: const U&): const Plain& { return u.plain; }
+        test(): int {
+            u: U;
+            p: Plain& = borrow(u);
+            p.a = 40;
+            p.b = 2;
+            copy: U = u;
+            if (copy.index() != 0) return -1;
+            q: const Plain& = peek(copy);
+            return q.a + q.b;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Default first owner array alternative element writes are released",
+          "[gen][union][default][array][owner][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_default_array_owners;
+        drops: int = 0;
+        class Resource { public: Resource() {} ~Resource() { ++drops; } }
+        union U { items: Resource![2]; number: int; }
+        test(): int {
+            drops = 0;
+            {
+                u: U;
+                u.items[1] = new Resource();
+            }
+            return drops == 1 ? 42 : -(100 + drops);
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}

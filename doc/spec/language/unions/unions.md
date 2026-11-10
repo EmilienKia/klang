@@ -158,6 +158,53 @@ union is mutable. Union copy checks the contracts of potentially active
 alternatives; at runtime it copies only the active payload. A default-unconstructed
 first class or struct alternative is not copied as a live object.
 
+#### Default state of a resource-bearing first alternative
+
+A zero-filled first alternative that is a struct, class or sized array and that
+(transitively) contains owners, owning callables or nested resource-bearing unions
+is tracked rather than invisible:
+
+- While it is untouched, the union stays in the cheap *default* state: nothing
+  is constructed, copied byte-wise, or destroyed.
+- Any mutable access to the alternative (non-`const` member access, reference
+  binding, address-of, element or field write) moves the union to the
+  *default, escaped* state. The compiler cannot see what the access writes, so
+  the owned slots are treated as potentially populated. `const` access does not
+  escape the alternative.
+- Cleanup of an escaped default alternative releases the owners and owning
+  callables field by field, in reverse declaration order, exactly once. It does
+  not run the constructor or destructor of the alternative, which never ran. A
+  throwing release does not prevent the remaining slots from being released.
+- Copying an escaped default alternative that has no user copy constructor
+  succeeds, by value, only if every owned slot is empty; otherwise the copy
+  fails with the union-copy `FatalError` (`UCOP`, code `0x55434f50`) and the source
+  keeps its owners. With a user-declared copy constructor, that constructor is
+  used; a deleted copy constructor rejects the copy.
+- Assigning the first alternative of an escaped union releases the escaped
+  owners, then copy-constructs the new value. Assigning the alternative's own
+  storage to itself is a no-op.
+- A destructor-less struct that only holds owner fields is released field by
+  field when it is the active alternative of a union.
+- First alternatives whose default state is trivial (no owned resources) keep
+  byte-wise copy semantics.
+
+```k
+struct Pair { a: Resource!; b: Resource!; }
+union U { pair: Pair; tag: int; }
+
+f() {
+    u: U;
+    p: Pair& = u.pair;   // escapes the default alternative
+    p.a = new Resource();
+}                         // the owner in 'a' is released here
+```
+
+Known limits: aggregates that are imported, have virtual bases or inner
+aggregates, or that nest sized arrays are not tracked in the default state;
+an owner-element array in the escaped default state is rejected when the union
+is copied, and unwinding during its cleanup does not destroy the remaining
+elements.
+
 ---
 
 ## 5. Member Access

@@ -936,6 +936,124 @@ inline std::shared_ptr<union_type_def> find_union_by_struct_type(
     return nullptr;
 }
 
+// A zero-filled nested union has its own valid default tag and lifecycle state.
+inline bool has_default_nested_union(const union_type_def& outer) {
+    const auto* first = outer.get_alternative_by_global_index(0);
+    if (!first || !first->resolved_type) return false;
+    auto bare = type::canonical(type::remove_const(type::canonical(first->resolved_type)));
+    auto st = std::dynamic_pointer_cast<struct_type>(bare);
+    return st && !st->get_struct();
+}
+
+// A resource slot reachable from an unconstructed (zero-filled) aggregate: an
+// owner, an owning callable or a nested union with resource-bearing alternatives.
+// `steps` is the chain of (struct type, field index) leading to it.
+struct zero_state_leaf {
+    std::vector<std::pair<std::shared_ptr<struct_type>, unsigned>> steps;
+    std::shared_ptr<type> leaf_type;
+};
+
+// An unconstructed object is "valid" when its resources can be released field by
+// field, without running user code, reading a vptr or an element counter.
+struct zero_state_profile {
+    bool valid = true;
+    std::vector<zero_state_leaf> leaves;
+};
+
+using zero_state_steps = std::vector<std::pair<std::shared_ptr<struct_type>, unsigned>>;
+
+inline bool is_root_object_aggregate(const aggregate& agg) {
+    return is_k_object(agg)
+        || (agg.get_short_name() == "Object"
+            && (agg.get_fq_name() == "k::Object" || agg.get_fq_name() == "::k::Object"));
+}
+
+// `top` is the union alternative itself: only there the activation code fixes up
+// an array count.
+inline void collect_zero_state_leaves(const std::shared_ptr<type>& t, const std::shared_ptr<ns>& root,
+                                      zero_state_profile& profile, zero_state_steps& steps, bool top) {
+    if (!profile.valid) return;
+    auto bare = type::canonical(type::remove_const(type::canonical(t)));
+    if (!bare) { profile.valid = false; return; }
+    if (type::is_owner(bare)) { profile.leaves.push_back({steps, bare}); return; }
+    if (auto callable = std::dynamic_pointer_cast<callable_type>(bare)) {
+        if (callable->is_owner()) profile.leaves.push_back({steps, bare});
+        return;
+    }
+    if (auto enumeration = std::dynamic_pointer_cast<enum_type>(bare)) {
+        profile.valid = !enumeration->is_object_backed();
+        return;
+    }
+    if (type::is_primitive(bare) || type::is_pointer(bare) || type::is_link(bare)
+        || type::is_view(bare)) return;
+    if (auto array = std::dynamic_pointer_cast<sized_array_type>(bare)) {
+        if (!top) { profile.valid = false; return; }
+        // Elements are released by the array loop; only their resources matter here.
+        zero_state_steps element_steps;
+        collect_zero_state_leaves(array->get_subtype(), root, profile, element_steps, false);
+        return;
+    }
+    auto st = std::dynamic_pointer_cast<struct_type>(bare);
+    if (!st) { profile.valid = false; return; }
+    auto agg = st->get_struct();
+    if (!agg) {
+        auto nested = find_union_by_struct_type(root, st);
+        if (!nested) profile.valid = false;
+        else if (nested->has_nontrivial_destructor_alternative()) profile.leaves.push_back({steps, bare});
+        return;
+    }
+    if (agg->is_imported() || agg->has_virtual_bases() || agg->is_inner()) {
+        profile.valid = false;
+        return;
+    }
+    std::vector<std::pair<unsigned, std::shared_ptr<member_variable_definition>>> fields;
+    for (const auto& entry : agg->variables()) {
+        auto member = std::dynamic_pointer_cast<member_variable_definition>(entry.second);
+        if (!member || member->get_short_name() == "__vptr__") continue;
+        auto field = st->get_member(member->get_short_name());
+        if (!field) { profile.valid = false; return; }
+        fields.emplace_back(static_cast<unsigned>(field->index), member);
+    }
+    std::sort(fields.begin(), fields.end(),
+        [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& [index, member] : fields) {
+        auto member_type = type::canonical(type::remove_const(type::canonical(member->get_type())));
+        if (member->get_short_name().rfind("__base_", 0) == 0) {
+            auto base_struct = std::dynamic_pointer_cast<struct_type>(member_type);
+            if (!base_struct || !base_struct->get_struct()) { profile.valid = false; return; }
+            if (is_root_object_aggregate(*base_struct->get_struct())) continue;
+        }
+        steps.emplace_back(st, index);
+        collect_zero_state_leaves(member_type, root, profile, steps, false);
+        steps.pop_back();
+        if (!profile.valid) return;
+    }
+}
+
+inline zero_state_profile zero_state_of(const std::shared_ptr<type>& t, const std::shared_ptr<ns>& root,
+                                        bool top) {
+    zero_state_profile profile;
+    zero_state_steps steps;
+    collect_zero_state_leaves(t, root, profile, steps, top);
+    return profile;
+}
+
+// The default (zero-filled, unconstructed) state of a first aggregate or array
+// alternative cannot stay invisible when its fields may own resources written
+// through a reference: the union is then marked as "default, escaped" (live
+// state 2) on every mutable access. Cleanup then releases the resource slots
+// field by field, without running the never-executed constructor or destructor.
+inline bool union_first_alternative_tracks_default(
+    const union_type_def& udef, const std::shared_ptr<ns>& root) {
+    const auto* first = udef.get_alternative_by_global_index(0);
+    if (!first || !first->resolved_type || first->is_const) return false;
+    auto bare = type::canonical(type::remove_const(type::canonical(first->resolved_type)));
+    auto st = std::dynamic_pointer_cast<struct_type>(bare);
+    if (!type::is_sized_array(bare) && !(st && st->get_struct())) return false;
+    auto profile = zero_state_of(bare, root, true);
+    return profile.valid && !profile.leaves.empty();
+}
+
 // Only one union leaf and otherwise trivial scalar fields can be copied without
 // bookkeeping for previously completed resource-bearing subobjects.
 inline std::shared_ptr<union_type_def> scalar_union_wrapper(
