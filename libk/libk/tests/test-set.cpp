@@ -29,11 +29,77 @@
 
 namespace {
 
+constexpr const char* HASHABLE_ID_DECL = R"SRC(
+        idDefaultConstructions : int = 0;
+        idValueConstructions : int = 0;
+        idCopyConstructions : int = 0;
+        idAssignments : int = 0;
+        class Id {
+            public:
+            value : int;
+            Id() { value = 0; ++idDefaultConstructions; }
+            Id(v: int) { value = v; ++idValueConstructions; }
+            Id(other: const Id&) : value(other.value) { ++idCopyConstructions; }
+            operator=(other: const Id&) : Id& {
+                value = other.value;
+                ++idAssignments;
+                return this;
+            }
+            const override hash() : int { return value; }
+            const operator==(other: const Id&) : bool { return value == other.value; }
+            const operator!=(other: const Id&) : bool { return value != other.value; }
+        }
+)SRC";
+
 std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
     return gen_jit_with_stdlib(src, LIBK_KDI_DIR, LIBK_LIB_DIR);
 }
 
 } // anonymous namespace
+
+TEST_CASE("Set getFirst borrows the first element in iteration order",
+          "[libk][set][borrowed-get-first]") {
+    auto j = jit_k(std::string(R"SRC(
+        module sets_borrowed_first;
+)SRC") + HASHABLE_ID_DECL + R"SRC(
+        test() : int {
+            ordered : ListSet<int>;
+            hashed : HashSet<Id>;
+            beforeEmpty : int = idDefaultConstructions;
+            valuesBeforeEmpty : int = idValueConstructions;
+            copiesBeforeEmpty : int = idCopyConstructions;
+            assignmentsBeforeEmpty : int = idAssignments;
+            if (ordered.getFirst().hasValue() || hashed.getFirst().hasValue()) return 1;
+            if (idDefaultConstructions != beforeEmpty || idValueConstructions != valuesBeforeEmpty
+                || idCopyConstructions != copiesBeforeEmpty || idAssignments != assignmentsBeforeEmpty) return 4;
+            ordered.add(8);
+            ordered.add(2);
+            first : OptionalConstRef<int> = ordered.getFirst();
+            orderedFirst : OptionalConstRef<int> = ordered.first();
+            if (!first.hasValue() || !orderedFirst.hasValue()
+                || first.get() != 8 || &first.get() != &orderedFirst.get()) return 2;
+            hashed.add(Id(8));
+            hashed.add(Id(2));
+            afterInsert : int = idDefaultConstructions;
+            if (afterInsert <= beforeEmpty) return 5;
+            valuesAfterInsert : int = idValueConstructions;
+            copiesAfterInsert : int = idCopyConstructions;
+            assignmentsAfterInsert : int = idAssignments;
+            hashFirst : OptionalConstRef<Id> = hashed.getFirst();
+            if (idDefaultConstructions != afterInsert || idValueConstructions != valuesAfterInsert
+                || idCopyConstructions != copiesAfterInsert || idAssignments != assignmentsAfterInsert) return 6;
+            cursor : ConstIterator<Id>! = hashed.constIterator();
+            current : OptionalConstRef<Id> = cursor.next();
+            if (!hashFirst.hasValue() || !current.hasValue()
+                || &hashFirst.get() != &current.get()) return 3;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  1. ListSet<int>
@@ -427,19 +493,6 @@ TEST_CASE("TreeSet<int> — isSubsetOf / isSupersetOf", "[libk][set][treeset]") 
 //  3. HashSet<T> — requires T::hash() and T::operator==, so a small user class
 //     (rather than a primitive) is used, matching the documented contract.
 // ═══════════════════════════════════════════════════════════════════════════════
-
-namespace {
-constexpr const char* HASHABLE_ID_DECL = R"SRC(
-        class Id {
-            public:
-            value : int;
-            Id(v: int) { value = v; }
-            const override hash() : int { return value; }
-            const operator==(other: const Id&) : bool { return value == other.value; }
-            const operator!=(other: const Id&) : bool { return value != other.value; }
-        }
-)SRC";
-}
 
 TEST_CASE("HashSet<Id> — empty set", "[libk][set][hashset]") {
     auto j = jit_k(std::string(R"SRC(

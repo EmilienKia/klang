@@ -1769,6 +1769,66 @@ TEST_CASE("Default overloads retain ranked conversion ambiguity at the call site
                      }));
 }
 
+TEST_CASE("Sequence does not expose collection first access",
+          "[gen][resolution][sequence-no-get-first][regression]") {
+    std::string_view source;
+    SECTION("Sequence parameter") {
+        source = R"SRC(
+            module no_first_sequence_parameter;
+            test(seq : const Sequence<int>&) {
+                seq.getFirst();
+            }
+        )SRC";
+    }
+    SECTION("Lazy sequence") {
+        source = R"SRC(
+            module no_first_lazy_sequence;
+            test() {
+                values : Vector<int>;
+                lazy : Sequence<int>! = values.filter([](x : const int&) { return x > 0; });
+                lazy.getFirst();
+            }
+        )SRC";
+    }
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    test_logger logger;
+    REQUIRE_FALSE(compile_collect_diagnostics(source, resolver, logger));
+    CHECK(std::any_of(logger.diagnostics.begin(), logger.diagnostics.end(),
+                      [](const k::log::diagnostic& diagnostic) {
+                          return diagnostic.level == k::log::diagnostic::severity::error
+                              && diagnostic.code == static_cast<unsigned int>(
+                                     k::diag::type_diag::ERR_INVOKE_NO_MATCHING_OVERLOAD)
+                              && diagnostic.message.find("No function named") != std::string::npos
+                              && diagnostic.args.size() == 3
+                              && diagnostic.args[0] == "getFirst"
+                              && diagnostic.args[1] == "Sequence__int"
+                              && diagnostic.args[2] == "getFirst";
+                      }));
+}
+
+TEST_CASE("Collection getFirst exposes a read-only referent",
+          "[gen][resolution][borrowed-get-first][readonly][regression]") {
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    test_logger logger;
+    REQUIRE_FALSE(compile_collect_diagnostics(R"SRC(
+        module borrowed_first_readonly;
+        test() {
+            values : Vector<int>(int[]{1});
+            first : OptionalConstRef<int> = values.getFirst();
+            first.get() = 2;
+        }
+    )SRC", resolver, logger));
+    CHECK(std::any_of(logger.diagnostics.begin(), logger.diagnostics.end(),
+                      [](const k::log::diagnostic& diagnostic) {
+                          return diagnostic.code == static_cast<unsigned int>(
+                                     k::diag::operator_diag::ERR_OVERLOAD_CALL_NO_MATCH)
+                              && diagnostic.message.find("Cannot assign to a const variable")
+                                     != std::string::npos;
+                      }));
+}
+
 TEST_CASE("Default overloads keep same-named enums from different namespaces distinct",
           "[gen][resolution][default-params][default-overload-prefix][enum][regression]") {
     auto jit = gen_jit(R"SRC(

@@ -77,6 +77,10 @@ operator !=(left : const T[]&, right : const T[]&) : bool {
  * - does not guarantee backward navigation;
  * - does not guarantee restartability.
  *
+ * A computed element may be stored in the iterator: its borrow is valid at
+ * most until the next advance attempt, iterator destruction, or source
+ * invalidation. Source-owned elements may have a longer lifetime.
+ *
  * @see Iterator<T> for the mutable counterpart.
  */
 template<typename T>
@@ -220,19 +224,6 @@ interface Sequence {
      */
     default const skip(skip : unsigned long, after : unsigned long = 0) : Sequence<T>! {
         return new SequenceSkip<T>(this, skip, after);
-    }
-
-    /**
-     * Return the first element of the sequence, or empty if the sequence is empty.
-     * @return An Optional<T> containing a copy of the first element, or empty.
-     */
-    default const getFirst() : Optional<T> {
-        it : ConstIterator<T>! = constIterator();
-        cur : OptionalConstRef<T> = it.next();
-        if (cur.hasValue()) {
-            return Optional<T>(cur.get());
-        }
-        return Optional<T>();
     }
 
     /**
@@ -411,19 +402,29 @@ interface Sized {
 /**
  * Collection<T> — abstract interface for all collections.
  *
- * Defines the common contract shared by all ordered, iterable
- * collection types: size queries, back-insertion, peek, removal,
- * and clearing.
+ * Defines the common read-only contract for sized collections:
+ * iteration, membership testing, and borrowed first-element access.
  *
- * Implementing classes: LinkedList<T>, DoubleLinkedList<T>, Vector<T>.
+ * Implementing classes include lists, vectors, and sets.
  */
 template<typename T>
 interface Collection : public Sequence<T>, public Sized {
     /**
      * Return a read-only iterator over the elements in the collection.
+     * Its references designate source-owned elements and remain valid after
+     * the iterator is destroyed, until the source or element is invalidated.
      * @return A ConstIterator<T> for the collection.
      */
     const constIterator() : ConstIterator<T>!;
+
+    /**
+     * Borrow the first element in iteration order, or return empty.
+     * The borrow does not extend the lifetime of the underlying storage.
+     */
+    default const getFirst() : OptionalConstRef<T> {
+        it : ConstIterator<T>! = constIterator();
+        return it.next();
+    }
 
     /**
      * Tell whether the collection contains a given value.

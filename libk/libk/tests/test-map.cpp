@@ -29,11 +29,108 @@
 
 namespace {
 
+constexpr const char* HASHABLE_ID_DECL = R"SRC(
+        idDefaultConstructions : int = 0;
+        idValueConstructions : int = 0;
+        idCopyConstructions : int = 0;
+        idAssignments : int = 0;
+        class Id {
+            public:
+            value : int;
+            Id() { value = 0; ++idDefaultConstructions; }
+            Id(v: int) { value = v; ++idValueConstructions; }
+            Id(other: const Id&) : value(other.value) { ++idCopyConstructions; }
+            operator=(other: const Id&) : Id& {
+                value = other.value;
+                ++idAssignments;
+                return this;
+            }
+            const override hash() : int { return value; }
+            const operator==(other: const Id&) : bool { return value == other.value; }
+            const operator!=(other: const Id&) : bool { return value != other.value; }
+        }
+)SRC";
+
 std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
     return gen_jit_with_stdlib(src, LIBK_KDI_DIR, LIBK_LIB_DIR);
 }
 
 } // anonymous namespace
+
+TEST_CASE("ListMap getFirst borrows the stored abstract entry",
+          "[libk][map][listmap][borrowed-get-first]") {
+    auto j = jit_k(R"SRC(
+        module listmap_borrowed_first;
+        test() : int {
+            map : ListMap<int,int>;
+            source : const Map<int,int>& = map;
+            if (source.getFirst().hasValue() || map.first().hasValue() || map.last().hasValue()) return 1;
+            map.put(7, 11);
+            map.put(3, 22);
+            first : OptionalConstRef<Entry<int,int>> = source.getFirst();
+            ordered : OptionalConstRef<Entry<int,int>> = map.first();
+            if (!first.hasValue() || !ordered.hasValue()) return 2;
+            if (&first.get() != &ordered.get() || first.get().key() != 7
+                || first.get().value() != 11) return 3;
+            value : OptionalRef<int> = map.get(7);
+            if (!value.hasValue()) return 4;
+            value.get() = 42;
+            if (first.get().value() != 42 || first.get().key() != 7) return 5;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+TEST_CASE("TreeMap and HashMap getFirst follow their own iteration order",
+          "[libk][map][borrowed-get-first]") {
+    auto j = jit_k(std::string(R"SRC(
+        module other_maps_borrowed_first;
+)SRC") + HASHABLE_ID_DECL + R"SRC(
+        test() : int {
+            tree : TreeMap<int,int>;
+            hash : HashMap<Id,int>;
+            beforeEmpty : int = idDefaultConstructions;
+            valuesBeforeEmpty : int = idValueConstructions;
+            copiesBeforeEmpty : int = idCopyConstructions;
+            assignmentsBeforeEmpty : int = idAssignments;
+            if (tree.getFirst().hasValue() || hash.getFirst().hasValue()) return 1;
+            if (idDefaultConstructions != beforeEmpty || idValueConstructions != valuesBeforeEmpty
+                || idCopyConstructions != copiesBeforeEmpty || idAssignments != assignmentsBeforeEmpty) return 6;
+            tree.put(3, 30);
+            tree.put(1, 10);
+            treeFirst : OptionalConstRef<Entry<int,int>> = tree.getFirst();
+            if (!treeFirst.hasValue() || treeFirst.get().key() != 1
+                || &treeFirst.get() != &tree.first().get()) return 2;
+            hash.put(Id(3), 30);
+            hash.put(Id(1), 10);
+            afterInsert : int = idDefaultConstructions;
+            if (afterInsert <= beforeEmpty) return 7;
+            valuesAfterInsert : int = idValueConstructions;
+            copiesAfterInsert : int = idCopyConstructions;
+            assignmentsAfterInsert : int = idAssignments;
+            hashFirst : OptionalConstRef<Entry<Id,int>> = hash.getFirst();
+            if (idDefaultConstructions != afterInsert || idValueConstructions != valuesAfterInsert
+                || idCopyConstructions != copiesAfterInsert || idAssignments != assignmentsAfterInsert) return 8;
+            cursor : ConstIterator<Entry<Id,int>>! = hash.constIterator();
+            cursorFirst : OptionalConstRef<Entry<Id,int>> = cursor.next();
+            if (!hashFirst.hasValue() || !cursorFirst.hasValue()
+                || &hashFirst.get() != &cursorFirst.get()) return 3;
+            value : OptionalRef<int> = hash.get(hashFirst.get().key());
+            if (!value.hasValue()) return 4;
+            value.get() = 77;
+            if (hashFirst.get().value() != 77) return 5;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  1. ListMap<int, int>
@@ -410,19 +507,6 @@ TEST_CASE("TreeMap<int,int> — putIfAbsent and replace semantics", "[libk][map]
 //  3. HashMap<K,V> — requires K::hash() and K::operator==, so a small user class
 //     (rather than a primitive) is used, matching the documented contract.
 // ═══════════════════════════════════════════════════════════════════════════════
-
-namespace {
-constexpr const char* HASHABLE_ID_DECL = R"SRC(
-        class Id {
-            public:
-            value : int;
-            Id(v: int) { value = v; }
-            const override hash() : int { return value; }
-            const operator==(other: const Id&) : bool { return value == other.value; }
-            const operator!=(other: const Id&) : bool { return value != other.value; }
-        }
-)SRC";
-}
 
 TEST_CASE("HashMap<Id,int> — empty map", "[libk][map][hashmap]") {
     auto j = jit_k(std::string(R"SRC(

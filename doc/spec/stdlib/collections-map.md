@@ -91,6 +91,7 @@ being broken through this interface. Returned by `MutableMap<K,V>::iterator()`.
 ```k
 template<typename K, typename V>
 interface Map : public Sequence<Entry<K,V>>, public Sized {
+    default const getFirst() : OptionalConstRef<Entry<K,V>>;
     const get(key: const K&) : OptionalConstRef<V>;
     const containsKey(key: const K&) : bool;
     const containsValue(value: const V&) : bool;
@@ -103,10 +104,28 @@ interface Map : public Sequence<Entry<K,V>>, public Sized {
 |--------|-------------|
 | `size() : unsigned int` | Number of entries (inherited from `Sized`). |
 | `isEmpty() : bool` | `true` if the map contains no entries. |
+| `getFirst() : OptionalConstRef<Entry<K,V>>` | Borrow the first entry in iteration order, or return empty. |
 | `get(key) : OptionalConstRef<V>` | Read-only reference to the value associated with `key`, or empty if `key` is not present. |
 | `containsKey(key) : bool` | `true` if some entry has a key equal to `key` (via `==`). |
 | `containsValue(value) : bool` | `true` if some entry has a value equal to `value` (via `==`). Always O(n): scans every entry. |
 | `constIterator() : ConstIterator<Entry<K,V>>!` | Read-only iterator over the entries (inherited from `Sequence<Entry<K,V>>`). |
+
+`getFirst()` returns a non-owning, read-only borrow of the actual entry, without
+copying or moving it. Its reference remains usable after the getter's iterator
+is destroyed. Map implementations must ensure that their read-only iterators
+yield entries owned by the map or an underlying source and that those entries
+outlive the iterator unless their source invalidates them. A view's underlying
+source may be distinct from the view. Neither the optional reference nor the
+iterator extends the storage owner's lifetime.
+
+An ordered map's first entry follows its iteration order; an unordered map
+returns the first in its current iteration order without promising a sort order.
+The existing ordered `first()` and `last()` remain empty-safe borrowed accessors.
+Erasing an entry, clearing or destroying the owner invalidates affected borrows;
+other structural operations, including rehashing or entry relocation, may do
+so as well. Not every mutation invalidates every borrow: updating an existing
+entry's value in place without destroying or relocating the entry is observable
+through its borrow.
 
 ### Exceptions
 

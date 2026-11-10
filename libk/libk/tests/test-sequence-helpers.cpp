@@ -991,7 +991,7 @@ TEST_CASE("Vector<int> — skip pipeline chaining", "[libk][vector][int][skip]")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 10 : Sequence::getFirst
+// 10 : Collection::getFirst and first-element sequence iteration
 // ═══════════════════════════════════════════════════════════════════════════════
 
 TEST_CASE("Vector<int> — getFirst on non-empty sequence", "[libk][vector][int][getFirst]") {
@@ -1000,7 +1000,7 @@ TEST_CASE("Vector<int> — getFirst on non-empty sequence", "[libk][vector][int]
 
         test() : bool {
             v : Vector<int>(int[]{42, 10, 20});
-            first : Optional<int> = v.getFirst();
+            first : OptionalConstRef<int> = v.getFirst();
 
             return first.hasValue() && first.get() == 42;
         }
@@ -1017,7 +1017,7 @@ TEST_CASE("Vector<int> — getFirst on empty sequence", "[libk][vector][int][get
 
         test() : bool {
             v : Vector<int>;
-            first : Optional<int> = v.getFirst();
+            first : OptionalConstRef<int> = v.getFirst();
 
             return !first.hasValue();
         }
@@ -1035,11 +1035,12 @@ TEST_CASE("Vector<int> — getFirst on pipeline", "[libk][vector][int][getFirst]
         test() : bool {
             v : Vector<int>(int[]{1, 2, 3, 4, 5});
 
-            first : Optional<int> = v.filter([](x : const int&) { return x > 2; })
-                                    ->skip(1)
-                                    ->getFirst();
+            filtered : Sequence<int>! = v.filter([](x : const int&) { return x > 2; });
+            skipped : Sequence<int>! = filtered.skip(1);
+            it : ConstIterator<int>! = skipped.constIterator();
+            first : OptionalConstRef<int> = it.next();
 
-            // filter (>2) -> [3, 4, 5], skip(1) -> [4, 5], getFirst -> 4
+            // filter (>2) -> [3, 4, 5], skip(1) -> [4, 5], next -> 4
             return first.hasValue() && first.get() == 4;
         }
     )SRC");
@@ -1056,8 +1057,9 @@ TEST_CASE("Vector<int> — getFirst on pipeline returning empty", "[libk][vector
         test() : bool {
             v : Vector<int>(int[]{1, 2, 3});
 
-            first : Optional<int> = v.filter([](x : const int&) { return x > 10; })
-                                    ->getFirst();
+            filtered : Sequence<int>! = v.filter([](x : const int&) { return x > 10; });
+            it : ConstIterator<int>! = filtered.constIterator();
+            first : OptionalConstRef<int> = it.next();
 
             return !first.hasValue();
         }
@@ -1075,8 +1077,9 @@ TEST_CASE("Vector<int> — getFirst on map", "[libk][vector][int][getFirst]") {
         test() : bool {
             v : Vector<int>(int[]{5, 10});
 
-            first : Optional<int> = v.map<int>([](x : const int&) { return x * 2; })
-                                    ->getFirst();
+            mapped : Sequence<int>! = v.map<int>([](x : const int&) { return x * 2; });
+            it : ConstIterator<int>! = mapped.constIterator();
+            first : OptionalConstRef<int> = it.next();
 
             return first.hasValue() && first.get() == 10;
         }
@@ -1085,4 +1088,117 @@ TEST_CASE("Vector<int> — getFirst on map", "[libk][vector][int][getFirst]") {
     auto fn = j->lookup_symbol<bool(*)()>("test");
     REQUIRE(fn);
     CHECK(fn());
+}
+
+TEST_CASE("Collection getFirst borrows vector storage after its local iterator is destroyed",
+          "[libk][collections][borrowed-get-first]") {
+    auto j = jit_k(R"SRC(
+        module collection_borrowed_first_vector;
+        test() : int {
+            v : Vector<int>;
+            source : const Collection<int>& = v;
+            if (source.getFirst().hasValue()) return 1;
+            v.append(12);
+            v.append(19);
+            first : OptionalConstRef<int> = source.getFirst();
+            if (!first.hasValue() || &first.get() != &v.get(0)) return 2;
+            v.get(0) = 37;
+            if (first.get() != 37 || v.get(1) != 19) return 3;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
+}
+
+TEST_CASE("Collection getFirst does not copy or own its source element",
+          "[libk][collections][borrowed-get-first]") {
+    auto j = jit_k(R"SRC(
+        module collection_borrowed_first_nocopy;
+        copies : int = 0;
+        live : int = 0;
+        struct NoCopy {
+            public:
+            value : int;
+            NoCopy(input : int) : value(input) { ++live; }
+            NoCopy(other : const NoCopy&) -> delete;
+            ~NoCopy() { --live; }
+        }
+        struct Counted {
+            public:
+            value : int;
+            Counted(input : int) : value(input) {}
+            Counted(other : const Counted&) : value(other.value) { ++copies; }
+        }
+        class NoCopyIterator : public ConstIterator<NoCopy> {
+            private:
+            item : const NoCopy&;
+            done : bool = false;
+            public:
+            NoCopyIterator(value : const NoCopy&) : item(value) {}
+            next() : OptionalConstRef<NoCopy> {
+                if (done) return OptionalConstRef<NoCopy>();
+                done = true;
+                return OptionalConstRef<NoCopy>(item);
+            }
+        }
+        class NoCopyCollection : public Collection<NoCopy> {
+            private:
+            item : const NoCopy&;
+            public:
+            NoCopyCollection(value : const NoCopy&) : item(value) {}
+            const size() : unsigned int { return 1; }
+            const contains(value : const NoCopy&) : bool { return &item == &value; }
+            const constIterator() : ConstIterator<NoCopy>! {
+                return new NoCopyIterator(item);
+            }
+        }
+        class CountedIterator : public ConstIterator<Counted> {
+            private:
+            item : const Counted&;
+            done : bool = false;
+            public:
+            CountedIterator(value : const Counted&) : item(value) {}
+            next() : OptionalConstRef<Counted> {
+                if (done) return OptionalConstRef<Counted>();
+                done = true;
+                return OptionalConstRef<Counted>(item);
+            }
+        }
+        class CountedCollection : public Collection<Counted> {
+            private:
+            item : const Counted&;
+            public:
+            CountedCollection(value : const Counted&) : item(value) {}
+            const size() : unsigned int { return 1; }
+            const contains(value : const Counted&) : bool { return &item == &value; }
+            const constIterator() : ConstIterator<Counted>! {
+                return new CountedIterator(item);
+            }
+        }
+        test() : int {
+            copies = 0;
+            live = 0;
+            {
+                value : NoCopy(11);
+                view : NoCopyCollection(value);
+                source : const Collection<NoCopy>& = view;
+                first : OptionalConstRef<NoCopy> = source.getFirst();
+                if (!first.hasValue() || &first.get() != &value || live != 1) return 1;
+                value.value = 25;
+                if (first.get().value != 25 || live != 1) return 2;
+                counted : Counted(7);
+                countedView : CountedCollection(counted);
+                observed : OptionalConstRef<Counted> = countedView.getFirst();
+                if (!observed.hasValue() || &observed.get() != &counted || copies != 0) return 3;
+            }
+            return live == 0 && copies == 0 ? 0 : 4;
+        }
+    )SRC");
+    REQUIRE(j);
+    auto fn = j->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 0);
 }

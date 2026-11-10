@@ -54,6 +54,17 @@ interface MutableEntry : public Entry<K,V> {
 template<typename K, typename V>
 interface Map : public Sequence<Entry<K,V>>, public Sized {
   /**
+   * Borrow the first entry in iteration order, or return empty.
+   * Iterator references designate source-owned entries and remain valid after
+   * the iterator is destroyed until the underlying entry or source is invalidated.
+   * The returned borrow does not extend the lifetime of that storage.
+   */
+  default const getFirst() : OptionalConstRef<Entry<K,V>> {
+      it : ConstIterator<Entry<K,V>>! = constIterator();
+      return it.next();
+  }
+
+  /**
    * Return a read-only reference to the value associated with key, or empty if
    * key is not present.
    */

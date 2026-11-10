@@ -55,8 +55,18 @@ interface Set : public Collection<T> {
 | `isEmpty() : bool` | `true` if the set contains no elements. |
 | `contains(value) : bool` | `true` if an element equal to `value` (via `==`) is present. |
 | `constIterator() : ConstIterator<T>!` | Read-only iterator over the elements. |
+| `getFirst() : OptionalConstRef<T>` | Borrow the first element in iteration order, or return empty (inherited from `Collection<T>`). |
 | `isSubsetOf(other) : bool` | Default implementation: `true` iff every element of `this` is found in `other`. |
 | `isSupersetOf(other) : bool` | Default implementation: delegates to `other.isSubsetOf(this)`. |
+
+`getFirst()` is non-owning and read-only; it does not copy an element, and its
+borrow survives the getter's iterator. It remains valid only while its
+underlying element and storage remain valid. Removal, clearing or destruction
+invalidates affected borrows; other structural changes, including rehashing or
+relocation, may invalidate them. Not every mutation necessarily invalidates
+every borrow. Ordered sets use their declared iteration order; unordered sets
+do not promise a sort order. Existing ordered `first()`/`last()` retain their
+own empty-safe borrowed contracts.
 
 ### Exceptions
 

@@ -20,9 +20,8 @@ concrete collection classes.
 | `DoubleLinkedList<T>` | Doubly-linked list | `UniSlot<T>` per node |
 | `Vector<T>` | Dynamic array | `MultiSlot<T>` |
 
-All collections store elements **by value** and provide ownership of their
-contents (elements are destroyed when removed or when the collection is
-destroyed).
+The concrete lists and vector listed above store elements **by value** and own
+their contents. A collection view may instead borrow from an underlying source.
 
 ---
 
@@ -85,7 +84,6 @@ interface Sequence {
     template<typename C>
     default const count(c : C&) : SequenceCount<T, C>!;
     default const skip(skip : unsigned long, after : unsigned long = 0) : Sequence<T>!;
-    default const getFirst() : Optional<T>;
     default const collect(collection : Appendable<T>&);
     default const collect(collector : functional::Consumer<const T&>);
     template<typename R>
@@ -154,12 +152,36 @@ allocation-based, or bytewise shortcut is used.
 | `const count<C = unsigned long>() : SequenceCount<T, C>!` | Return a sequence tracking traversed elements in an internal counter (`unsigned long` by default, accessible via `.getCount()`). |
 | `const count<C>(c : C&) : SequenceCount<T, C>!` | Return a sequence incrementing external accumulator `c` via `operator++_()` without resetting it. |
 | `const skip(skip : unsigned long, after : unsigned long = 0) : Sequence<T>!` | Return a lazy sequence passing `after` elements, skipping the next `skip` elements, and passing all subsequent elements. |
-| `const getFirst() : Optional<T>` | Return an `Optional<T>` containing a copy of the first element, or empty if the sequence is empty. |
 | `const collect(collection : Appendable<T>&)` | Append all elements into an `Appendable<T>` collection. |
 | `const collect(collector : Consumer<const T&>)` | Feed all elements to a consumer callback. |
 | `const accumulate<R>(initial : const R&, accumulator : BiFunction<R, const T&, R>) : R` | Left-fold reduction combining elements with an accumulator. |
 | `iterator() : Iterator<T>!` | Return a mutable iterator over elements. |
 | `forEach(consumer : Consumer<T&>)` | Invoke `consumer` with a mutable `T&` reference for each element in sequence order. |
+
+`Sequence<T>` does not define `getFirst()`: a sequence may compute its current
+element in iterator-owned storage. A reference from `next()` to such an element
+is valid at most until the next advance attempt (including a failed or throwing
+attempt), destruction of the iterator, or source invalidation, whichever
+occurs first. A source-owned element may have a longer lifetime.
+
+To access the first element of a lazy sequence, keep its source, intermediate
+views, and iterator alive while using the result:
+
+```k
+values : Vector<int>(int[]{1, 2, 3});
+filtered : Sequence<int>! = values.filter([](x : const int&) { return x > 1; });
+skipped : Sequence<int>! = filtered.skip(1);
+it : ConstIterator<int>! = skipped.constIterator();
+first : OptionalConstRef<int> = it.next();
+// Use first before advancing or destroying it and before invalidating values.
+```
+
+The optional reference is non-owning. A caller that needs an independent value
+must explicitly copy it, subject to the element's normal copy permissions.
+
+Moving `getFirst()` changes the public API and virtual tables. Compiled
+providers, their KDI artifacts, and dependent consumers must be rebuilt together;
+mixing old and new artifacts is unsupported.
 
 ---
 
@@ -167,18 +189,10 @@ allocation-based, or bytewise shortcut is used.
 
 ```k
 template<typename T>
-interface Collection : public MutableSequence<T> {
-    getSize() : int;
-    isEmpty() : bool;
-    pushFront(value : T&);
-    pushBack(value : T&);
-    insert(index : int, value : T&);
-    peekFront() : T&;
-    peekBack() : T&;
-    get(index : int) : T&;
-    removeFront() : bool;
-    removeBack() : bool;
-    clear();
+interface Collection : public Sequence<T>, public Sized {
+    const constIterator() : ConstIterator<T>!;
+    const contains(value : const T&) : bool;
+    default const getFirst() : OptionalConstRef<T>;
 }
 ```
 
@@ -186,24 +200,33 @@ interface Collection : public MutableSequence<T> {
 
 | Method | Description |
 |--------|-------------|
-| `getSize() : int` | Return the number of elements. |
+| `size() : unsigned int` | Return the number of elements. |
 | `isEmpty() : bool` | Return `true` if the collection is empty. |
-| `pushFront(value : T&)` | Insert a copy of `value` at the front. |
-| `pushBack(value : T&)` | Insert a copy of `value` at the back. |
-| `insert(index, value)` | Insert a copy at the given index (clamped to `[0, size]`). |
-| `peekFront() : T&` | Mutable reference to the front element. Undefined if empty. |
-| `peekBack() : T&` | Mutable reference to the back element. Undefined if empty. |
-| `get(index) : T&` | Mutable reference to element at `index`. Undefined if out of bounds. |
-| `removeFront() : bool` | Remove the front element. Returns `true` if removed. |
-| `removeBack() : bool` | Remove the back element. Returns `true` if removed. |
-| `clear()` | Remove all elements. |
+| `contains(value : const T&) : bool` | Test whether the collection contains `value`. |
+| `constIterator() : ConstIterator<T>!` | Return a read-only iterator over the collection. |
+| `getFirst() : OptionalConstRef<T>` | Borrow the first element in iteration order, or return empty. |
 
-### Exceptions
+`getFirst()` does not copy, move, or own the element. The result remains
+read-only even when the collection is mutable. Its borrow refers to the same
+source-owned element as iteration and remains usable after the getter's
+iterator is destroyed, until the source or element is destroyed or invalidated.
+For a view, the source may outlive or be distinct from the view itself; the
+optional reference never extends its lifetime.
 
-All insertion methods (`pushFront`, `pushBack`, `insert`) may throw
-`ConstructionException` (a `FatalError`) when the underlying
-`UniSlot<T>::construct()` or `MultiSlot<T>::construct()` call fails.
-As a `FatalError`, it does not need to be declared in `throws` clauses.
+Collection implementations must ensure that references produced by
+`constIterator()` designate source-owned elements and survive destruction of that
+iterator, subject to source invalidation. In an ordered collection, first is
+the first in its specified iteration order; an unordered collection makes no
+sorting promise. Existing ordered `first()`/`last()` and direct-reference
+list/vector `first()`/`last()` keep their own contracts, including the latter's
+empty precondition.
+
+Removing an element, clearing or destroying the owner invalidates affected
+borrows. Vector reallocation or element relocation may invalidate borrows;
+list and set structural changes may also invalidate affected references.
+Not every mutation invalidates every borrow: an in-place value update that
+does not destroy or relocate the element can be observed through it. Consult
+the concrete container's mutation contract before retaining a reference.
 
 ### Polymorphism
 
@@ -211,17 +234,15 @@ Any function accepting a `Collection<T>&` parameter can operate on any
 concrete collection type:
 
 ```k
-fillAndSum(coll : Collection<int>&) : int {
-    a : int = 10;
-    b : int = 20;
-    coll.pushBack(a);
-    coll.pushBack(b);
-    return coll.peekFront() + coll.peekBack();
+firstOrZero(coll : const Collection<int>&) : int {
+    first : OptionalConstRef<int> = coll.getFirst();
+    return first.hasValue() ? first.get() : 0;
 }
 
 test() : int {
     vec : Vector<int>;
-    return fillAndSum(vec);   // 30
+    vec.append(30);
+    return firstOrZero(vec);   // 30
 }
 ```
 
