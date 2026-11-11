@@ -223,8 +223,9 @@ deriveAesKey(ikm: const unsigned byte[], salt: const unsigned byte[],
 
 The caller must handle a null result if the cipher or HKDF is unavailable.
 Retain the PRK only as long as needed; it can derive multiple keys with
-different `info` values. Do not copy PRKs through unions or drain-to-value
-conversions: current compiler limitations can bypass their copy restrictions.
+different `info` values. PRKs are non-copyable: copying one, draining it
+into a value, or copying a union that holds one is rejected (at compile time,
+or by a runtime `FatalError` for an active union alternative).
 `expandHmacKey(info, length)` produces an `HmacKey`,
 and `expand(info, length)` returns raw bytes. `Hkdf::derive` and the
 `deriveSymmetricKey` and `deriveHmacKey` helpers perform both stages together.

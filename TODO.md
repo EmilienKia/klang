@@ -1978,19 +1978,19 @@
 
 - [ ] Secure random bytes for salts, tokens, and application-managed nonces.
 - [x] HMAC generation and constant-time verification, including stream adapters.
-- [ ] Complete HKDF for deriving purpose-specific symmetric keys.
+- [x] Complete HKDF for deriving purpose-specific symmetric keys.
   - Provider-backed extract, expand, combined derivation, key integration,
     capability discovery and documentation are implemented. The full
-    incremental build, 27 HKDF tests, focused compiler/KDI regressions and
-    the guide example have passed; PRK ownership is not yet fully safe.
-  - [ ] Complete union ownership and imported-layout handling listed in the
-    language bugs above.
-  - [ ] Rebuild affected artifacts and validate the final compiler, KDI, HKDF
-    and guide changes, including array and exceptional-cleanup regressions.
-    The previously unavailable union-array detailed rerun has not passed and
-    remains unverified.
-  - [ ] Synchronize the language and crypto documentation with verified
-    behavior, then remove the PRK ownership warning and close this entry.
+    incremental build, 26 HKDF tests (933 assertions), the crypto suites,
+    focused compiler/KDI regressions and the guide example have passed.
+  - [x] Union ownership and imported-layout handling needed by the PRK: copies
+    through unions are rejected, drains by value are rejected, and private
+    owner unions of imported aggregates are cleaned exactly once. Remaining
+    union gaps are tracked in the language bugs above and do not affect HKDF.
+  - [x] Rebuilt affected artifacts and validated the compiler, KDI, HKDF and
+    guide changes, including the union owner-array regression.
+  - [x] Synchronized the language and crypto documentation and removed the PRK
+    ownership warning.
 - [ ] Password-based key derivation: Argon2id, scrypt, and PBKDF2 compatibility.
 - [ ] Asymmetric key pairs: generation, public/private keys, and metadata.
 - [ ] Digital signatures and verification: Ed25519, ECDSA, and RSA-PSS.

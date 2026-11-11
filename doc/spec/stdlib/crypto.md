@@ -140,9 +140,9 @@ bytes are permitted, subject to provider restrictions. Pass an empty array to
 represent omitted `info`; there is no separate no-info overload.
 
 An `HkdfPrk` owns secret material independently of the original descriptor and
-is intended to be non-copyable. Current compiler limitations can bypass this
-restriction through union copies or drain-to-value conversions; do not use
-PRKs in those paths. `algorithm()` and `keySize()` describe it. `expand(info,
+is non-copyable: its copy constructor and assignment are deleted, so copies
+and drain-to-value conversions are compile errors, and copying a union whose
+active alternative is a PRK raises a `FatalError`. `algorithm()` and `keySize()` describe it. `expand(info,
 length)` derives an owned byte array. `expandSymmetricKey(cipher, info)` derives
 exactly `cipher.keySize()` bytes and applies the cipher's key validation;
 `expandHmacKey(info, length)` derives an `HmacKey`. A PRK can expand multiple
