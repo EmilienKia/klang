@@ -1110,17 +1110,33 @@ std::vector<std::string> split_qualified_name(const std::string& name) {
 std::shared_ptr<aggregate>
 scope_lookup::lookup_structure_or_import(unit& u, const std::shared_ptr<context>& ctx,
                                           std::shared_ptr<element> elem, const std::string& name) {
+    // A leading "::" roots the name: the scope chain is not searched.
+    const bool rooted = name.rfind("::", 0) == 0;
+    const std::string body = rooted ? name.substr(2) : name;
+    if (body.empty()) return {};
+    k::name qname{false, split_qualified_name(body)};
+
     // Simple (unqualified) name: standard scope-chain lookup among locally
     // declared aggregates first.
-    if (name.find("::") == std::string::npos) {
-        if (auto agg = lookup_structure(elem, name)) return agg;
+    if (!rooted && body.find("::") == std::string::npos) {
+        if (auto agg = lookup_structure(elem, body)) return agg;
     } else {
         // Namespace-qualified name (e.g. "k::Object"): descend namespaces from
         // the compilation unit's root, matching locally-declared aggregates.
+        // A rooted name may repeat the current module name as its first part.
         if (auto root_ns_ptr = root_namespace(*elem)) {
-            k::name qname{false, split_qualified_name(name)};
             if (auto res = aggregate_type_resolver::resolve_struct_from(*root_ns_ptr, qname)) {
                 return res;
+            }
+            if (rooted) {
+                const auto unit_name = u.get_unit_name().without_root_prefix();
+                if (!unit_name.empty() && qname.size() > unit_name.size()
+                    && qname.start_with(unit_name)) {
+                    if (auto res = aggregate_type_resolver::resolve_struct_from(
+                            *root_ns_ptr, qname.without_front(unit_name.size()))) {
+                        return res;
+                    }
+                }
             }
         }
     }
@@ -1130,7 +1146,6 @@ scope_lookup::lookup_structure_or_import(unit& u, const std::shared_ptr<context>
     // not part of the locally-declared aggregate tree at all. This handles both
     // simple and qualified forms uniformly (find_imported_type searches across
     // all imported modules by whatever name form is given).
-    k::name qname{false, split_qualified_name(name)};
     if (auto imp_agg = u.get_or_create_imported_aggregate(qname, ctx)) {
         return std::dynamic_pointer_cast<aggregate>(imp_agg);
     }

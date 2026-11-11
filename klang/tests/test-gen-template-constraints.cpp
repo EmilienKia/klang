@@ -678,6 +678,59 @@ TEST_CASE("Unresolved or imported bounds never accept an unrelated argument",
     CHECK(reported);
 }
 
+TEST_CASE("A rooted imported base class resolves and satisfies a rooted bound",
+          "[template][fail-closed-bound-constraints][rooted-base]") {
+    const bool derived = GENERATE(false, true);
+    const std::string source = std::string(R"SRC(
+        module rooted_imported_base;
+        class Good : public ::k::Exception {}
+        class Wrong {}
+        template<class T : ::k::Exception>
+        check(value : T&) : int { return 1; }
+    )SRC") + "test(value : " + (derived ? "Good" : "Wrong") + "&) : int { return check(value); }\n";
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    auto compiler = std::make_shared<constraint_test_compiler>();
+    compiler->set_file_resolver(resolver);
+    std::optional<k::log::diagnostic> thrown;
+    try {
+        compiler->parse_source("rooted-imported-base.k", source, false, false);
+    } catch (const k::log::compiler_error& error) {
+        thrown = error.get_diagnostic();
+    }
+    const auto violated = static_cast<unsigned int>(
+        k::diag::template_diag::ERR_TPL_ARG_CONSTRAINT_VIOLATED);
+    const bool reported = (thrown && thrown->code == violated)
+        || std::any_of(compiler->errors.begin(), compiler->errors.end(),
+                       [&](const auto& error) { return error.code == violated; });
+    CHECK(reported == !derived);
+    if (derived) {
+        CHECK_FALSE(thrown.has_value());
+        CHECK_FALSE(compiler->has_compilation_error());
+    }
+}
+
+TEST_CASE("An imported hierarchy proven complete by the KDI filters function-template overloads",
+          "[template][fail-closed-bound-constraints][imported-bases]") {
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    auto compiler = std::make_shared<constraint_test_compiler>();
+    compiler->set_file_resolver(resolver);
+    REQUIRE_NOTHROW(compiler->parse_source("imported-bases-overload.k", R"SRC(
+        module imported_bases_overload;
+        class Foo {}
+        class Mine : public ::k::IllegalArgumentException {
+            public: Mine() : IllegalArgumentException(1) {}
+        }
+        template<class T : Foo>
+        pick(value : T&) : int { return 1; }
+        template<class T : ::k::Exception>
+        pick(value : T&) : int { return 42; }
+        test(value : Mine&) : int { return pick(value); }
+    )SRC", false, false));
+    CHECK_FALSE(compiler->has_compilation_error());
+}
+
 TEST_CASE("A bound deferred in a template body is checked when the body is instantiated",
           "[template][fail-closed-bound-constraints]") {
     const bool valid = GENERATE(false, true);

@@ -1111,6 +1111,7 @@ cbor_item_t* encode_aggregate(const kdi_aggregate& agg) {
     cbor_item_t* bases = cbor_new_indefinite_array();
     for (auto& b : agg.bases) cbor_array_push(bases, cbor_move(encode_base(b)));
     map_push(m, "bases", bases);
+    if (agg.bases_complete) map_push(m, "bases_complete", cbor_bool(true));
 
     // layout
     cbor_item_t* layout = cbor_new_indefinite_array();
@@ -1202,6 +1203,7 @@ kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path) {
             agg.bases.push_back(decode_base(cbor_array_get(ba, i),
                                             path + ".bases[" + std::to_string(i) + "]"));
     }
+    agg.bases_complete = opt_bool(item, "bases_complete");
     auto* la = map_get(item, "layout");
     if (la && cbor_isa_array(la)) {
         size_t n = cbor_array_size(la);

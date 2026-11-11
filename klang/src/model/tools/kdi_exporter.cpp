@@ -1342,8 +1342,13 @@ kdi::kdi_aggregate kdi_builder::begin_aggregate(const aggregate& agg) {
 
     // ── Bases ────────────────────────────────────────────────────────────
     const llvm::DataLayout& dl = _ctx.module().getDataLayout();
+    kagg.bases_complete = true;
     for (auto& bs : agg.get_bases()) {
-        if (!bs.base) continue;
+        if (!bs.base) {
+            // An unresolved base cannot be listed: record that the list is partial.
+            kagg.bases_complete = false;
+            continue;
+        }
         kdi::kdi_base kb;
         kb.fq_name          = bs.base->get_fq_name();
         kb.visibility       = to_kdi_vis(bs.vis);

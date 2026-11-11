@@ -486,6 +486,12 @@ struct kdi_aggregate {
     // Inheritance
     std::vector<kdi_base> bases;
 
+    /// True when every declared direct base of the producer's aggregate was
+    /// resolved and is listed in `bases`. Absent (older files) means false: a
+    /// consumer must not conclude that this aggregate does NOT derive from a
+    /// type merely because that type is missing from `bases`.
+    bool bases_complete = false;
+
     // Physical layout (complete LLVM field list in index order)
     std::vector<kdi_layout_field> layout;
 

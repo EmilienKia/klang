@@ -7231,6 +7231,45 @@ TEST_CASE("import template — imported function bound is enforced on explicit a
     }
 }
 
+TEST_CASE("import template — imported hierarchies are walked only when the KDI proves them complete",
+          "[import][e2e][import-function-bound][import-bases-complete]") {
+    const std::string library = R"K(
+        module bases_lib;
+        class Base { public: Base() {} }
+        class Derived : public Base { public: Derived() {} }
+        class Other { public: Other() {} }
+        template<class T : Base>
+        check(value : T&) : int { return 1; }
+        dummy() : int { return 0; }
+    )K";
+    auto consumer = [](const std::string& body) {
+        return R"K(
+            module bases_exe;
+            import bases_lib;
+            using bases_lib;
+            class Mine : public Derived { public: Mine() {} }
+            main() : int {
+                derived : Derived;
+                mine : Mine;
+                other : Other;
+        )K" + body + R"K(
+            }
+        )K";
+    };
+
+    auto accepted = build_exec_with_lib(library,
+        consumer("return check(derived) + check(mine) + 40;"));
+    INFO(accepted.err);
+    CHECK(accepted.exit_code == 42);
+
+    SECTION("a deduced call with an unrelated imported class is rejected") {
+        CHECK_THROWS(build_exec_with_lib(library, consumer("return check(other);")));
+    }
+    SECTION("an explicit call with an unrelated imported class is rejected") {
+        CHECK_THROWS(build_exec_with_lib(library, consumer("return check<Other>(other);")));
+    }
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // Exported aliasing across a module boundary — 'alias' and 'typedef'
 // ═════════════════════════════════════════════════════════════════════════════

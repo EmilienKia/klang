@@ -891,6 +891,7 @@ static json to_json(const kdi_aggregate& a) {
         {"is_const_struct",a.is_const_struct},
         {"is_static_nested",a.is_static_nested},
         {"bases",         bases},
+        {"bases_complete", a.bases_complete},
         {"layout",        layout},
         {"constructors",  ctors},
         {"methods",       methods},
@@ -941,6 +942,7 @@ static kdi_aggregate from_json_aggregate(const json& j) {
         kb.byte_offset      = b.value("byte_offset", uint64_t{0});
         a.bases.push_back(kb);
     }
+    a.bases_complete = j.value("bases_complete", false);
     for (auto& lf : j.value("layout", json::array()))
         a.layout.push_back(from_json_layout_field(lf));
     for (auto& c : j.value("constructors", json::array()))

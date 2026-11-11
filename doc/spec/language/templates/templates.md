@@ -173,7 +173,9 @@ A bound is never treated as satisfied unless it was checked:
 - An argument is rejected early only when the violation is proven. When the hierarchy
   needed to decide is not completely known (for example an imported class chain), the
   obligation is deferred and the instantiated template is validated with the concrete
-  arguments. A bound that names an earlier parameter of the same list
+  arguments. An imported hierarchy counts as completely known only when its KDI
+  records the base lists as complete; older KDI files do not, so their hierarchies
+  stay unknown. A bound that names an earlier parameter of the same list
   (`template<class B, class T : B>`) is decided against that parameter's argument at
   every instantiation.
 

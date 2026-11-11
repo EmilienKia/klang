@@ -1004,6 +1004,7 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
     // types by name (e.g. '%Counter = type { ptr, %ICounter, i32 }').
     // If we try to intern Counter before ICounter is known, LLVM creates an
     // opaque forward-reference for ICounter, leaving Counter unsized.
+    bool all_bases_materialised = true;
     for (const auto& kbase : kdi_agg->bases) {
         std::string base_fq = kbase.fq_name;
         if (base_fq.size() >= 2 && base_fq[0] == ':' && base_fq[1] == ':')
@@ -1052,8 +1053,11 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
                 bases_mut.back().base      = std::dynamic_pointer_cast<aggregate>(base_imp);
                 bases_mut.back().is_virtual = kbase.is_virtual;
             }
+        } else {
+            all_bases_materialised = false;
         }
     }
+    agg->set_imported_bases_complete(kdi_agg->bases_complete && all_bases_materialised);
 
     // ── Intern LLVM StructType (after bases, so their LLVM types are known) ─
     llvm::StructType* llvm_st = nullptr;

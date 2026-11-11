@@ -520,6 +520,8 @@ Aggregate = {
   ?"enclosing_fq_name": text,        -- fq_name of enclosing aggregate; omitted
                                      -- when not nested
   "bases"          : array[Base],
+  ?"bases_complete": bool,           -- true when `bases` lists every declared
+                                     -- direct base; absent means false
   "layout"         : array[LayoutField],
   "constructors"   : array[Constructor],
   ?"destructor"    : Destructor,

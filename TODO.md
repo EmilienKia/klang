@@ -91,15 +91,13 @@
 
 #### Current bugs and gaps to fix
 
-- [ ] **Root-qualified imported base classes are not found.**
-      With the standard-library import resolver configured,
-      `class Good : public ::k::Exception {}` reports `00601` (base not found).
-      `symbol_resolver::visit_aggregate` passes the written name to
-      `scope_lookup::lookup_structure_or_import`, whose `split_qualified_name`
-      does not handle a leading `::` and produces an empty first component.
-      The imported-bound regression uses `k::Exception` for the base while
-      retaining `::k::Exception` as the template constraint. Verify that
-      nonrooted form separately; the rooted inheritance failure remains open.
+- [x] **Root-qualified imported base classes are not found.** Fixed:
+      `scope_lookup::lookup_structure_or_import` now treats a leading `::` as a
+      root marker (the scope chain is not searched, and a repeated module name
+      prefix is accepted). Regressions: `[rooted-base]` in
+      `test-gen-inheritance.cpp` and the rooted `::k::Exception` base/bound test
+      in `test-gen-template-constraints.cpp`. This entry can be removed once
+      the fix is committed.
 
 - [ ] **Preserve nested template aggregate descriptors during outer specialization.**
       Specializing a template containing
@@ -128,18 +126,25 @@
       violations during overload selection. Regressions:
       `[fail-closed-bound-constraints]`, `[import-function-bound]`,
       the imported-bound overload tests and the model-level unresolved-bound test.
-      Remaining (stage B): `kdi_builder` skips unresolved base entries and KDI
-      does not record whether an exported base list is complete, so the legacy
-      `is_derived_from` can over-reject a valid argument whose imported chain is
-      incomplete; add a `bases_complete` flag to KDI to turn such cases into
-      deferrals or proofs. Same-list dependent bounds (`template<class B, class T : B>`)
+      Stage B: the KDI aggregate record now carries `bases_complete` (true only
+      when every declared base was resolved at export; absent in older files means
+      false). The importer sets `aggregate::imported_bases_complete()` only when the
+      flag is true and every base was materialised, and `analyze_hierarchy` walks an
+      imported aggregate as a closed world only in that case; otherwise its
+      hierarchy is unknown (deferred). The legacy final-instantiation check still
+      rejects an argument it cannot prove derived (fail-closed), so an imported
+      class from an older KDI whose exported base list was partial is still
+      over-rejected; re-export it to fix. Function-template overload selection
+      still only proves violations for local concrete arguments; an imported
+      argument unrelated to the bound is rejected at instantiation (diagnostic
+      `01004` plus `00910`). A CTAD call with an unrelated class (`C(w)`) still
+      reports the generic `01009` instead of the constraint diagnostic.
+      Same-list dependent bounds (`template<class B, class T : B>`)
       are now bound to the concrete earlier argument and decided at every
       instantiation (`bind_same_list_dependent_bounds`); dependent bounds on other
       template parameters of an enclosing template and deferred CTAD cases are still
       accepted without an obligation replay (an unproven obligation inside a template
       body is checked when that body is instantiated with concrete arguments).
-      The rooted `::k::Exception` bound is accepted as a constraint, but the rooted
-      base-class lookup bug above remains open.
 
 - [ ] **Reject unparsed top-level input.** `parser::parse_declarations()` stops
       when no declaration matches and `parser::parse_unit()` returns without

@@ -464,6 +464,29 @@ TEST_CASE("CBOR: nested aggregate with enclosing info round-trips", "[cbor][aggr
     REQUIRE(i2.enclosing_fq_name == "nest::Outer");
 }
 
+TEST_CASE("CBOR: bases_complete round-trips and is absent when false", "[cbor][bases]") {
+    for (const bool complete : {true, false}) {
+        kdi_file f;
+        f.header.module_name = "bases::mod";
+        f.unit.name          = "bases::mod";
+        kdi_aggregate agg;
+        agg.kind           = kdi_aggregate_kind::class_;
+        agg.name           = "Derived";
+        agg.fq_name        = "bases::Derived";
+        agg.mangled_name   = "_KN5bases7DerivedE";
+        agg.bases_complete = complete;
+        f.unit.root_ns.aggregates.push_back(agg);
+
+        std::ostringstream oss(std::ios::binary);
+        REQUIRE_NOTHROW(kdi_write_cbor(f, oss));
+        CHECK((oss.str().find("bases_complete") != std::string::npos) == complete);
+
+        std::istringstream iss(oss.str(), std::ios::binary);
+        auto restored = kdi_read_cbor(iss);
+        CHECK(restored.unit.root_ns.aggregates.at(0).bases_complete == complete);
+    }
+}
+
 TEST_CASE("CBOR: vtable round-trips", "[cbor]") {
     kdi_file f;
     f.header.module_name = "virt::mod";

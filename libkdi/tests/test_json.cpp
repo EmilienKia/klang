@@ -573,6 +573,36 @@ TEST_CASE("JSON: nested aggregate with enclosing info round-trips", "[json][aggr
 // Layout field variants
 // ─────────────────────────────────────────────────────────────────────────────
 
+TEST_CASE("JSON: bases_complete round-trips and defaults to false when absent",
+          "[json][aggregate][bases]") {
+    for (const bool complete : {true, false}) {
+        kdi_file f = make_minimal_file();
+        kdi_aggregate agg;
+        agg.kind         = kdi_aggregate_kind::class_;
+        agg.name         = "Derived";
+        agg.fq_name      = "::ns::Derived";
+        agg.mangled_name = "_KN2ns7DerivedE";
+        agg.bases_complete = complete;
+        f.unit.root_ns.aggregates.push_back(agg);
+
+        CHECK(json_round_trip(f).unit.root_ns.aggregates.at(0).bases_complete == complete);
+    }
+
+    // A file written before the flag existed must stay importable, conservatively.
+    kdi_file f = make_minimal_file();
+    kdi_aggregate agg;
+    agg.name = "Old"; agg.fq_name = "::ns::Old"; agg.mangled_name = "_KN2ns3OldE";
+    agg.bases_complete = true;
+    f.unit.root_ns.aggregates.push_back(agg);
+    std::ostringstream out;
+    kdi_write_json(f, out);
+    auto payload = nlohmann::json::parse(out.str());
+    auto& written = payload.at("unit").at("root_ns").at("aggregates").at(0);
+    REQUIRE(written.erase("bases_complete") == 1u);
+    std::istringstream input(payload.dump());
+    CHECK_FALSE(kdi_read_json(input).unit.root_ns.aggregates.at(0).bases_complete);
+}
+
 TEST_CASE("JSON: all layout field variants round-trip", "[json][layout]") {
     kdi_file f = make_minimal_file();
     kdi_aggregate agg;

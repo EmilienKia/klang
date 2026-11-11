@@ -409,6 +409,12 @@ KdiAggregate {
 
   -- Inheritance
   bases        : [KdiBase]
+  bases_complete : bool             -- true when `bases` lists EVERY declared direct
+                                    -- base. Absent in older files => false. A consumer
+                                    -- may conclude "does not derive from X" by walking
+                                    -- the hierarchy only when every aggregate on it
+                                    -- has bases_complete == true; otherwise the
+                                    -- relation is unknown, not negative.
 
   -- Physical layout (LLVM field order, ALL fields including synthetic)
   layout       : [KdiLayoutField]
