@@ -797,11 +797,22 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
     // 3d. Validate type constraints (kind filter + base-type constraint)
     {
         std::string tpl_short_name = tpl_agg ? tpl_agg->get_short_name() : tpl_union->get_short_name();
-        size_t err_idx;
-        std::string err_reason;
-        if (!validate_template_arg_constraints(*ti, model_args, err_idx, err_reason)) {
+        auto params = bind_same_list_dependent_bounds(*ti, model_args);
+        for (auto i : local_bound.verified_indices) params[i].constraint_type.reset();
+        tpl_info checked;
+        checked.is_generic = ti->is_generic;
+        checked.params = params;
+        auto verdict = evaluate_template_arg_constraints(checked, model_args);
+        k::name written_bound;
+        if (verdict.is_unproven_bound()
+            && is_independent_written_bound(params, verdict.error_index, &written_bound)) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_UNRESOLVED_TYPE_EXPR),
+                        lex::opt_any_lexeme{}, "Template '{}' has unresolved bound '{}'",
+                        {tpl_short_name, written_bound.to_string()});
+        }
+        if (verdict.is_invalid()) {
             auto [code, msg] = format_constraint_error(
-                tpl_short_name, ti->params, model_args, err_idx, err_reason);
+                tpl_short_name, params, model_args, verdict.error_index, verdict.error_kind);
             throw_error(code, lex::opt_any_lexeme{}, msg);
         }
     }

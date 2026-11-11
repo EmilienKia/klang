@@ -7185,6 +7185,52 @@ TEST_CASE("import struct — indirect members targeting an imported aggregate re
     REQUIRE( result.exit_code == 42 );
 }
 
+TEST_CASE("import template — imported function bound is enforced on explicit and deduced calls",
+          "[import][e2e][import-function-bound]") {
+    const std::string library = R"K(
+        module fnbound_lib;
+        class Base { public: Base() {} }
+        template<class T : Base>
+        check(value : T&) : int { return 1; }
+        template<class T : Base>
+        struct Box { public: Box() {} v : T*; }
+        dummy() : int { return 0; }
+    )K";
+    auto consumer = [](const std::string& body) {
+        return R"K(
+            module fnbound_exe;
+            import fnbound_lib;
+            using fnbound_lib;
+            class Good : public Base { public: Good() {} }
+            class Wrong { public: Wrong() {} }
+            main() : int {
+                good : Good;
+                wrong : Wrong;
+        )K" + body + R"K(
+            }
+        )K";
+    };
+
+    auto accepted = build_exec_with_lib(library,
+        consumer("box : Box<Good>; return check(good) + 41;"));
+    INFO(accepted.err);
+    CHECK(accepted.exit_code == 42);
+
+    SECTION("imported aggregate with an unrelated class") {
+        CHECK_THROWS_WITH(build_exec_with_lib(library, consumer("box : Box<Wrong>; return 0;")),
+                          Catch::Matchers::ContainsSubstring("does not derive from constraint type"));
+    }
+
+    SECTION("deduced call with an unrelated class") {
+        CHECK_THROWS_WITH(build_exec_with_lib(library, consumer("return check(wrong);")),
+                          Catch::Matchers::ContainsSubstring("does not derive from constraint type"));
+    }
+    SECTION("explicit call with an unrelated class") {
+        CHECK_THROWS_WITH(build_exec_with_lib(library, consumer("return check<Wrong>(wrong);")),
+                          Catch::Matchers::ContainsSubstring("does not derive from constraint type"));
+    }
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // Exported aliasing across a module boundary — 'alias' and 'typedef'
 // ═════════════════════════════════════════════════════════════════════════════

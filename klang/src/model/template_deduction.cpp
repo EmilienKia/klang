@@ -872,6 +872,11 @@ ctad_deduction_result deduce_aggregate_ctad_candidates(
         result.failure_reason = "Aggregate '" + tpl_agg.get_short_name() + "' is not a template";
         return result;
     }
+    const auto candidate_constraints_valid = [&](const std::vector<template_argument>& args,
+                                                  ctad_guide_kind kind) {
+        if (validate_constraints) return validate_constraints(args, kind);
+        return !evaluate_template_arg_constraints(ti->params, args).is_invalid();
+    };
 
     // Candidate 1: Implicit copy/move deduction guide: S(const S<...>&) -> S<...>
     if (arg_types.size() == 1 && arg_types[0] != nullptr) {

@@ -385,6 +385,128 @@ type_reference_resolver::resolve_type_from_root(const k::name& name_without_pref
     return {};
 }
 
+bool type_reference_resolver::validate_function_template_constraints(
+    const function& declaration, const std::vector<template_argument>& args,
+    size_t& error_index, std::string& error_kind, bool* proven_bound_violation,
+    bool legacy_generic_rules, std::shared_ptr<type>* proven_bound)
+{
+    if (proven_bound_violation) *proven_bound_violation = false;
+    if (proven_bound) proven_bound->reset();
+    const auto* info = declaration.get_tpl_info();
+    if (!info) return false;
+
+    // Works on a copy: shared template state keeps its written bounds.
+    auto resolve_written_bounds = [&](std::vector<template_param_descriptor>& params) {
+        for (size_t i = 0; i < params.size(); ++i) {
+            auto& param = params[i];
+            if (!param.constraint_type || type::is_resolved(param.constraint_type)) continue;
+            k::name written;
+            if (!is_independent_written_bound(params, i, &written)) continue;
+            auto resolved = resolve_type_by_name(written, declaration);
+            if (resolved && type::is_resolved(resolved)) param.constraint_type = resolved;
+        }
+    };
+    // An undecided plain-name bound fails closed; dependent bounds are replayed
+    // when the instantiation is resolved with concrete arguments.
+    auto evaluate = [&](std::vector<template_param_descriptor> params) {
+        resolve_written_bounds(params);
+        tpl_info checked;
+        checked.is_generic = legacy_generic_rules && info->is_generic;
+        checked.params = std::move(params);
+        auto verdict = evaluate_template_arg_constraints(checked, args);
+        if (verdict.is_invalid()) {
+            error_index = verdict.error_index;
+            error_kind = verdict.error_kind;
+            return false;
+        }
+        k::name written;
+        if (verdict.is_unproven_bound()
+            && is_independent_written_bound(checked.params, verdict.error_index, &written)) {
+            error_index = verdict.error_index;
+            error_kind = "unresolved bound '" + written.to_string() + "'";
+            return false;
+        }
+        return true;
+    };
+
+    // The lexical declaration-scope proof needs a concrete source declaration
+    // and call site: erased substitutions and imported recipes do not retain
+    // enough provenance for it.
+    bool lexical_proof = !(info->is_generic || info->is_imported_signature_only
+        || !info->origin_module_ns_fq.empty() || info->private_definition_scope
+        || declaration.get_template_definition_scope()
+        || declaration.is_instantiation() || dynamic_cast<const imported_function*>(&declaration)
+        || !declaration.get_ast_function_decl()
+        || scope_lookup::is_imported_definition_context(declaration)
+        || _function_stack.empty() || info->params.size() != args.size()
+        || std::any_of(info->params.begin(), info->params.end(),
+                       [](const auto& p) { return p.is_pack; }));
+    if (lexical_proof) {
+        for (const auto& caller : _function_stack) {
+            if (!caller || caller->is_instantiation() || caller->is_template()
+                || !caller->get_ast_function_decl()) { lexical_proof = false; break; }
+            for (auto owner = caller->get_owner(); owner; owner = owner->ancestor<aggregate>())
+                if (owner->is_template() || owner->is_instantiation() || owner->is_imported())
+                    lexical_proof = false;
+        }
+    }
+    if (lexical_proof) {
+        for (auto owner = declaration.get_owner(); owner; owner = owner->ancestor<aggregate>())
+            if (owner->is_template() || owner->is_instantiation() || owner->is_imported()
+                || !owner->get_ast_aggregate_decl()) lexical_proof = false;
+    }
+
+    auto params = bind_same_list_dependent_bounds(*info, args);
+    resolve_written_bounds(params);
+    for (size_t i = 0; i < params.size() && i < args.size(); ++i) {
+        if (params[i].is_pack || !params[i].is_type_param() || !params[i].constraint_type
+            || !scope_lookup::is_local_concrete_constraint_argument(args[i])) continue;
+        std::shared_ptr<aggregate> bound;
+        if (lexical_proof) {
+            auto resolution = scope_lookup::inspect_local_constraint_bound(
+                _unit, declaration, *info, i, args);
+            if (resolution.state == scope_lookup::local_bound_state::missing) {
+                error_index = i;
+                error_kind = "unresolved bound '" + resolution.name + "'";
+                return false;
+            }
+            if (resolution.state == scope_lookup::local_bound_state::aggregate)
+                bound = resolution.bound;
+        }
+        if (!bound) {
+            auto resolved = std::dynamic_pointer_cast<struct_type>(
+                type::remove_const(params[i].constraint_type));
+            bound = resolved ? resolved->get_struct() : nullptr;
+            if (!bound || bound->is_template() || !bound->get_struct_type()
+                || bound->get_struct_type()->get_struct() != bound) continue;
+        }
+
+        tpl_info one;
+        one.binder_scope = info->binder_scope;
+        one.params.push_back(info->params[i]);
+        one.params[0].constraint_type = bound->get_struct_type();
+        one.params[0].constraint_source_type =
+            generic_source_type::capture(bound->get_struct_type(), {});
+        auto evidence = analyze_template_arg_constraints(
+            one, {args[i]}, {generic_source_type::capture(args[i].type_arg, {})});
+        if (evidence.checks.size() == 1
+            && ((evidence.state == constraint_analysis_state::invalid
+                 && evidence.checks[0].reason == constraint_analysis_reason::constraint)
+                || (evidence.state == constraint_analysis_state::deferred
+                    && evidence.checks[0].reason == constraint_analysis_reason::incomplete_hierarchy
+                    && scope_lookup::is_proven_unrelated_with_implicit_object(_unit, args[i], bound)))) {
+            error_index = i;
+            error_kind = "constraint";
+            if (proven_bound_violation) *proven_bound_violation = true;
+            if (proven_bound) *proven_bound = bound->get_struct_type();
+            return false;
+        }
+        if (evidence.state == constraint_analysis_state::verified)
+            params[i].constraint_type.reset();
+    }
+    return evaluate(std::move(params));
+}
+
 /**
  * Resolve a type by name from the context of context_elem.
  * Handles simple names, qualified names, and root-prefixed names.
@@ -1792,7 +1914,45 @@ type_reference_resolver::ctad_resolution_result type_reference_resolver::resolve
         arg_types.push_back(a ? a->get_type() : nullptr);
     }
 
-    auto deduction_res = deduce_aggregate_ctad_candidates(*tpl_agg, arg_types);
+    auto deduction_res = deduce_aggregate_ctad_candidates(
+        *tpl_agg, arg_types, [&](const std::vector<template_argument>& candidate_args,
+                                ctad_guide_kind guide) {
+            auto params = template_info->params;
+            bool proven_arguments = false;
+            if (!template_info->is_generic && guide == ctad_guide_kind::copy
+                && arg_types.size() == 1 && arg_types[0]) {
+                auto input = type::canonical(type::remove_const(arg_types[0]));
+                if (type::is_reference(input))
+                    input = type::canonical(type::remove_const(input->get_subtype()));
+                auto st = std::dynamic_pointer_cast<struct_type>(input);
+                auto instance = st ? st->get_struct() : nullptr;
+                proven_arguments = instance && instance->get_tpl_definition() == tpl_agg
+                    && candidate_args.size() == template_info->params.size()
+                    && std::all_of(candidate_args.begin(), candidate_args.end(),
+                                   scope_lookup::is_local_concrete_constraint_argument);
+            } else if (!template_info->is_generic) {
+                const bool no_defaults = std::none_of(
+                    template_info->params.begin(), template_info->params.end(),
+                    [](const auto& param) {
+                        return param.default_type || param.default_value.has_value()
+                            || param.default_value_expr;
+                    });
+                proven_arguments = (guide == ctad_guide_kind::constructor && no_defaults)
+                    || scope_lookup::has_proven_local_ctad_default(
+                           *tpl_agg, *template_info, candidate_args);
+            }
+            if (proven_arguments) {
+                auto local_bound = scope_lookup::analyze_local_aggregate_constraint(
+                    _unit, *tpl_agg, *template_info, candidate_args, context_elem);
+                // Let the resolver reject these candidates and retain missing-bound diagnostics.
+                if (local_bound.state == scope_lookup::local_bound_state::missing
+                    || local_bound.state == scope_lookup::local_bound_state::violated) return true;
+                for (auto i : local_bound.verified_indices) params[i].constraint_type.reset();
+            }
+            // An undecided bound is not a violation here: the candidate reaches
+            // the instantiation check, which fails closed with its diagnostic.
+            return !evaluate_template_arg_constraints(params, candidate_args).is_invalid();
+        });
     if (!deduction_res.success || deduction_res.candidates.empty()) {
         result.success = false;
         result.failure_reason = deduction_res.failure_reason;
@@ -2264,11 +2424,22 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     // 3d. Validate type constraints (kind filter + base-type constraint)
     {
         std::string tpl_short_name = tpl_agg ? tpl_agg->get_short_name() : tpl_union->get_short_name();
-        size_t err_idx;
-        std::string err_reason;
-        if (!validate_template_arg_constraints(*ti, model_args, err_idx, err_reason)) {
+        auto params = bind_same_list_dependent_bounds(*ti, model_args);
+        for (auto i : local_bound.verified_indices) params[i].constraint_type.reset();
+        tpl_info checked;
+        checked.is_generic = ti->is_generic;
+        checked.params = params;
+        auto verdict = evaluate_template_arg_constraints(checked, model_args);
+        k::name written_bound;
+        if (verdict.is_unproven_bound()
+            && is_independent_written_bound(params, verdict.error_index, &written_bound)) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_UNRESOLVED_TYPE_EXPR),
+                        lex::opt_any_lexeme{}, "Template '{}' has unresolved bound '{}'",
+                        {tpl_short_name, written_bound.to_string()});
+        }
+        if (verdict.is_invalid()) {
             auto [code, msg] = format_constraint_error(
-                tpl_short_name, ti->params, model_args, err_idx, err_reason);
+                tpl_short_name, params, model_args, verdict.error_index, verdict.error_kind);
             throw_error(code, lex::opt_any_lexeme{}, msg);
         }
     }

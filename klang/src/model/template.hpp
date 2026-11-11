@@ -329,6 +329,96 @@ inline const char* to_string(template_param_kind kind) {
     return "unknown";
 }
 
+enum class constraint_analysis_state {
+    verified,
+    deferred,
+    invalid
+};
+
+enum class constraint_analysis_reason {
+    none,
+    missing_argument,
+    extra_argument,
+    argument_shape,
+    parameter_pack,
+    value_parameter,
+    declaration_provenance,
+    argument_source_unknown,
+    symbolic_argument,
+    erased_argument,
+    argument_aggregate_missing,
+    unsupported_argument,
+    unresolved_bound,
+    erased_bound,
+    bound_aggregate_missing,
+    bound_source_unknown,
+    symbolic_bound,
+    unsupported_bound,
+    incomplete_hierarchy,
+    generic_owner_arg,
+    generic_drain_arg,
+    not_aggregate,
+    kind,
+    constraint,
+    value_type_mismatch
+};
+
+/**
+ * Tri-state result of the declaration-level constraint evaluation (kind filter,
+ * generic owner/drain rules and base-type bounds). `deferred` means that no
+ * violation was proven but at least one obligation could not be decided from
+ * the model alone; deferred bound reasons (unresolved_bound, unsupported_bound,
+ * bound_aggregate_missing) must never be treated as satisfied by a caller that
+ * is performing the final check.
+ */
+struct template_constraint_verdict {
+    constraint_analysis_state state = constraint_analysis_state::verified;
+    constraint_analysis_reason reason = constraint_analysis_reason::none;
+    size_t error_index = static_cast<size_t>(-1);
+    std::string error_kind; // legacy kind, set only when state is invalid
+
+    bool is_invalid() const { return state == constraint_analysis_state::invalid; }
+    bool is_unproven_bound() const;
+};
+
+struct template_constraint_check {
+    constraint_analysis_state state = constraint_analysis_state::deferred;
+    constraint_analysis_reason reason = constraint_analysis_reason::none;
+    std::optional<size_t> parameter_index;
+    std::optional<size_t> argument_index;
+};
+
+/**
+ * A compilation-local snapshot for later constraint-obligation propagation.
+ * The type anchors retain wrapper subtypes; aggregate anchors retain the model
+ * identities referenced by otherwise weak struct_type links. Model identities
+ * remain mutable, so analysis must be repeated after relevant model changes.
+ */
+struct template_constraint_analysis {
+    constraint_analysis_state state = constraint_analysis_state::deferred;
+    std::shared_ptr<const template_binder_scope> declaration_scope;
+    std::vector<template_param_descriptor> params;
+    std::vector<template_argument> args;
+    std::vector<std::shared_ptr<generic_source_type>> argument_sources;
+    std::vector<std::shared_ptr<generic_source_type>> argument_type_anchors;
+    std::vector<std::shared_ptr<generic_source_type>> bound_type_anchors;
+    std::vector<std::shared_ptr<aggregate>> aggregate_anchors;
+    std::vector<template_constraint_check> checks;
+};
+
+/**
+ * Analyze constraint evidence without resolving names or changing acceptance.
+ * The caller must supply complete declaration-derived descriptors. Source
+ * arguments are indexed like args and must be captured before erasure or
+ * other loss of source identity; missing provenance and unsupported forms
+ * defer. Verified is a model-level proof only, not a proof of unresolved
+ * declarations. Pack and value-parameter checking is deliberately deferred.
+ */
+template_constraint_analysis analyze_template_arg_constraints(
+    const tpl_info& ti,
+    const std::vector<template_argument>& args,
+    const std::vector<std::shared_ptr<generic_source_type>>& argument_sources = {});
+
 /**
  * Validate that a vector of concrete template arguments satisfies the
  * constraints declared on the template parameters (kind filter and
@@ -345,12 +435,54 @@ inline const char* to_string(template_param_kind kind) {
  *                          "not_aggregate" if a kind-filtered param receives
  *                          a non-aggregate type.
  * @return true if all arguments pass, false otherwise.
+ *
+ * Legacy boolean API, fail closed: a violation or a bound that is unresolved,
+ * not an aggregate, or without an aggregate model is rejected (error_kind
+ * "unresolved_bound" for the latter). Other deferred obligations (erased
+ * generic arguments and bounds) are not rejected. Callers that must tell a
+ * proven violation from an unproven bound use evaluate_template_arg_constraints.
  */
 bool validate_template_arg_constraints(
     const std::vector<template_param_descriptor>& params,
     const std::vector<template_argument>& args,
     size_t& error_index,
     std::string& error_kind);
+
+/**
+ * Tri-state evaluation shared by every call site that validates concrete
+ * template arguments. invalid carries the legacy error kind and the
+ * offending argument index; deferred carries the first undecided obligation.
+ * Hierarchy evidence is the aggregate model's: it treats an imported base
+ * list as complete until KDI records completeness.
+ */
+template_constraint_verdict evaluate_template_arg_constraints(
+    const std::vector<template_param_descriptor>& params,
+    const std::vector<template_argument>& args);
+
+/**
+ * Copy of ti.params where a bound naming an earlier parameter of the same list
+ * (`template<class B, class T : B>`) is replaced by that parameter's concrete
+ * aggregate argument, so the obligation can be decided when the arguments are known.
+ * Other bounds are copied unchanged.
+ */
+std::vector<template_param_descriptor> bind_same_list_dependent_bounds(
+    const tpl_info& ti, const std::vector<template_argument>& args);
+
+/** Same as above, with the restrictions of generic (type-erased) declarations. */
+template_constraint_verdict evaluate_template_arg_constraints(
+    const tpl_info& ti,
+    const std::vector<template_argument>& args);
+
+/**
+ * True when the bound of params[index] is a still-unresolved plain written name
+ * (no template arguments, binder or earlier-parameter dependency), i.e. a name
+ * that lexical lookup is expected to find. Such a bound that cannot be found
+ * is an error rather than an obligation to replay. The name is returned in
+ * @p written_name.
+ */
+bool is_independent_written_bound(
+    const std::vector<template_param_descriptor>& params, size_t index,
+    k::name* written_name = nullptr);
 
 /**
  * Same as above, with the additional restrictions of generic (type-erased)

@@ -91,6 +91,73 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **Root-qualified imported base classes are not found.**
+      With the standard-library import resolver configured,
+      `class Good : public ::k::Exception {}` reports `00601` (base not found).
+      `symbol_resolver::visit_aggregate` passes the written name to
+      `scope_lookup::lookup_structure_or_import`, whose `split_qualified_name`
+      does not handle a leading `::` and produces an empty first component.
+      The imported-bound regression uses `k::Exception` for the base while
+      retaining `::k::Exception` as the template constraint. Verify that
+      nonrooted form separately; the rooted inheritance failure remains open.
+
+- [ ] **Preserve nested template aggregate descriptors during outer specialization.**
+      Specializing a template containing
+      `template<typename U> static struct Inner { public: value : U; }` invokes
+      `template_instantiator::clone_nested_aggregate` previously copied children
+      without `Inner`'s `tpl_info`. Descriptor cloning, scoped substitutions and
+      specialization identity are in progress. Focused model, static inner,
+      non-static inner, constructor and imported-outer
+      regressions pass; both template-core shards also pass. KDI export currently
+      skips nested template definitions in `kdi_builder::visit_structure` and
+      `visit_klass`; the passing imported-outer test does not prove that direct
+      export and import of nested template definitions works. A focused import
+      regression confirms that the reconstructed-source path selected by a
+      namespace alias drops a nested template, producing error 00D01 for `Inner`.
+      An attempted reconstruction fix rejected previously supported constructs
+      and was removed. Its replacement must preserve those capabilities.
+
+- [ ] **Do not treat unresolved template base constraints as satisfied.**
+      Stage A is done: `evaluate_template_arg_constraints` in
+      `klang/src/model/template.cpp` returns a verified/invalid/deferred verdict;
+      the legacy bool validators are fail-closed wrappers (an unresolved or
+      non-aggregate bound is not satisfied), aggregate, CTAD, deduction and
+      function-template call sites use the tri-state result, and
+      `type_reference_resolver::validate_function_template_constraints` resolves
+      independent written bounds (including imported ones) and rejects proven
+      violations during overload selection. Regressions:
+      `[fail-closed-bound-constraints]`, `[import-function-bound]`,
+      the imported-bound overload tests and the model-level unresolved-bound test.
+      Remaining (stage B): `kdi_builder` skips unresolved base entries and KDI
+      does not record whether an exported base list is complete, so the legacy
+      `is_derived_from` can over-reject a valid argument whose imported chain is
+      incomplete; add a `bases_complete` flag to KDI to turn such cases into
+      deferrals or proofs. Same-list dependent bounds (`template<class B, class T : B>`)
+      are now bound to the concrete earlier argument and decided at every
+      instantiation (`bind_same_list_dependent_bounds`); dependent bounds on other
+      template parameters of an enclosing template and deferred CTAD cases are still
+      accepted without an obligation replay (an unproven obligation inside a template
+      body is checked when that body is instantiated with concrete arguments).
+      The rooted `::k::Exception` bound is accepted as a constraint, but the rooted
+      base-class lookup bug above remains open.
+
+- [ ] **Reject unparsed top-level input.** `parser::parse_declarations()` stops
+      when no declaration matches and `parser::parse_unit()` returns without
+      requiring end-of-file. For example, an annotated function named with the
+      reserved keyword `alias` followed by a valid `struct` can compile while
+      silently omitting that function and every following declaration. See
+      `klang/src/parse/parser_declarations.cpp` and the full-parse loop in
+      `klang/src/compiler.cpp`; diagnose the first unconsumed token.
+
+- [ ] **Investigate symbol checks for native dependencies.** KDI symbol
+      checking collects every function's mangled name in
+      `libkdi/src/kdi_symbols.cpp` and compares it with `nm --defined-only`
+      output. A public `@ffi::Extern("C")` declaration whose symbol is
+      supplied by a native dependency may therefore be reported missing from
+      the exporting binary even when linking is correct. Reproduce with such a
+      declaration and `check-symbols`; distinguish imported native dependencies
+      from definitions after the KDI callable ABI metadata is available.
+
 - [ ] **Preserve default owner member initializers.** A member declaration
       such as `owned: Resource! = new Resource();` in a class with a user
       constructor currently emits the initializer as a discarded expression;
