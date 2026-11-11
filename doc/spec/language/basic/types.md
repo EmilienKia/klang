@@ -1204,6 +1204,7 @@ This applies to all four indirection types:
 | `Derived*` or `Derived+` | `Base+`               | Initialisation only (link is non-null; null-check inserted if source is nullable) |
 | `Derived+`            | `Base*`                  | Init and rebind (link widened to pointer) |
 | `Derived?` or `Derived*` | `Base*`               | Rebind |
+| `Derived!` (owner lvalue) | `Base+`, `Base?`, `Base*` | Borrow: the address is copied, ownership stays in the owner |
 
 **Rules:**
 
@@ -1216,6 +1217,7 @@ This applies to all four indirection types:
    - Assigning a nullable source (ptr* or `view?`) to a non-null destination (`link+` or `ref&`) inserts a **runtime null-check** (throws `NullAssignationError` if null) and emits **warning 0x0C04**.
 5. Transitive upcasts (e.g. `C*→A*` where `C→B→A`) are supported via chained GEP.
 6. Virtual base upcasts are supported via the vbptr mechanism.
+7. In overload resolution, an upcast that keeps the observer kind (`Derived+` → `Base+`, `Derived*` → `Base*`, `Derived?` → `Base?`) ranks above one that changes it (`Derived+` → `Base*`). An owner argument (`Derived!`) ranks the link/view upcast (`Base+`, `Base?`) above the pointer upcast (`Base*`). Overloads on `Base+` and `Base*` therefore stay distinguishable for such arguments.
 
 **Cross-indirection widening (same pointed-at type):**
 

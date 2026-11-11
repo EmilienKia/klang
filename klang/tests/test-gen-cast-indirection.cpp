@@ -57,6 +57,9 @@
  *   [IC4]  f(r : Base&)    called with ref<Derived>   → upcast implicit (via ref)
  *   [IC5]  f(p : Base*)    called with ref<ptr<Derived>> — load+upcast
  *   [IC6]  f(l : Base+)    called with ref<lnk<Derived>> — load+upcast
+ *   [IC7]  f(l : Base+)    called with owner<Derived> lvalue — borrow+upcast
+ *   [IC8]  f(l : Base+) / f(p : Base*) overloads: same-kind upcast ranks first,
+ *          an owner argument prefers the link overload
  */
 
 #include <catch2/catch_all.hpp>
@@ -945,4 +948,84 @@ TEST_CASE("Implicit upcast: f(IFace&) called with class ref implementing IFace",
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 42);
+}
+
+// =============================================================================
+// Owner upcast to link/view observers, and same-kind ranking of observer upcasts
+// =============================================================================
+TEST_CASE("Implicit upcast: owner lvalue binds to Base+ and Base? parameters",
+          "[gen][cast][implicit][owner][lnk][view][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"SRC(
+        module gen_cast_owner_to_observer;
+        struct Prefix {
+            padding : long;
+            Prefix() : padding(7) {}
+        }
+        struct Base {
+            value : int;
+            Base() : value(42) {}
+        }
+        struct Derived : public Prefix, public Base {
+            Derived() : Prefix(), Base() {}
+        }
+        struct Holder {
+            Holder() {}
+            take(b : Base+) : int { return b->value; }
+            peek(b : Base?) : int { return b->value; }
+        }
+        takeLink(b : Base+) : int { return b->value; }
+        takeView(b : Base?) : int { return b->value; }
+        run() : int {
+            d : Derived! = new Derived();
+            h : Holder;
+            if (takeLink(d) != 42) return -1;
+            if (takeView(d) != 42) return -2;
+            if (h.take(d) != 42) return -3;
+            if (h.peek(d) != 42) return -4;
+            return 1;
+        }
+    )SRC", false, optimize);
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 1);
+}
+
+TEST_CASE("Implicit upcast: link and pointer overloads rank by observer kind",
+          "[gen][cast][implicit][overload][lnk][ptr][owner][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"SRC(
+        module gen_cast_observer_overload_rank;
+        struct Base {
+            value : int;
+            Base() : value(3) {}
+        }
+        struct Derived : public Base {
+            Derived() : Base() {}
+        }
+        struct Holder {
+            Holder() {}
+            pick(b : Base+) : int { return 1; }
+            pick(b : Base*) : int { return 2; }
+        }
+        pick(b : Base+) : int { return 10; }
+        pick(b : Base*) : int { return 20; }
+        run() : int {
+            d : Derived;
+            h : Holder;
+            l : Derived+ = &d;
+            p : Derived* = &d;
+            o : Derived! = new Derived();
+            if (pick(&d) != 10 || h.pick(&d) != 1) return -1;
+            if (pick(l) != 10 || h.pick(l) != 1) return -2;
+            if (pick(p) != 20 || h.pick(p) != 2) return -3;
+            if (pick(o) != 10 || h.pick(o) != 1) return -4;
+            return 1;
+        }
+    )SRC", false, optimize);
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 1);
 }

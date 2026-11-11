@@ -3207,14 +3207,16 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
                 return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
             }
-            // Struct upcast: ptr<Derived> → ptr<Base> or ptr<Derived> → lien<Base>
+            // Struct upcast: ptr<Derived> → ptr<Base> or ptr<Derived> → lnk<Base>.
+            // The same-kind upcast ranks above the cross-kind one, so that overloads on
+            // 'Base*' and 'Base+' stay distinguishable.
             auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
             auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
             if (src_st_type && tgt_st_type) {
                 auto src_st = src_st_type->get_struct();
                 auto tgt_st = tgt_st_type->get_struct();
                 if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
-                    return CAST_REF_CONV;
+                    return type::is_pointer(tgt_nc) ? CAST_REF_CONV : CAST_WIDENING;
                 }
             }
             // Generic erasure: ptr<Concrete> ↔ ptr<byte*> or ptr<byte*> ↔ ptr<Concrete>
@@ -3251,14 +3253,15 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
                 return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
             }
-            // Struct upcast: lien<Derived> → lien<Base> or lien<Derived> → ptr<Base>
+            // Struct upcast: lnk<Derived> → lnk<Base> (same kind, preferred) or
+            // lnk<Derived> → ptr<Base> (cross kind).
             auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
             auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
             if (src_st_type && tgt_st_type) {
                 auto src_st = src_st_type->get_struct();
                 auto tgt_st = tgt_st_type->get_struct();
                 if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
-                    return CAST_REF_CONV;
+                    return type::is_link(tgt_nc) ? CAST_REF_CONV : CAST_WIDENING;
                 }
             }
             // Generic erasure: lnk<Concrete> ↔ ptr<erased> (e.g. '&d' passed to a 'T*' parameter)
@@ -3291,14 +3294,15 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
                 return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
             }
-            // Struct upcast: pin<Derived> → pin<Base> or pin<Derived> → ptr<Base>
+            // Struct upcast: view<Derived> → view<Base> (same kind, preferred) or
+            // view<Derived> → ptr<Base> (cross kind).
             auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
             auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
             if (src_st_type && tgt_st_type) {
                 auto src_st = src_st_type->get_struct();
                 auto tgt_st = tgt_st_type->get_struct();
                 if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
-                    return CAST_REF_CONV;
+                    return type::is_view(tgt_nc) ? CAST_REF_CONV : CAST_WIDENING;
                 }
             }
             // Generic erasure: view<Concrete> ↔ view/ptr<erased>
@@ -3359,12 +3363,13 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             if (same_conversion_type(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
                 return CAST_WIDENING;
             }
-            // Upcast observer: owner<Derived> → ptr<Base>
+            // Upcast observer: owner<Derived> → ptr<Base>. Ranks below the link/view
+            // upcast, so 'Base+' is preferred over 'Base*' on ties.
             auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
             auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
             if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
                 src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
-                return CAST_REF_CONV;
+                return CAST_WIDENING;
             }
             return CAST_IMPOSSIBLE;
         }
@@ -3373,6 +3378,13 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
             if (same_conversion_type(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
                 return CAST_WIDENING;
+            // Upcast observer: owner<Derived> → lnk<Base> / view<Base>
+            auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                return CAST_REF_CONV;
+            }
         }
         // owner<T> → ref<T>: borrow owned object as reference
         if (type::is_reference(tgt_nc)) {
@@ -3476,7 +3488,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
                 if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
                     src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
-                    return CAST_REF_CONV;
+                    return CAST_WIDENING;
                 }
             }
             if (type::is_owner(tgt_nc)) {
@@ -3498,6 +3510,13 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 if (same_conversion_type(own_sub_nc, tgt_sub_nc) ||
                     types_match_array_const_compatible(own_sub_nc, tgt_sub_nc))
                     return CAST_REF_CONV;
+                // Upcast: ref<owner<Derived>> → lnk<Base> / view<Base>
+                auto src_st = std::dynamic_pointer_cast<struct_type>(own_sub_nc);
+                auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+                if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                    src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                    return CAST_REF_CONV;
+                }
             }
             // ref<owner<T>> → ref<T>: load owner pointer value, borrow as reference
             if (type::is_reference(tgt_nc)) {
@@ -3528,9 +3547,14 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 }
                 auto src_sub_nc = type::remove_const(src_sub);
                 auto tgt_sub_nc = type::remove_const(tgt_sub);
+                // A conversion that keeps the observer kind ranks above a cross-kind one.
+                const bool same_kind = (type::is_pointer(inner_value) && type::is_pointer(tgt_nc)) ||
+                                       (type::is_link(inner_value) && type::is_link(tgt_nc)) ||
+                                       (type::is_view(inner_value) && type::is_view(tgt_nc));
+                const cast_weight observer_conv = same_kind ? CAST_REF_CONV : CAST_WIDENING;
                 if (same_conversion_type(src_sub_nc, tgt_sub_nc)) {
                     if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
-                    return CAST_REF_CONV;
+                    return observer_conv;
                 }
                 // Struct upcast: ref<lnk/pin/ptr<Derived>> → lnk/pin/ptr<Base>
                 auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
@@ -3539,7 +3563,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                     auto src_st = src_st_type->get_struct();
                     auto tgt_st = tgt_st_type->get_struct();
                     if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
-                        return CAST_REF_CONV;
+                        return observer_conv;
                     }
                 }
                 return CAST_IMPOSSIBLE;

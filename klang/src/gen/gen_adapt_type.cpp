@@ -649,6 +649,15 @@ type_reference_resolver::adapt_from_owner(
             cast->set_type(type_nc);
             return cast;
         }
+        // Upcast: owner<Derived> → lnk<Base> / view<Base>
+        auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+        auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+        if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+            src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+            auto upcast = cast_expression::make_shared(expr, type_nc);
+            upcast->set_type(type_nc);
+            return upcast;
+        }
     }
     // Step 3: owner<T> → ref<T>: borrow owned object as reference
     // owner<T> → ref<T>: borrow owned object as reference (same LLVM representation)
@@ -844,6 +853,17 @@ type_reference_resolver::adapt_from_ref_owner(
             auto cast = cast_expression::make_shared(loaded, type_nc);
             cast->set_type(type_nc);
             return cast;
+        }
+        // Upcast: ref<owner<Derived>> → lnk<Base> / view<Base>
+        auto src_st = std::dynamic_pointer_cast<struct_type>(own_sub_nc);
+        auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+        if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+            src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+            auto loaded = load_value_expression::make_shared(expr);
+            loaded->set_type(inner_nc);
+            auto upcast = cast_expression::make_shared(loaded, type_nc);
+            upcast->set_type(type_nc);
+            return upcast;
         }
     }
     // Step 3: ref<owner<T>> → ref<T>: load owner pointer, borrow as reference
