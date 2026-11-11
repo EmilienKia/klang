@@ -1738,6 +1738,13 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **Temporary array of a class type rejects direct (implicit-constructor) element values.**
+  `Marked[]{1, , 3}` where `Marked` is a `class` (not a `struct`) with
+  `Marked(x : int)` compiles but leaves the explicit slots zero-initialised
+  (`pick(Marked[]{1, , 3}, 0)` yields 0); the same program with `struct Marked`
+  works, and `Marked[]{Marked(1), , Marked(3)}` works for both. Long-standing
+  (old and new compiler). Omitted-slot default construction itself is fixed.
+
 - [ ] **Capability discovery is not cancellation-safe inside OpenSSL async jobs.**
   The existing inline discovery path in `libk/crypto/src/openssl_ffi.c` can
   run provider callbacks on an active OpenSSL async job. Cancellation during

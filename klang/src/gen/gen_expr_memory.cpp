@@ -465,11 +465,29 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
         for (size_t i = 0; i < init_count && !needs_default; ++i)
             needs_default = !expr.element(i);
         if (needs_default && struct_model) {
-            auto [default_ctor, default_args] = get_best_matching_constructor(
-                struct_model->constructors(), std::vector<std::shared_ptr<expression>>{});
-            if (default_ctor) {
-                check_call_contract(*default_ctor, expr.first_lexeme(),
-                                    dynamic_cast<const element*>(var_def.get()));
+            // Omitted and trailing slots are default-constructed. A type that declares
+            // constructors but no parameterless one cannot be defaulted.
+            bool declares_ctor = false;
+            bool has_default_ctor = false;
+            for (const auto& ctor : struct_model->constructors()) {
+                if (!ctor) continue;
+                if (!ctor->is_compiler_generated()) declares_ctor = true;
+                if (ctor->parameters().empty()) has_default_ctor = true;
+            }
+            if (declares_ctor && !has_default_ctor) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_ELEM_NO_CTOR), expr.first_lexeme(),
+                    "Array initializer of '{}' omits elements, but '{}' has no default constructor",
+                    {var_def ? var_def->get_fq_name() : "<temporary>", struct_model->get_short_name()});
+            }
+            if (has_default_ctor) {
+                auto [default_ctor, default_args] = get_best_matching_constructor(
+                    struct_model->constructors(), std::vector<std::shared_ptr<expression>>{});
+                if (default_ctor) {
+                    check_constructor_visibility(*default_ctor, expr);
+                    check_call_contract(*default_ctor, expr.first_lexeme(),
+                                        dynamic_cast<const element*>(var_def.get()));
+                    expr._default_constructor = default_ctor;
+                }
             }
         }
     }
@@ -1016,6 +1034,19 @@ void implementation_generator::visit_array_init_expression(array_init_expression
                     } else {
                         _builder->CreateStore(_value, elem_ptr);
                     }
+                }
+            }
+        }
+        // Omitted and trailing slots of struct arrays run the default constructor.
+        if (auto default_ctor = expr._default_constructor) {
+            auto ctor_it = _context->_functions.find(default_ctor->shared_as<function>());
+            if (ctor_it != _context->_functions.end()) {
+                for (size_t i = 0; i < arr_size; ++i) {
+                    if (i < expr.size() && expr.element(i)) continue;
+                    llvm::Value* elem_ptr = _builder->CreateConstInBoundsGEP2_32(
+                        llvm_arr_type, data_ptr, 0, i, "arr_default_" + std::to_string(i));
+                    create_call_or_invoke(ctor_it->second->getFunctionType(), ctor_it->second,
+                                          {elem_ptr}, "");
                 }
             }
         }

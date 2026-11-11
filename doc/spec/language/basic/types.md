@@ -746,6 +746,11 @@ g   : double[100];      // global array of 100 doubles, zero-initialised
   ```k
   arr : int[3] {1, , 3};            // element 1 is zero-initialised
   ```
+  For an aggregate element type, an empty slot (or a trailing slot beyond the list) runs the
+  default constructor, i.e. a constructor callable without arguments. An aggregate without any
+  user-declared constructor is zero-initialised or uses its field defaults. If the aggregate
+  declares constructors but none is callable without arguments, the omitted slot is a
+  **compile error** (`0x0931`).
 - If fewer elements are provided than the array size, remaining elements are default-initialised
   and a **warning** is emitted.
 - If more elements are provided than the array size, a **compile error** is emitted.

@@ -50,6 +50,8 @@ protected:
     std::vector<std::shared_ptr<expression>> _uniform_ctor_args;
     /** Resolved constructor for uniform array init (struct element types). */
     std::shared_ptr<constructor> _uniform_constructor;
+    /** Default constructor run on omitted and trailing slots of a per-element init (struct element types). */
+    std::shared_ptr<constructor> _default_constructor;
     /** Resolved array size (set during type resolution for uniform mode). */
     size_t _array_size = 0;
 
@@ -140,6 +142,7 @@ public:
         c->_temporary_type_name = _temporary_type_name;
         c->_is_uniform = _is_uniform;
         c->_uniform_constructor = _uniform_constructor;
+        c->_default_constructor = _default_constructor;
         c->_array_size = _array_size;
         auto sym = _constructed_symbol
             ? std::dynamic_pointer_cast<symbol_expression>(_constructed_symbol->clone())
