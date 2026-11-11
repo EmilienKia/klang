@@ -279,7 +279,7 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
                     auto copy_ctor = st->get_copy_constructor();
                     if (copy_ctor && !copy_ctor->is_compiler_generated()) {
                         auto [selected, adapted] = get_best_matching_constructor(
-                            st->constructors(), ctor_args, true, expr.first_lexeme());
+                            copy_constructors_of(*st), ctor_args, true, expr.first_lexeme());
                         check_constructor_visibility(*selected, expr);
                         check_call_contract(*selected, expr.first_lexeme(),
                                             dynamic_cast<const element*>(var_def.get()));
@@ -498,7 +498,7 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
                 auto copy_ctor = st->get_copy_constructor();
                 if (copy_ctor && !copy_ctor->is_compiler_generated()) {
                     auto [selected, adapted] = get_best_matching_constructor(
-                        st->constructors(), expr.arguments(), true, expr.first_lexeme());
+                        copy_constructors_of(*st), expr.arguments(), true, expr.first_lexeme());
                     check_constructor_visibility(*selected, expr);
                     check_call_contract(*selected, expr.first_lexeme(), &expr);
                     expr.set_constructor(selected);

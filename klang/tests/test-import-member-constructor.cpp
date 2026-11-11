@@ -516,3 +516,53 @@ TEST_CASE("imported member recipes reject a conflicting concrete layout",
             },
             "the imported recipe conflicts with its authoritative ABI"));
 }
+
+TEST_CASE("imported aggregates keep private by-value layout dependencies sized",
+          "[import][layout][callable][regression]") {
+    // The libk KDI bundles the callable layout among its own definitions. A
+    // rejected combined type blob used to leave the private dependency of a
+    // later library opaque, so a local value of the imported class was unsized.
+    auto directory = std::filesystem::current_path() / ".klang-imported-private-layout";
+    std::error_code error;
+    std::filesystem::remove_all(directory, error);
+    REQUIRE(std::filesystem::create_directory(directory));
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    resolver->add_search_dir(directory.string());
+    auto producer = k::compiler::create(make_pic_target_machine());
+    producer->set_file_resolver(resolver);
+    producer->parse_source("imported-private-layout-producer.k", R"K(
+        module imported_private_layout;
+        struct Hidden {
+            first : int;
+            second : long;
+        }
+        public final class Holder {
+        private:
+            _hidden : Hidden;
+            _callback : &(int):int;
+        public:
+            Holder() {}
+            const size() : int { return 8; }
+        }
+    )K", false, false);
+    REQUIRE_FALSE(producer->has_compilation_error());
+    const auto library = directory / "libimported_private_layout.so";
+    REQUIRE(producer->gen_shared_library(library.string()));
+    auto metadata = library;
+    metadata.replace_extension(".kdi");
+    resolver->add_explicit_path("imported_private_layout", metadata);
+
+    auto consumer = k::compiler::create();
+    consumer->set_file_resolver(resolver);
+    REQUIRE_NOTHROW(consumer->parse_source("imported-private-layout-consumer.k", R"K(
+        module imported_private_layout_consumer;
+        import imported_private_layout;
+        run() : int {
+            holder : imported_private_layout::Holder;
+            return holder.size();
+        }
+    )K", false, false));
+    REQUIRE_FALSE(consumer->has_compilation_error());
+    std::filesystem::remove_all(directory, error);
+}

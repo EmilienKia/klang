@@ -1513,56 +1513,59 @@ void implementation_generator::visit_function(function &function) {
         if (blk) {
             std::shared_ptr<variable_statement> nrvo_var;
             bool nrvo_eligible = true;
-            std::function<void(const k::model::block&)> scan_returns;
-            scan_returns = [&](const k::model::block& b) {
-                for (auto& stmt : b.get_statements()) {
-                    if (auto ret = std::dynamic_pointer_cast<return_statement>(stmt)) {
-                        if (auto expr = ret->get_expression()) {
-                            // Check if expression is a symbol_expression referring to a local variable_statement
-                            auto sym = std::dynamic_pointer_cast<symbol_expression>(expr);
-                            if (!sym) {
-                                // Could be wrapped in a load_value_expression or cast
-                                if (auto lv = std::dynamic_pointer_cast<load_value_expression>(expr))
-                                    sym = std::dynamic_pointer_cast<symbol_expression>(lv->sub_expr());
-                            }
-                            if (sym && sym->is_variable_def()) {
-                                auto var_def = sym->get_variable_def();
-                                auto var_stmt = std::dynamic_pointer_cast<variable_statement>(var_def);
-                                if (var_stmt && type::is_struct(var_stmt->get_type())) {
-                                    if (!nrvo_var) {
-                                        nrvo_var = var_stmt;
-                                    } else if (nrvo_var != var_stmt) {
-                                        nrvo_eligible = false; // different variables in different returns
-                                    }
-                                } else {
-                                    nrvo_eligible = false;
+            std::function<void(const std::shared_ptr<k::model::statement>&)> scan_returns;
+            scan_returns = [&](const std::shared_ptr<k::model::statement>& stmt) {
+                if (!stmt) return;
+                if (auto ret = std::dynamic_pointer_cast<return_statement>(stmt)) {
+                    if (auto expr = ret->get_expression()) {
+                        // Check if expression is a symbol_expression referring to a local variable_statement
+                        auto sym = std::dynamic_pointer_cast<symbol_expression>(expr);
+                        if (!sym) {
+                            // Could be wrapped in a load_value_expression or cast
+                            if (auto lv = std::dynamic_pointer_cast<load_value_expression>(expr))
+                                sym = std::dynamic_pointer_cast<symbol_expression>(lv->sub_expr());
+                        }
+                        if (sym && sym->is_variable_def()) {
+                            auto var_def = sym->get_variable_def();
+                            auto var_stmt = std::dynamic_pointer_cast<variable_statement>(var_def);
+                            if (var_stmt && type::is_struct(var_stmt->get_type())) {
+                                if (!nrvo_var) {
+                                    nrvo_var = var_stmt;
+                                } else if (nrvo_var != var_stmt) {
+                                    nrvo_eligible = false; // different variables in different returns
                                 }
                             } else {
                                 nrvo_eligible = false;
                             }
+                        } else {
+                            nrvo_eligible = false;
                         }
                     }
-                    // Recurse into nested blocks (if-else, while, for bodies)
-                    if (auto sub_block = std::dynamic_pointer_cast<k::model::block>(stmt)) {
-                        scan_returns(*sub_block);
+                    return;
+                }
+                // Every nested statement kind must be visited: a return hidden in an
+                // unvisited body would write into the sret slot aliased by the candidate,
+                // which the candidate's cleanup would then destroy.
+                if (auto sub_block = std::dynamic_pointer_cast<k::model::block>(stmt)) {
+                    for (auto& nested : sub_block->get_statements()) scan_returns(nested);
+                } else if (auto if_stmt = std::dynamic_pointer_cast<if_else_statement>(stmt)) {
+                    scan_returns(if_stmt->get_then_stmt());
+                    scan_returns(if_stmt->get_else_stmt());
+                } else if (auto while_stmt = std::dynamic_pointer_cast<while_statement>(stmt)) {
+                    scan_returns(while_stmt->get_nested_stmt());
+                } else if (auto for_stmt = std::dynamic_pointer_cast<for_statement>(stmt)) {
+                    scan_returns(for_stmt->get_nested_stmt());
+                } else if (auto foreach_stmt = std::dynamic_pointer_cast<foreach_statement>(stmt)) {
+                    scan_returns(foreach_stmt->get_nested_stmt());
+                } else if (auto try_stmt = std::dynamic_pointer_cast<try_catch_statement>(stmt)) {
+                    scan_returns(try_stmt->get_try_body());
+                    for (auto& clause : try_stmt->get_catch_clauses()) {
+                        if (clause) scan_returns(clause->get_body());
                     }
-                    if (auto if_stmt = std::dynamic_pointer_cast<if_else_statement>(stmt)) {
-                        if (auto then_b = std::dynamic_pointer_cast<k::model::block>(if_stmt->get_then_stmt()))
-                            scan_returns(*then_b);
-                        if (auto else_b = std::dynamic_pointer_cast<k::model::block>(if_stmt->get_else_stmt()))
-                            scan_returns(*else_b);
-                    }
-                    if (auto while_stmt = std::dynamic_pointer_cast<while_statement>(stmt)) {
-                        if (auto body = std::dynamic_pointer_cast<k::model::block>(while_stmt->get_nested_stmt()))
-                            scan_returns(*body);
-                    }
-                    if (auto for_stmt = std::dynamic_pointer_cast<for_statement>(stmt)) {
-                        if (auto body = std::dynamic_pointer_cast<k::model::block>(for_stmt->get_nested_stmt()))
-                            scan_returns(*body);
-                    }
+                    scan_returns(try_stmt->get_finally_body());
                 }
             };
-            scan_returns(*blk);
+            scan_returns(blk);
             if (nrvo_eligible && nrvo_var) {
                 _nrvo_candidate = nrvo_var;
             }

@@ -1602,6 +1602,20 @@ void context::init_module(const std::string& module_name) {
     _module = std::make_unique<llvm::Module>(module_name, *_context);
 }
 
+// Exported aggregates may bundle the callable layout among their own
+// definitions; a second definition makes LLVM reject the whole module and
+// leaves every type referenced before the failure opaque.
+static std::string kdi_import_ir(const char* title, const std::string& definitions) {
+    static constexpr std::string_view callable_def = "%__k.callable = type { ptr, ptr }";
+    const bool bundled = definitions.starts_with(callable_def)
+        || definitions.find(std::string("\n") + std::string(callable_def)) != std::string::npos;
+    std::string ir = std::string("; ") + title + "\n";
+    if (!bundled) ir += std::string(callable_def) + "\n";
+    ir += definitions;
+    ir += '\n';
+    return ir;
+}
+
 // ---------------------------------------------------------------------------
 // intern_llvm_struct_from_def
 // ---------------------------------------------------------------------------
@@ -1640,7 +1654,7 @@ context::intern_llvm_struct_from_def(const std::string& llvm_def,
 
     // Parse the snippet via a minimal IR module sharing *_context so that
     // all named struct types are interned into the same context.
-    std::string ir = "; KDI import\n%__k.callable = type { ptr, ptr }\n" + llvm_def + "\n";
+    std::string ir = kdi_import_ir("KDI import", llvm_def);
     llvm::SMDiagnostic diag;
     auto buf = llvm::MemoryBuffer::getMemBuffer(ir, "<kdi-struct-def>");
     auto tmp = llvm::parseIR(buf->getMemBufferRef(), diag, *_context);
@@ -1670,14 +1684,19 @@ context::intern_llvm_struct_from_def(const std::string& llvm_def,
 void context::intern_all_llvm_struct_defs(const std::string& combined_ir) {
     if (combined_ir.empty()) return;
 
-    std::string ir = "; KDI combined import\n%__k.callable = type { ptr, ptr }\n" + combined_ir + "\n";
+    std::string ir = kdi_import_ir("KDI combined import", combined_ir);
     llvm::SMDiagnostic diag;
     auto buf = llvm::MemoryBuffer::getMemBuffer(ir, "<kdi-combined-defs>");
     // parseIR uses *_context, so all named StructTypes are interned into it.
     auto tmp = llvm::parseIR(buf->getMemBufferRef(), diag, *_context);
     // We do not need the temporary module — the types are now in *_context.
-    // Silently ignore parse failures: individual types will fall back to opaque
-    // via intern_llvm_struct_from_def() if needed.
+    // A rejected blob leaves the types parsed so far with forward-referenced
+    // opaque members: fail instead of producing unsized layouts later.
+    if (!tmp) {
+        throw std::runtime_error("invalid imported LLVM type definitions (line "
+                                 + std::to_string(diag.getLineNo()) + "): "
+                                 + diag.getMessage().str());
+    }
 }
 
 void context::attach_llvm_struct_type(std::shared_ptr<struct_type> st_type,

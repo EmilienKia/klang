@@ -1029,3 +1029,48 @@ TEST_CASE("Implicit upcast: link and pointer overloads rank by observer kind",
     REQUIRE(run);
     CHECK(run() == 1);
 }
+
+TEST_CASE("Copy initialisation prefers the copy constructor over a base-reference overload",
+          "[gen][cast][overload][constructor][copy][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"SRC(
+        module gen_copy_ctor_over_upcast_ctor;
+        class Base {
+        public:
+            n : int;
+            Base() : n(0) {}
+        }
+        class Box : public Base {
+        public:
+            Box() : Base() {}
+            Box(other : const Box&) : Base() { n = 100 + other.n; }
+            Box(b : Base&) : Base() { n = 200 + b.n; }
+        }
+        class Holder {
+        public:
+            items : Box;
+            Holder() : items() { items.n = 1; }
+            const snapConst() : int { s : Box(items); return s.n; }
+            snap() : int { s : Box(items); return s.n; }
+        }
+        run() : int {
+            v : Box;
+            v.n = 3;
+            w : Box(v);
+            if (w.n != 103) return -1;
+            h : Holder;
+            if (h.snapConst() != 101) return -2;
+            if (h.snap() != 101) return -3;
+            if (Box(v).n != 103) return -4;
+            b : Base;
+            b.n = 5;
+            u : Box(b);
+            if (u.n != 205) return -5;
+            return 1;
+        }
+    )SRC", false, optimize);
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 1);
+}

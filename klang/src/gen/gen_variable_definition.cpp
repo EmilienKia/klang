@@ -688,7 +688,7 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
                 auto copy_ctor = struct_model->get_copy_constructor();
                 if (copy_ctor && !copy_ctor->is_compiler_generated()) {
                     auto [selected, adapted] = get_best_matching_constructor(
-                        struct_model->constructors(), ctor_args, true, ctx.var_lexeme);
+                        copy_constructors_of(*struct_model), ctor_args, true, ctx.var_lexeme);
                     if (auto var_elem = dynamic_cast<const element*>(&ctx.var))
                         check_constructor_visibility(*selected, *var_elem);
                     check_call_contract(*selected, ctx.var_lexeme,

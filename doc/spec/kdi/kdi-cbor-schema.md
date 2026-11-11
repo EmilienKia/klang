@@ -536,6 +536,13 @@ Aggregate = {
 }
 ```
 
+`llvm_def` holds the aggregate's own definition first, followed by one definition
+per by-value layout dependency (one per line). The dependency lines may include the
+fat callable layout `%__k.callable = type { ptr, ptr }`, which the importer also
+supplies itself. An importer must therefore accept that definition in any bundle
+and must reject, rather than ignore, a combined set of definitions that LLVM
+refuses to parse: a partial parse leaves referenced dependencies opaque (unsized).
+
 When embedded under a generic `TemplateDef.aggregate_signature`, this payload is
 declaration-only: ABI fields such as `mangled_name` and `llvm_def` may be empty,
 and `layout` only needs the accessible named members required for type-checking.

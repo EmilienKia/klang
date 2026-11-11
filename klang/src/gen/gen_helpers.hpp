@@ -1065,6 +1065,17 @@ inline bool union_first_alternative_tracks_default(
     return profile.valid && !profile.leaves.empty();
 }
 
+// Copy-initialising an aggregate from an lvalue of its own type chooses among its
+// copy constructors only: a converting overload such as `C(base : Base&)` must
+// never outrank `C(other : const C&)` because of a cheaper upcast weight.
+inline std::vector<std::shared_ptr<constructor>> copy_constructors_of(const aggregate& agg) {
+    std::vector<std::shared_ptr<constructor>> copies;
+    for (const auto& ctor : agg.constructors()) {
+        if (ctor && agg.is_copy_constructor(*ctor)) copies.push_back(ctor);
+    }
+    return copies;
+}
+
 // Only one union leaf and otherwise trivial scalar fields can be copied without
 // bookkeeping for previously completed resource-bearing subobjects.
 inline std::shared_ptr<union_type_def> scalar_union_wrapper(

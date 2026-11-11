@@ -216,6 +216,9 @@ struct NonCopyable {
 - A `-> delete` constructor participates in overload resolution but, if selected as the best match, produces a compilation error.
 - If **all** constructors matching a given call are deleted, the compiler reports:  
   *"Use of deleted constructor: a constructor matching N argument(s) exists but has been explicitly deleted with '-> delete'"*.
+- Copy-initialising a value from an lvalue of its own type (`b : Box(a)`, `Box(a)`) selects only among the
+  copy constructors of that type. A converting constructor such as `Box(base : Base&)` is never preferred
+  over `Box(other : const Box&)`, even though the base-reference binding has a cheaper conversion weight.
 
 ---
 ## 8. Examples
