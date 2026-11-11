@@ -343,6 +343,13 @@ Rules:
 * Same-named function template definitions must all be retained when their
   parameter lists differ. Deduplication must identify a definition, not only
   its name.
+* Template `source` of a classic template is the verbatim definition text. It MAY begin
+  with `::`-rooted `using` directives (aliases or `using namespace`) copied from the
+  producer's enclosing scopes for the names the text mentions; importers materialise them
+  in the private definition namespace, never in consumer-visible scope.
+* A template nested in a non-template aggregate is exported as a `KdiTemplateDef` with
+  `entity_kind` `struct`/`class`/`interface`, `fq_name = <host>::<name>` and `host_fq_name`
+  identifying the host; importers attach it to the imported host.
 * Template `source` may include a private FFI declaration prelude in a
   compiler-generated namespace whose name begins with `__kdi_private_`.
   Such declarations are lexical dependencies of the originating template,

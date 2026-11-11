@@ -1947,6 +1947,12 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
     expose_imported_namespace(_unit, target_ns);
 
     // ── 2. Check if a template with this name already exists ────────────────
+    const bool nested_aggregate_template = template_host && tdef.entity_kind != "function";
+    if (nested_aggregate_template) {
+        if (auto existing = template_host->get_aggregate(tdef.name)) {
+            if (existing->is_template()) return;
+        }
+    }
     if (!template_host) {
         if (auto existing = target_ns->get_aggregate(tdef.name)) {
             if (existing->is_template()) return;
@@ -2062,31 +2068,69 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             });
         }
 
+        // Replayed using directives live in the definition namespace. Several
+        // templates of one namespace repeat the same directive; keep one, and
+        // never shadow a name the namespace already declares.
+        std::erase_if(ast_unit->declarations, [&](const auto& declaration) {
+            auto directive = std::dynamic_pointer_cast<parse::ast::using_decl>(declaration);
+            if (!directive || !directive->qname) return false;
+            const auto target = directive->qname->to_name().to_string();
+            const auto alias = directive->alias_name ? std::string{directive->alias_name->content} : std::string{};
+            const auto bound = !alias.empty() ? alias : directive->qname->to_name().back();
+            const bool is_namespace = directive->element_filter
+                && directive->element_filter->type == lex::keyword::NAMESPACE;
+            if (!(is_namespace && alias.empty())) {
+                const auto& children = target_ns->get_children();
+                if (std::any_of(children.begin(), children.end(), [&](const auto& child) {
+                        auto named = dynamic_cast<const named_element*>(child.get());
+                        return named && named->get_short_name() == bound; })) return true;
+            }
+            return !_template_private_declarations.insert(
+                target_ns->get_fq_name() + ":using:" + alias + "=" + target
+                + (is_namespace ? ":ns" : "")).second;
+        });
+
         // ── 4. Build declarations without changing the consumer unit or its AST ──
         if (template_host) {
+            // A member recipe is attached to its imported host; the rest of the
+            // source (using prelude, private dependencies) is built in target_ns.
+            std::shared_ptr<parse::ast::declaration> recipe;
             auto member = std::find_if(ast_unit->declarations.begin(), ast_unit->declarations.end(),
                 [&](const auto& declaration) {
+                    if (nested_aggregate_template) {
+                        auto agg = std::dynamic_pointer_cast<parse::ast::aggregate_decl>(declaration);
+                        return agg && agg->is_template() && agg->name.content == tdef.name;
+                    }
                     auto fn = std::dynamic_pointer_cast<parse::ast::function_decl>(declaration);
                     return fn && fn->is_template() && fn->name.content == tdef.name;
                 });
             if (member == ast_unit->declarations.end()) {
-                throw std::runtime_error("stored member template source is not a function template");
+                throw std::runtime_error(nested_aggregate_template
+                    ? "stored member template source is not an aggregate template"
+                    : "stored member template source is not a function template");
             }
-            auto fn_decl = std::dynamic_pointer_cast<parse::ast::function_decl>(*member);
+            recipe = *member;
             ast_unit->declarations.erase(member);
             // Generated private dependency scopes belong to the definition namespace,
             // while the recipe itself must be attached to its imported aggregate host.
             k::model::model_builder::visit_imported_declarations(
                 _logger, ctx, *ast_unit, _unit, target_ns);
-            const auto existing_members = template_host->get_functions(tdef.name);
-            if (fn_decl->template_source_text.empty()
-                || std::none_of(existing_members.begin(), existing_members.end(), [&](const auto& fn) {
-                    auto ti = fn->get_tpl_info();
-                    return ti && ti->source_text == fn_decl->template_source_text;
-                })) {
+            const auto member_visibility = tdef.visibility == "protected" ? PROTECTED : PUBLIC;
+            if (nested_aggregate_template) {
+                auto agg_decl = std::dynamic_pointer_cast<parse::ast::aggregate_decl>(recipe);
                 k::model::model_builder::visit_member(
-                    _logger, ctx, *fn_decl, _unit, template_host,
-                    tdef.visibility == "protected" ? PROTECTED : PUBLIC, target_ns);
+                    _logger, ctx, *agg_decl, _unit, template_host, member_visibility, target_ns);
+            } else {
+                auto fn_decl = std::dynamic_pointer_cast<parse::ast::function_decl>(recipe);
+                const auto existing_members = template_host->get_functions(tdef.name);
+                if (fn_decl->template_source_text.empty()
+                    || std::none_of(existing_members.begin(), existing_members.end(), [&](const auto& fn) {
+                        auto ti = fn->get_tpl_info();
+                        return ti && ti->source_text == fn_decl->template_source_text;
+                    })) {
+                    k::model::model_builder::visit_member(
+                        _logger, ctx, *fn_decl, _unit, template_host, member_visibility, target_ns);
+                }
             }
         } else {
             // Keep same-named overloads, but avoid materializing the exact same
@@ -2127,32 +2171,35 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
                 tag(ti);
                 if (ti && private_scope) ti->private_definition_scope = std::const_pointer_cast<ns>(private_scope);
             };
-            if (template_host) {
-                for (auto& fn : template_host->get_functions(tdef.name)) tag_definition(fn->get_tpl_info());
-            } else {
-                if (auto agg = target_ns->get_aggregate(tdef.name)) {
-                    tag_definition(agg->get_tpl_info());
-                    // The recipe source has no syntax for compiler-promoted
-                    // virtual bases. Restore the producer's ABI decisions from
-                    // the structured signature before instantiating the recipe.
-                    if (tdef.aggregate_signature) {
-                        auto& bases = agg->get_bases_mutable();
-                        const auto& saved = tdef.aggregate_signature->bases;
-                        if (bases.size() == saved.size()) {
-                            for (size_t i = 0; i < bases.size(); ++i)
-                                bases[i].is_virtual = saved[i].is_virtual;
-                        } else {
-                            for (auto& base : bases) {
-                                for (const auto& saved_base : saved) {
-                                    if (base.raw_name == saved_base.fq_name) {
-                                        base.is_virtual = saved_base.is_virtual;
-                                        break;
-                                    }
+            // The recipe source has no syntax for compiler-promoted virtual bases.
+            // Restore the producer's ABI decisions from the structured signature
+            // before instantiating the recipe.
+            auto tag_aggregate = [&](const std::shared_ptr<aggregate>& agg) {
+                if (!agg) return;
+                tag_definition(agg->get_tpl_info());
+                if (tdef.aggregate_signature) {
+                    auto& bases = agg->get_bases_mutable();
+                    const auto& saved = tdef.aggregate_signature->bases;
+                    if (bases.size() == saved.size()) {
+                        for (size_t i = 0; i < bases.size(); ++i)
+                            bases[i].is_virtual = saved[i].is_virtual;
+                    } else {
+                        for (auto& base : bases) {
+                            for (const auto& saved_base : saved) {
+                                if (base.raw_name == saved_base.fq_name) {
+                                    base.is_virtual = saved_base.is_virtual;
+                                    break;
                                 }
                             }
                         }
                     }
                 }
+            };
+            if (template_host) {
+                if (nested_aggregate_template) tag_aggregate(template_host->get_aggregate(tdef.name));
+                else for (auto& fn : template_host->get_functions(tdef.name)) tag_definition(fn->get_tpl_info());
+            } else {
+                tag_aggregate(target_ns->get_aggregate(tdef.name));
                 for (auto& fn : target_ns->get_functions(tdef.name)) tag_definition(fn->get_tpl_info());
                 if (auto un = target_ns->get_union(tdef.name)) tag_definition(un->get_tpl_info());
                 if (auto al = target_ns->get_alias(tdef.name)) tag_definition(al->get_tpl_info());

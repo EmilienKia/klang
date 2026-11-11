@@ -563,7 +563,10 @@ TemplateDef = {
 Rules:
 
 * `host_fq_name` identifies the hosting (non-template) aggregate for a public or
-  protected member template with `entity_kind = "function"`. Classic methods retain
+  protected member template. With `entity_kind = "function"` it is a member function
+  template; with `entity_kind` `struct`/`class`/`interface` it is an aggregate template
+  nested in that host (`fq_name` is `<host>::<name>`), and the importer attaches it to
+  the imported host. Classic methods retain
   their full `source` and are rebuilt in the imported host with their declared visibility.
   The host's kind remains authoritative for declaration checks (including interface
   `default` methods). Concrete classic method instances are generated locally in

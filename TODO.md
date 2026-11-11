@@ -99,21 +99,20 @@
       in `test-gen-template-constraints.cpp`. This entry can be removed once
       the fix is committed.
 
-- [ ] **Preserve nested template aggregate descriptors during outer specialization.**
-      Specializing a template containing
-      `template<typename U> static struct Inner { public: value : U; }` invokes
-      `template_instantiator::clone_nested_aggregate` previously copied children
-      without `Inner`'s `tpl_info`. Descriptor cloning, scoped substitutions and
-      specialization identity are in progress. Focused model, static inner,
-      non-static inner, constructor and imported-outer
-      regressions pass; both template-core shards also pass. KDI export currently
-      skips nested template definitions in `kdi_builder::visit_structure` and
-      `visit_klass`; the passing imported-outer test does not prove that direct
-      export and import of nested template definitions works. A focused import
-      regression confirms that the reconstructed-source path selected by a
-      namespace alias drops a nested template, producing error 00D01 for `Inner`.
-      An attempted reconstruction fix rejected previously supported constructs
-      and was removed. Its replacement must preserve those capabilities.
+- [x] **Preserve nested template aggregate descriptors during outer specialization.**
+      Fixed for KDI: `clone_nested_aggregate` clones the nested `tpl_info`, and
+      the exporter no longer rebuilds classic template bodies with the lossy
+      `k_source_emitter` when raw source exists (it was dropping nested templates,
+      defaults and friends whenever a `using` alias was in scope). The verbatim
+      source is exported with a `::`-rooted `using` prelude (only for names the
+      source mentions), and templates nested in non-template aggregates are exported
+      through `host_fq_name` and specialised in the definition namespace under a
+      host-qualified name. Regressions: the two `[using-alias]`/nested-host cases in
+      `test-import-templates.cpp` and the previously failing import-interop cases.
+      Remaining: `k_source_emitter` is still used for generic function templates and
+      when no source text exists; it still drops nested children there.
+      Not covered: private-only `using namespace X` targets that the consumer does
+      not import. This entry can be removed once the fix is committed.
 
 - [ ] **Do not treat unresolved template base constraints as satisfied.**
       Stage A is done: `evaluate_template_arg_constraints` in

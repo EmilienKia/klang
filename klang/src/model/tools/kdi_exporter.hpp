@@ -194,9 +194,14 @@ private:
                                                     const std::string& fq_name,
                                                     const std::vector<template_argument>& args) const;
 
+    /** Export a template nested in a non-template aggregate as a host-linked definition. */
+    void export_member_template_aggregate(const aggregate& agg, const std::string& entity_kind);
+
     /** Build a kdi_template_def from a template definition (aggregate or function).
-     *  Uses k_source_emitter to reconstruct the source with resolved types,
-     *  falling back to ti.source_text if the emitter produces empty output.
+     *  Classic templates keep ti.source_text verbatim; the `using` directives of the
+     *  enclosing scopes that the source mentions are prepended as a prelude so the
+     *  importer resolves aliases without rebuilding the body. k_source_emitter is only
+     *  used for generic function templates and when no source text was captured.
      *  @param entity  The model element (aggregate or function) to emit source for. May be null for fallback-only. */
     kdi::kdi_template_def build_template_def(const std::string& name,
                                               const std::string& fq_name,

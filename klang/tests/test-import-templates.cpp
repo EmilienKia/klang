@@ -5219,6 +5219,90 @@ TEST_CASE("cross-module template — member type resolved via using namespace",
     REQUIRE( result.exit_code == 42 );
 }
 
+// A using alias in the enclosing scope must not make the exporter rebuild the
+// template body: nested templates, explicit defaults and value arguments stay intact.
+TEST_CASE("cross-module template — using alias keeps nested templates and defaults",
+          "[import][e2e][template][cross-tpl][consumer-inst][using-alias]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module nested_alias_lib;
+            namespace alias_types { struct Marker { value : int; } }
+            using T = alias_types::Marker;
+
+            public:
+            template<typename T>
+            struct Host {
+                public:
+                template<typename T> static struct Inner {
+                    public: value : T;
+                }
+                template<typename U = T, int N = 20 + 22> static struct Default {
+                    public: value : U;
+                    number() : int { return N; }
+                }
+                run() : int {
+                    item : Inner<long>;
+                    item.value = 19L;
+                    fallback : Default<>;
+                    fallback.value = 23;
+                    if (fallback.number() != 42) return -1;
+                    return (int)item.value + fallback.value;
+                }
+            }
+        )K",
+        R"K(
+            module nested_alias_exe;
+            import nested_alias_lib;
+
+            main() : int {
+                host : Host<int>;
+                return host.run();
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
+// A template nested in a non-template aggregate is exported through the
+// host_fq_name slot and instantiated by the consumer, for both the nested
+// aggregate template and the member function template.
+TEST_CASE("cross-module template — nested template inside a non-template aggregate",
+          "[import][e2e][template][cross-tpl][consumer-inst]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module plain_host_lib;
+
+            public:
+            struct Plain {
+                public:
+                base : int;
+                template<typename T> static struct Cell {
+                    public: item : T;
+                    get() : T { return item; }
+                }
+                template<typename T> make(v : T) : int { return (int)v + base; }
+            }
+        )K",
+        R"K(
+            module plain_host_exe;
+            import plain_host_lib;
+
+            main() : int {
+                p : Plain;
+                p.base = 2;
+                c : Plain::Cell<int>;
+                c.item = 20;
+                return c.get() + p.make<int>(20);
+            }
+        )K");
+
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE( result.exit_code == 42 );
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // Additional cross-module template coverage
 //

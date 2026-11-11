@@ -218,6 +218,11 @@ public:
                              k::parse::ast::function_decl& src, k::model::unit& unit,
                              std::shared_ptr<aggregate> host, visibility vis,
                              const std::shared_ptr<ns>& definition_namespace = {});
+    /** Rebuilds a detached nested aggregate (template) recipe inside its imported host. */
+    static void visit_member(k::log::logger& logger, std::shared_ptr<k::model::context> context,
+                             k::parse::ast::aggregate_decl& src, k::model::unit& unit,
+                             std::shared_ptr<aggregate> host, visibility vis,
+                             const std::shared_ptr<ns>& definition_namespace);
 
 
 };

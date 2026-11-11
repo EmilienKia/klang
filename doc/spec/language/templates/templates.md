@@ -528,10 +528,16 @@ They cannot have independent template parameter lists.
 ### 8.6 KDI Export
 
 Template definitions are exported in `.kdi` files as `kdi_template_def` entries, which
-contain the template parameter descriptors and a reconstructed K source fragment.  The
-source is emitted from the semantic model (using `k_source_emitter`) with all
-`using`-aliases resolved to fully-qualified names so that the importing module can
-re-parse and re-instantiate the template locally with new type arguments.
+contain the template parameter descriptors and a K source fragment.  The source is the
+verbatim definition text; the `using` directives (aliases, `using namespace`) of the
+enclosing scopes that the text mentions are prepended as `::`-rooted directives, so the
+importing module re-parses the unchanged body and resolves the same names the producer
+did. Nested templates, default arguments, friend declarations and member templates are
+therefore preserved. The prelude lives in the private definition namespace and is not
+visible to consumer code. A template nested in a non-template aggregate is exported as
+a separate definition whose `host_fq_name` names the hosting aggregate; the consumer
+attaches it to the imported host and places its specializations in the definition
+namespace under a host-qualified name.
 
 **Concrete instantiations** that are part of the module's public/protected API are also
 exported as regular aggregates or functions with their mangled names. A `template_origin`

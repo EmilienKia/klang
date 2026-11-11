@@ -90,6 +90,18 @@ namespace k::model {
         visitor.visit_function_decl(src);
     }
 
+    void model_builder::visit_member(k::log::logger& logger, std::shared_ptr<k::model::context> context,
+                                      k::parse::ast::aggregate_decl& src, k::model::unit& unit,
+                                      std::shared_ptr<aggregate> host, visibility vis,
+                                      const std::shared_ptr<ns>& definition_namespace) {
+        model_builder visitor(logger, context, unit);
+        visitor._building_imported_declarations = static_cast<bool>(definition_namespace);
+        visitor._imported_definition_namespace = definition_namespace;
+        visitor._constraint_source_provenance_unknown = true;
+        stack<struct_context> push(visitor._contexts, std::move(host), vis);
+        visitor.visit_aggregate_decl(src);
+    }
+
     void model_builder::visit_imported_declarations(k::log::logger& logger,
         std::shared_ptr<k::model::context> context, k::parse::ast::unit& src,
         k::model::unit& unit, const std::shared_ptr<ns>& declaration_scope) {

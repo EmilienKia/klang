@@ -2122,16 +2122,25 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     auto subst = build_substitution_map(*ti, args);
     auto val_subst = build_value_substitution_map(*ti, args);
 
-    // 1. Create a new concrete aggregate in the parent namespace
+    // Keep nested specializations under their enclosing aggregate. An imported host is
+    // not part of the compilation tree walked by the resolution and code generation
+    // passes, so its consumer-owned specializations live in the definition namespace
+    // under a host-qualified name while keeping the host-nested canonical symbol name.
+    const bool imported_host = enclosing_aggregate && enclosing_aggregate->is_imported() && parent_ns;
+    aggregate_holder* holder = enclosing_aggregate && !imported_host
+        ? static_cast<aggregate_holder*>(enclosing_aggregate.get())
+        : static_cast<aggregate_holder*>(parent_ns.get());
+    const std::string defined_name = imported_host
+        ? enclosing_aggregate->get_short_name() + "__" + inst_name : inst_name;
     std::shared_ptr<aggregate> concrete;
     if (std::dynamic_pointer_cast<model::interface>(tpl_def.shared_as<element>())) {
-        concrete = parent_ns->define_interface(inst_name);
+        concrete = holder->define_interface(defined_name);
     } else if (tpl_def.is_class()) {
-        concrete = parent_ns->define_class(inst_name);
+        concrete = holder->define_class(defined_name);
     } else if (tpl_def.is_annotation()) {
-        concrete = parent_ns->define_annotation(inst_name);
+        concrete = holder->define_annotation(defined_name);
     } else {
-        concrete = parent_ns->define_structure(inst_name);
+        concrete = holder->define_structure(defined_name);
     }
     if (!concrete) return nullptr;
 

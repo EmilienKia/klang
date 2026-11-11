@@ -1542,6 +1542,8 @@ void kdi_builder::visit_structure(structure& s) {
             _ns_stack.back()->template_defs.push_back(
                 build_template_def(s.get_short_name(), fq, "struct",
                                    s.get_visibility(), *s.get_tpl_info(), &s));
+        } else {
+            export_member_template_aggregate(s, "struct");
         }
         return;
     }
@@ -1585,6 +1587,8 @@ void kdi_builder::visit_klass(klass& k) {
             _ns_stack.back()->template_defs.push_back(
                 build_template_def(k.get_short_name(), fq, "class",
                                    k.get_visibility(), *k.get_tpl_info(), &k));
+        } else {
+            export_member_template_aggregate(k, "class");
         }
         return;
     }
@@ -1626,6 +1630,8 @@ void kdi_builder::visit_interface(interface& i) {
             _ns_stack.back()->template_defs.push_back(
                 build_template_def(i.get_short_name(), fq, "interface",
                                    i.get_visibility(), *i.get_tpl_info(), &i));
+        } else {
+            export_member_template_aggregate(i, "interface");
         }
         return;
     }
@@ -2317,6 +2323,91 @@ build_using_alias_map(const element* entity) {
     return map;
 }
 
+static bool source_mentions_identifier(std::string_view source, std::string_view name) {
+    const auto is_word = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
+    for (auto pos = source.find(name); pos != std::string_view::npos; pos = source.find(name, pos + 1)) {
+        const bool left = pos == 0 || !is_word(source[pos - 1]);
+        const bool right = pos + name.size() == source.size() || !is_word(source[pos + name.size()]);
+        if (left && right) return true;
+    }
+    return false;
+}
+
+// Builds `using` declarations that rebuild, in the consumer's definition namespace,
+// the source-level using directives visible to a template. The template source stays
+// verbatim (nested templates, friends, defaults, ...); only directives the source
+// actually mentions are replayed, with fully-qualified targets. A directive shadowed
+// by a nearer namespace member is dropped, as lexical lookup would never reach it.
+static std::string build_using_prelude(const element* entity, std::string_view source) {
+    std::string prelude;
+    if (!entity) return prelude;
+    std::unordered_set<std::string> bound;
+    std::unordered_set<std::string> declared;
+    for (auto current = entity->parent<const element>(); current;
+         current = current->parent<const element>()) {
+        if (auto uh = dynamic_cast<const using_holder*>(current.get())) {
+            for (const auto& dir : uh->get_using_directives()) {
+                if (!dir.ast_node || dir.target_name.empty()) continue;
+                auto fq = resolve_target_fq_name(dir.target_name, current.get());
+                if (fq.empty()) continue;
+                if (dir.is_namespace() && !dir.has_alias()) {
+                    std::shared_ptr<const ns> target;
+                    for (auto scope = current; scope && !target; scope = scope->parent<const element>()) {
+                        auto holder = std::dynamic_pointer_cast<const ns>(scope);
+                        if (!holder) continue;
+                        auto candidate = holder->get_child_namespace(dir.target_name.front());
+                        for (size_t i = 1; candidate && i < dir.target_name.size(); ++i)
+                            candidate = candidate->get_child_namespace(dir.target_name[i]);
+                        target = candidate;
+                    }
+                    if (!target) continue;
+                    const bool mentioned = std::any_of(target->get_children().begin(), target->get_children().end(),
+                        [&](const auto& child) {
+                            auto named = dynamic_cast<const named_element*>(child.get());
+                            return named && !named->get_short_name().empty()
+                                && source_mentions_identifier(source, named->get_short_name());
+                        });
+                    if (mentioned) prelude += "using namespace ::" + fq + ";\n";
+                    continue;
+                }
+                const std::string name = dir.has_alias() ? *dir.alias_name : dir.target_name.back();
+                if (name.empty() || !source_mentions_identifier(source, name)
+                    || bound.contains(name) || declared.contains(name)) continue;
+                bound.insert(name);
+                prelude += "using ";
+                if (dir.is_namespace()) prelude += "namespace ";
+                if (dir.has_alias()) prelude += *dir.alias_name + " = ";
+                prelude += "::" + fq + ";\n";
+            }
+        }
+        if (auto scope = dynamic_cast<const ns*>(current.get())) {
+            for (const auto& child : scope->get_children()) {
+                auto named = dynamic_cast<const named_element*>(child.get());
+                if (named && !named->get_short_name().empty()) declared.insert(named->get_short_name());
+            }
+        }
+    }
+    return prelude;
+}
+
+// A template nested in a non-template aggregate is a recipe of its own: the host keeps no
+// copy of it, so it is exported as a definition linked to its host (host_fq_name), exactly
+// like member function templates. Templates inside template hosts belong to the host's
+// recipe and are rebuilt when the host is instantiated.
+void kdi_builder::export_member_template_aggregate(const aggregate& agg, const std::string& entity_kind) {
+    if (_agg_stack.empty() || _ns_stack.empty() || !agg.get_tpl_info()) return;
+    auto host = agg.parent<aggregate>();
+    if (!host || host->is_template() || host->has_tpl_args()) return;
+    const auto& ti = *agg.get_tpl_info();
+    if (ti.is_generic || agg.is_generic()) return;
+    std::string host_fq = _agg_stack.back()->fq_name;
+    if (host_fq.size() >= 2 && host_fq[0] == ':' && host_fq[1] == ':') host_fq = host_fq.substr(2);
+    auto def = build_template_def(agg.get_short_name(), host_fq + "::" + agg.get_short_name(),
+                                  entity_kind, agg.get_visibility(), ti, &agg);
+    def.host_fq_name = host_fq;
+    _ns_stack.back()->template_defs.push_back(std::move(def));
+}
+
 kdi::kdi_template_def kdi_builder::build_template_def(
     const std::string& name,
     const std::string& fq_name,
@@ -2394,25 +2485,19 @@ kdi::kdi_template_def kdi_builder::build_template_def(
     }
 
     if (!is_generic) {
-        // Determine if using-alias resolution is needed (emitter resolves aliases
-        // to their canonical names so the consumer can find the types).
-        std::unordered_map<std::string, std::string> alias_map;
-        if (entity) {
-            alias_map = build_using_alias_map(entity);
-        }
-
-        if (!ti.source_text.empty() && (alias_map.empty() || !ti.origin_module_ns_fq.empty())) {
-            // Prefer raw source_text (captured verbatim from the parser) when no
-            // alias resolution is needed. It preserves annotations, member template
-            // clauses, and other syntax that k_source_emitter may not reconstruct.
+        if (!ti.source_text.empty()) {
+            // Raw source_text (captured verbatim from the parser) is the only lossless
+            // form: it keeps annotations, member template clauses, nested aggregates,
+            // friends and default arguments that k_source_emitter does not rebuild.
+            // Using directives in scope are replayed as a prelude (see below).
             def.source = ti.source_text;
         } else {
-            // Use model-based reconstruction (resolves using-aliases to canonical names)
-            // with fallback to raw source_text.
+            // No captured source: fall back to model-based reconstruction.
             std::string emitted;
             if (entity) {
                 k_source_emitter emitter;
                 emitter.set_symbol_names(reference_names);
+                auto alias_map = build_using_alias_map(entity);
                 if (!alias_map.empty()) {
                     emitter.set_alias_map(std::move(alias_map));
                 }
@@ -2554,6 +2639,9 @@ kdi::kdi_template_def kdi_builder::build_template_def(
         if (!dependencies.empty()) {
             def.source = private_types + "namespace " + private_scope_name + " {\n"
                 + dependencies + "}\n" + def.source;
+        }
+        if (raw_source && !is_generic) {
+            def.source = build_using_prelude(entity, ti.source_text) + def.source;
         }
     }
 
