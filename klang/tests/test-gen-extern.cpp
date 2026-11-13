@@ -40,6 +40,7 @@
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
+#include "../src/errors.hpp"
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Lexer: 'extern' keyword no longer recognized
@@ -409,6 +410,172 @@ TEST_CASE("FFI CString: @CString on non-char addresser is rejected (short*)", "[
         module gen_extern_20;
         @ffi::Extern("C") bad(@ffi::CString s : short*) : int;
     )K"), k::log::compiler_error);
+}
+
+TEST_CASE("FFI CString generic native explicit calls validate concrete types",
+          "[ffi][cstring][generic][regression]") {
+    SECTION("char is accepted") {
+        REQUIRE(compile_model_with_stdlib(R"K(
+            module cstring_generic_explicit_char;
+            @ffi::Extern("C") generic<typename T> native(@ffi::CString value : T*) : int;
+            run() : int { value : char; return native<char>(&value); }
+        )K"));
+    }
+    SECTION("byte is accepted") {
+        REQUIRE(compile_model_with_stdlib(R"K(
+            module cstring_generic_explicit_byte;
+            @ffi::Extern("C") generic<typename T> native(@ffi::CString value : T*) : int;
+            run() : int { value : byte; return native<byte>(&value); }
+        )K"));
+    }
+    SECTION("unsigned byte is accepted") {
+        REQUIRE(compile_model_with_stdlib(R"K(
+            module cstring_generic_explicit_unsigned_byte;
+            @ffi::Extern("C") generic<typename T> native(@ffi::CString value : T*) : int;
+            run() : int { value : unsigned byte; return native<unsigned byte>(&value); }
+        )K"));
+    }
+    SECTION("int is rejected with a CString diagnostic") {
+        REQUIRE_THROWS_MATCHES(gen_jit_throws(R"K(
+            module cstring_generic_explicit_int;
+            @ffi::Extern("C") generic<typename T> native(@ffi::CString value : T*) : int;
+            run() : int { value : int; return native<int>(&value); }
+        )K"), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+                const auto& diagnostic = error.get_diagnostic();
+                return diagnostic.code == static_cast<unsigned int>(
+                    k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH)
+                    && diagnostic.message.find("@ffi::CString") != std::string::npos
+                    && diagnostic.args.size() == 2 && diagnostic.args[1] == "int";
+            }, "CString int element diagnostic"));
+    }
+}
+
+TEST_CASE("FFI CString generic native deduced calls validate concrete types",
+          "[ffi][cstring][generic][regression]") {
+    SECTION("char is accepted") {
+        REQUIRE(compile_model_with_stdlib(R"K(
+            module cstring_generic_deduced_char;
+            @ffi::Extern("C") generic<typename T> native(@ffi::CString value : T*) : int;
+            run() : int { value : char; return native(&value); }
+        )K"));
+    }
+    SECTION("int is rejected with a CString diagnostic") {
+        REQUIRE_THROWS_MATCHES(gen_jit_throws(R"K(
+            module cstring_generic_deduced_int;
+            @ffi::Extern("C") generic<typename T> native(@ffi::CString value : T*) : int;
+            run() : int { value : int; return native(&value); }
+        )K"), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+                const auto& diagnostic = error.get_diagnostic();
+                return diagnostic.code == static_cast<unsigned int>(
+                    k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH)
+                    && diagnostic.message.find("@ffi::CString") != std::string::npos
+                    && diagnostic.args.size() == 2 && diagnostic.args[1] == "int";
+            }, "CString int element diagnostic"));
+    }
+}
+
+TEST_CASE("FFI CString generic native calls validate forwarded generic types",
+          "[ffi][cstring][generic][regression]") {
+    SECTION("forwarded char is accepted") {
+        REQUIRE(compile_model_with_stdlib(R"K(
+            module generic_native_forward_control_char;
+            @ffi::Extern("C") generic<typename T> native(value : T*) : int;
+            generic<typename U> forward(value : U*) : int { return native(value); }
+            run() : int { value : char; return forward<char>(&value); }
+        )K"));
+        REQUIRE(compile_model_with_stdlib(R"K(
+            module cstring_generic_forward_char;
+            @ffi::Extern("C") generic<typename T> native(@ffi::CString value : T*) : int;
+            generic<typename U> forward(value : U*) : int { return native(value); }
+            run() : int { value : char; return forward<char>(&value); }
+        )K"));
+    }
+    SECTION("forwarded int is rejected with a CString diagnostic") {
+        REQUIRE(compile_model_with_stdlib(R"K(
+            module generic_native_forward_control_int;
+            @ffi::Extern("C") generic<typename T> native(value : T*) : int;
+            generic<typename U> forward(value : U*) : int { return native(value); }
+            run() : int { value : int; return forward<int>(&value); }
+        )K"));
+        REQUIRE_THROWS_MATCHES(gen_jit_throws(R"K(
+            module cstring_generic_forward_int;
+            @ffi::Extern("C") generic<typename T> native(@ffi::CString value : T*) : int;
+            generic<typename U> forward(value : U*) : int { return native(value); }
+            run() : int { value : int; return forward<int>(&value); }
+        )K"), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+                const auto& diagnostic = error.get_diagnostic();
+                return diagnostic.code == static_cast<unsigned int>(
+                    k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH)
+                    && diagnostic.message.find("@ffi::CString") != std::string::npos
+                    && diagnostic.args.size() == 2 && diagnostic.args[1] == "int";
+            }, "CString int element diagnostic"));
+    }
+}
+
+TEST_CASE("FFI CString native callable on a generic host validates its type",
+          "[ffi][cstring][generic][callable][regression]") {
+    SECTION("unannotated host callable accepts char") {
+        REQUIRE(compile_model_with_stdlib(R"K(
+            module generic_callable_control_char;
+            generic<typename T> struct Host {
+                @ffi::Extern("C") static text(value : T*) : int;
+            }
+            run() : int {
+                value : char;
+                callable : &(char*):int = Host<char>::text;
+                return callable(&value);
+            }
+        )K"));
+    }
+    SECTION("unannotated host callable accepts int") {
+        REQUIRE(compile_model_with_stdlib(R"K(
+            module generic_callable_control_int;
+            generic<typename T> struct Host {
+                @ffi::Extern("C") static text(value : T*) : int;
+            }
+            run() : int {
+                value : int;
+                callable : &(int*):int = Host<int>::text;
+                return callable(&value);
+            }
+        )K"));
+    }
+    SECTION("char is accepted before callable invocation") {
+        REQUIRE(compile_model_with_stdlib(R"K(
+            module cstring_generic_callable_char;
+            generic<typename T> struct Host {
+                @ffi::Extern("C") static text(@ffi::CString value : T*) : int;
+            }
+            run() : int {
+                value : char;
+                callable : &(char*):int = Host<char>::text;
+                return callable(&value);
+            }
+        )K"));
+    }
+    SECTION("int is rejected before callable invocation") {
+        REQUIRE_THROWS_MATCHES(gen_jit_throws(R"K(
+            module cstring_generic_callable_int;
+            generic<typename T> struct Host {
+                @ffi::Extern("C") static text(@ffi::CString value : T*) : int;
+            }
+            run() : int {
+                value : int;
+                callable : &(int*):int = Host<int>::text;
+                return callable(&value);
+            }
+        )K"), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+                const auto& diagnostic = error.get_diagnostic();
+                return diagnostic.code == static_cast<unsigned int>(
+                    k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH)
+                    && diagnostic.message.find("@ffi::CString") != std::string::npos
+                    && diagnostic.args.size() == 2 && diagnostic.args[1] == "int";
+            }, "CString int element diagnostic"));
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -23,8 +23,11 @@
 #include <catch2/catch_all.hpp>
 
 #include "helpers.hpp"
+#include "../src/model/context.hpp"
+#include "../src/model/tools/kdi_exporter.hpp"
 
 #include <llvm/IR/Module.h>
+#include <llvm/Support/DynamicLibrary.h>
 #include <llvm/Support/raw_ostream.h>
 
 #include <algorithm>
@@ -48,6 +51,130 @@ constexpr const char* ALIAS_LIB_SRC = R"K(
 )K";
 
 } // anonymous namespace
+
+namespace {
+// A single i32 field uses the same native return register as LLVM { i32 }.
+struct ImportedNativeCallableResult { int value; };
+}
+
+extern "C" ImportedNativeCallableResult __k_test_import_callable_native_free(int a, int b) {
+    return {a * 10 + b};
+}
+
+extern "C" ImportedNativeCallableResult __k_test_import_callable_native_static(int a, int b) {
+    return {a + b * 10};
+}
+
+TEST_CASE("KDI imported native aggregate-return callables use the K ABI",
+          "[import][kdi][callable][ffi][native-aggregate]") {
+    auto producer = compile_model_with_stdlib(R"K(
+        module kdi_callable_native_result;
+        public struct Result { value : int; }
+        @ffi::Extern("C", null, "__k_test_import_callable_native_free")
+        public nativeFree(a : int, b : int) : Result;
+        public struct Native {
+            @ffi::Extern("C", null, "__k_test_import_callable_native_static")
+            public static make(a : int, b : int) : Result;
+        }
+        public makeK(a : int, b : int) : Result {
+            result : Result;
+            result.value = a * 10 + b;
+            return result;
+        }
+    )K");
+    REQUIRE(producer);
+    auto make_k = producer->get_unit()->get_root_namespace()->get_function("makeK");
+    REQUIRE(make_k);
+    const auto make_k_symbol = make_k->get_mangled_name();
+    k::model::kdi_builder exporter(*producer->get_context_for_test());
+    producer->get_unit()->accept(exporter);
+    auto descriptor = exporter.take();
+    auto path = fs::current_path() / "kdi_callable_native_result.kdi";
+    REQUIRE_FALSE(fs::exists(path));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    REQUIRE(kdi::kdi_write_cbor_file(descriptor, path.string()));
+
+    auto producer_jit = producer->to_jit();
+    REQUIRE(producer_jit);
+    auto make_k_address = producer_jit->lookup_symbol<void (*)()>("makeK");
+    REQUIRE(make_k_address);
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("kdi_callable_native_result", path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    auto consumer = k::compiler::create();
+    consumer->set_file_resolver(resolver);
+    REQUIRE_NOTHROW(consumer->parse_source("kdi_callable_native_consumer.k", R"K(
+        module kdi_callable_native_consumer;
+        import kdi_callable_native_result;
+        run() : int {
+            freeFn : *(int, int):Result = kdi_callable_native_result::nativeFree;
+            freeFnAgain : *(int, int):Result = kdi_callable_native_result::nativeFree;
+            staticFn : *(int, int):Result = kdi_callable_native_result::Native::make;
+            kFn : *(int, int):Result = kdi_callable_native_result::makeK;
+            a : Result = freeFn(4, 2);
+            again : Result = freeFnAgain(4, 2);
+            b : Result = staticFn(2, 4);
+            c : Result = kFn(4, 2);
+            d : Result = kdi_callable_native_result::nativeFree(4, 2);
+            e : Result = kdi_callable_native_result::Native::make(2, 4);
+            return a.value + again.value + b.value + c.value + d.value + e.value;
+        }
+    )K", false, false));
+    auto& llvm_module = consumer->get_context_for_test()->module();
+    auto* native_free = llvm_module.getFunction("__k_test_import_callable_native_free");
+    auto* native_static = llvm_module.getFunction("__k_test_import_callable_native_static");
+    auto* k_function = llvm_module.getFunction(make_k_symbol);
+    REQUIRE(native_free);
+    REQUIRE(native_static);
+    REQUIRE(k_function);
+    CHECK(native_free->getReturnType()->isStructTy());
+    CHECK(native_static->getReturnType()->isStructTy());
+    CHECK(k_function->getReturnType()->isVoidTy());
+    CHECK(native_free->arg_size() == 2);
+    CHECK(native_static->arg_size() == 2);
+    CHECK(k_function->arg_size() == 3);
+    unsigned adapters = 0;
+    for (auto& fn : llvm_module) {
+        auto attr = fn.getFnAttribute("k.native_callable_target");
+        if (!attr.isStringAttribute()) continue;
+        ++adapters;
+        CHECK((attr.getValueAsString() == native_free->getName()
+            || attr.getValueAsString() == native_static->getName()));
+    }
+    CHECK(adapters == 2);
+    REQUIRE(k_function->isDeclaration());
+    REQUIRE(bind_jit_fixture(k_function, reinterpret_cast<void*>(make_k_address)));
+    auto jit = consumer->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 252);
+
+    auto legacy = std::find_if(descriptor.unit.root_ns.functions.begin(),
+        descriptor.unit.root_ns.functions.end(),
+        [](const auto& fn) { return fn.name == "nativeFree"; });
+    REQUIRE(legacy != descriptor.unit.root_ns.functions.end());
+    legacy->is_extern = false;
+    legacy->llvm_def = "declare { i32 } @__k_test_import_callable_native_free(i32, i32)";
+    REQUIRE(kdi::kdi_write_cbor_file(descriptor, path.string()));
+    auto legacy_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    legacy_resolver->add_explicit_path("kdi_callable_native_result", path);
+    legacy_resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    auto legacy_consumer = k::compiler::create();
+    legacy_consumer->set_file_resolver(legacy_resolver);
+    CHECK_THROWS_WITH(legacy_consumer->parse_source("kdi_callable_legacy_consumer.k", R"K(
+        module kdi_callable_legacy_consumer;
+        import kdi_callable_native_result;
+        run() : int {
+            f : *(int, int):Result = kdi_callable_native_result::nativeFree;
+            result : Result = f(4, 2);
+            return result.value;
+        }
+    )K", false, false), Catch::Matchers::ContainsSubstring("not K sret"));
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // An imported soft alias, typedef and typedef-over-struct are all usable as
@@ -134,6 +261,191 @@ TEST_CASE("imported soft alias is transparent", "[import][alias]") {
 // through KDI as source text and re-parsed by the importing compiler, exactly
 // like a template definition. The consumer then substitutes its own arguments.
 // ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("Imported outer templates retain nested specialization identity",
+          "[import][e2e][nested-template-descriptor]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module nested_template_descriptor_lib;
+            public:
+            template<typename T>
+            struct Host {
+                public:
+                template<typename U> static struct Inner {
+                    public: outer : T; own : U;
+                }
+                roundtrip(value : T) : T {
+                    item : Inner<int>;
+                    item.outer = value;
+                    return item.outer;
+                }
+            }
+        )K",
+        R"K(
+            module nested_template_descriptor_app;
+            import nested_template_descriptor_lib;
+            main() : int {
+                small : Host<int>;
+                large : Host<long>;
+                return small.roundtrip(21) + (int)large.roundtrip(21L);
+            }
+        )K");
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("Imported outer templates retain nested specialization with an enclosing using alias",
+          "[import][e2e][nested-template-descriptor][using-alias]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module nested_template_alias_descriptor_lib;
+            namespace alias_types {
+                struct Marker { value : int; }
+            }
+            using MarkerAlias = alias_types::Marker;
+
+            public:
+            template<typename T>
+            struct Host {
+                public:
+                template<typename U> static struct Inner {
+                    public: outer : T; own : U;
+                }
+                roundtrip(value : T) : T {
+                    item : Inner<int>;
+                    item.outer = value;
+                    return item.outer;
+                }
+            }
+        )K",
+        R"K(
+            module nested_template_alias_descriptor_app;
+            import nested_template_alias_descriptor_lib;
+            main() : int {
+                small : Host<int>;
+                large : Host<long>;
+                return small.roundtrip(21) + (int)large.roundtrip(21L);
+            }
+        )K");
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("Reconstructed nested templates preserve binders and defaults",
+          "[import][e2e][nested-template-descriptor][using-alias][defaults]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module nested_template_alias_defaults_lib;
+            namespace alias_types { struct Marker { value : int; } }
+            using T = alias_types::Marker;
+
+            public:
+            template<typename T>
+            struct Host {
+                public:
+                template<typename T> static struct Inner {
+                    public: value : T;
+                }
+                template<typename U = T, int N = 20 + 22> static struct Default {
+                    public: value : U;
+                    number() : int { return N; }
+                }
+                run() : int {
+                    item : Inner<long>;
+                    item.value = 19L;
+                    fallback : Default<>;
+                    fallback.value = 23;
+                    if (fallback.number() != 42) return -1;
+                    return (int)item.value + fallback.value;
+                }
+            }
+        )K",
+        R"K(
+            module nested_template_alias_defaults_app;
+            import nested_template_alias_defaults_lib;
+            main() : int {
+                host : Host<int>;
+                return host.run();
+            }
+        )K");
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("Reconstructed nested templates preserve aliased arguments and member templates",
+          "[import][e2e][nested-template-descriptor][using-alias][member-template]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module nested_template_alias_members_lib;
+            namespace alias_types { struct Marker { value : int; } }
+            using MarkerAlias = alias_types::Marker;
+
+            public:
+            template<typename T>
+            struct Host {
+                public:
+                template<typename U> static struct Cell { public: item : U; }
+                template<typename U> struct Inner {
+                    public:
+                    own : int;
+                    template<typename V> Inner(v : V) : own(v) {}
+                    static sum(a : int, b : int) : int { return a + b; }
+                    template<typename... Args>
+                    add(Args... args) : int { return sum(args...); }
+                }
+                run() : int {
+                    cell : Cell<MarkerAlias>;
+                    cell.item.value = 2;
+                    inner : Inner<T>(40);
+                    return inner.add<int, int>(inner.own, cell.item.value);
+                }
+            }
+        )K",
+        R"K(
+            module nested_template_alias_members_app;
+            import nested_template_alias_members_lib;
+            main() : int {
+                host : Host<int>;
+                return host.run();
+            }
+        )K");
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("Imported template source preserves friend declarations",
+          "[import][kdi][nested-template-descriptor][using-alias][friend]") {
+    auto source = std::string(R"K(
+        module nested_template_alias_friend_lib;
+        namespace alias_types { struct Marker { value : int; } }
+    )K");
+    SECTION("raw-source control") {}
+    SECTION("enclosing using alias") {
+        source += "using MarkerAlias = alias_types::Marker;\n";
+    }
+    source += R"K(
+        struct FriendType {}
+        template<typename T> struct Host {
+            friend FriendType;
+            template<typename U> static struct Inner { public: value : U; }
+        }
+    )K";
+    auto producer = compile_model_with_stdlib(source);
+    REQUIRE(producer);
+    k::model::kdi_builder exporter(*producer->get_context_for_test());
+    REQUIRE_NOTHROW(producer->get_unit()->accept(exporter));
+    auto file = exporter.take();
+    auto entry = std::find_if(file.unit.root_ns.template_defs.begin(),
+        file.unit.root_ns.template_defs.end(),
+        [](const auto& definition) { return definition.name == "Host"; });
+    REQUIRE(entry != file.unit.root_ns.template_defs.end());
+    CHECK(entry->source.find("friend FriendType;") != std::string::npos);
+    CHECK(entry->source.find("template<typename U> static struct Inner") != std::string::npos);
+}
 
 TEST_CASE("cross-module parameterised alias — soft alias of a template aggregate",
           "[import][e2e][alias][template]") {

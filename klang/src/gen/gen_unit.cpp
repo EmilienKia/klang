@@ -29,6 +29,7 @@
 #include "../common/llvm_scope_exit.hpp"
 #include <llvm/IR/Verifier.h>
 #include <llvm/IR/GlobalAlias.h>
+#include <llvm/Support/raw_ostream.h>
 
 #include <algorithm>
 #include <cctype>
@@ -765,15 +766,104 @@ void declaration_generator::visit_unit(unit &unit) {
 
     // Step 1: Set LLVM module metadata (target triple, data layout)
     // ── Emit LLVM declarations for all imported entities ──────────────────
-    // Strategy: if the entity has a non-empty llvm_def we parse it directly
-    // via context::declare_llvm_function_from_def — this guarantees ABI
-    // fidelity regardless of how the K type system maps to LLVM types.
-    // Fallback to the old visit_function() path when llvm_def is absent.
+    // Native prototypes must agree with the resolved raw-C model. Unmarked
+    // legacy and K declarations retain the previous type-derived fallback.
+
+    auto normalize_prototype = [](const std::string& text) {
+        std::string result;
+        bool quoted = false, escaped = false, pending_space = false;
+        for (unsigned char ch : text) {
+            if (!quoted && std::isspace(ch)) {
+                pending_space = !result.empty();
+                continue;
+            }
+            if (pending_space) result += ' ';
+            pending_space = false;
+            result += static_cast<char>(ch);
+            if (quoted && escaped) escaped = false;
+            else if (quoted && ch == '\\') escaped = true;
+            else if (ch == '"') quoted = !quoted;
+        }
+        return result;
+    };
 
     auto declare_imported_fn = [&](const std::shared_ptr<function>& fn,
                                    const std::string& llvm_def,
                                    const std::string& mangled) {
-        if (_context->lookup_llvm_function(fn)) return; // already declared
+        if (fn->is_extern() ? _context->_functions.contains(fn)
+                            : _context->lookup_llvm_function(fn) != nullptr)
+            return;
+        if (fn->is_extern()) {
+            auto fail = [&](const std::string& reason) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_NATIVE_ABI_UNPROVEN),
+                    fn->get_first_lexeme(),
+                    "Cannot establish native ABI for imported function '{}' (symbol '{}'): {}",
+                    {fn->get_fq_name(), mangled, reason});
+            };
+            if (llvm_def.empty() || mangled.empty()) {
+                fail("missing LLVM prototype or symbol");
+                return;
+            }
+            std::vector<llvm::Type*> parameters;
+            for (const auto& param : fn->parameters()) {
+                auto* type = _context->get_llvm_type(param->get_type());
+                if (!type || !llvm::FunctionType::isValidArgumentType(type) || !type->isSized()) {
+                    fail("parameter has no valid LLVM ABI type");
+                    return;
+                }
+                parameters.push_back(type);
+            }
+            auto* result = fn->get_return_type()
+                ? _context->get_llvm_type(fn->get_return_type())
+                : llvm::Type::getVoidTy(**_context);
+            if (!result || !llvm::FunctionType::isValidReturnType(result)
+                || (!result->isVoidTy() && !result->isSized())) {
+                fail("return type has no valid LLVM ABI type");
+                return;
+            }
+            auto* expected = llvm::FunctionType::get(result, parameters, false);
+            llvm::Function* declared = nullptr;
+            try {
+                declared = _context->declare_llvm_function_from_def(llvm_def, mangled, true);
+            } catch (const std::exception& error) {
+                fail(error.what());
+                return;
+            }
+            if (declared) {
+                if (declared->getFunctionType() != expected) {
+                    fail("LLVM prototype disagrees with the resolved KDI signature");
+                    return;
+                }
+                _context->_functions[fn] = declared;
+                return;
+            }
+
+            llvm::Module candidate_module("<kdi-native-model>", **_context);
+            auto* candidate = llvm::Function::Create(expected, llvm::Function::ExternalLinkage,
+                                                      mangled, candidate_module);
+            std::string printed;
+            llvm::raw_string_ostream stream(printed);
+            candidate->print(stream, nullptr, false, true);
+            stream.flush();
+            if (normalize_prototype(printed) != normalize_prototype(llvm_def)) {
+                fail("LLVM prototype could not be parsed or proven equivalent to the resolved signature");
+                return;
+            }
+            if (auto* named = _context->_module->getNamedValue(mangled)) {
+                declared = llvm::dyn_cast<llvm::Function>(named);
+                if (!declared || declared->getFunctionType() != expected
+                    || declared->getCallingConv() != llvm::CallingConv::C
+                    || declared->getAttributes() != candidate->getAttributes()) {
+                    fail("symbol has an incompatible existing LLVM declaration");
+                    return;
+                }
+            } else {
+                declared = llvm::Function::Create(expected, llvm::Function::ExternalLinkage,
+                                                  mangled, *_context->_module);
+            }
+            _context->_functions[fn] = declared;
+            return;
+        }
         if (!llvm_def.empty() && !mangled.empty()) {
             auto* llvm_fn = _context->declare_llvm_function_from_def(llvm_def, mangled);
             if (llvm_fn) {
@@ -786,11 +876,11 @@ void declaration_generator::visit_unit(unit &unit) {
     };
 
     // imported_function
-    for (const auto& [mangled, fn] : unit.get_imported_functions()) {
+    for (const auto& [descriptor, fn] : unit.get_imported_functions()) {
         const auto* kfn = fn->get_kdi_function();
         declare_imported_fn(fn,
             kfn ? kfn->llvm_def : "",
-            kfn ? kfn->mangled_name : mangled);
+            kfn ? kfn->mangled_name : "");
     }
 
     // imported_aggregate: constructors, destructor, methods

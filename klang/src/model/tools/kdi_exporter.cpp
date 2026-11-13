@@ -95,7 +95,39 @@ class definition_symbol_lookup : public gen::symbol_resolver {
 public:
     using gen::symbol_resolver::symbol_resolver;
     using gen::symbol_resolver::resolve_symbol;
+
+    void resolve_signature_annotations(function& fn) {
+        for (const auto& param : fn.parameters()) {
+            if (param->get_annotations().empty()) continue;
+            lex::opt_any_lexeme where;
+            if (auto ast = param->get_ast_parameter_spec(); ast && ast->name)
+                where = lex::any_lexeme{*ast->name};
+            resolve_and_validate_annotations(*param, *param, param->get_short_name(),
+                                             where, "PARAMETER");
+        }
+        resolve_function_annotations(fn);
+        for (const auto& param : fn.parameters()) {
+            for (const auto& annotation : param->get_annotations()) {
+                if (!annotation.resolved_type) continue;
+                const auto name = annotation.resolved_type->get_fq_name();
+                if (name == "::k::ffi::CString" || name == "k::ffi::CString")
+                    param->set_ffi_cstring(true);
+            }
+        }
+    }
 };
+
+void resolve_template_signature_annotations(function& fn) {
+    bool annotated = !fn.get_annotations().empty();
+    for (const auto& param : fn.parameters())
+        annotated = annotated || !param->get_annotations().empty();
+    if (!annotated) return;
+    auto owner = fn.ancestor<unit>();
+    if (!owner) throw std::runtime_error("template signature has no owning unit");
+    signature_diagnostics diagnostics;
+    definition_symbol_lookup resolver(diagnostics, fn.get_context(), *owner);
+    resolver.resolve_signature_annotations(fn);
+}
 
 // Template bodies have not necessarily passed symbol resolution. Walk their
 // model expressions without mutating them, using the normal lexical resolver.
@@ -104,6 +136,7 @@ class private_dependency_collector : public default_model_visitor {
     definition_symbol_lookup _lookup;
     std::unordered_set<const element*> _visited;
     std::unordered_set<const function*> _seen_functions;
+    bool _include_finally;
 
     void walk(const std::shared_ptr<element>& node) {
         if (node && _visited.insert(node.get()).second) node->accept(*this);
@@ -138,9 +171,11 @@ public:
     std::vector<std::shared_ptr<function>> functions;
     std::vector<std::pair<expression*, std::shared_ptr<function>>> references;
 
-    explicit private_dependency_collector(element& entity, const std::string& template_name)
+    explicit private_dependency_collector(element& entity, const std::string& template_name,
+                                          bool include_finally)
         : _diagnostics(template_name),
-          _lookup(_diagnostics, entity.get_context(), *entity.ancestor<unit>()) {
+          _lookup(_diagnostics, entity.get_context(), *entity.ancestor<unit>()),
+          _include_finally(include_finally) {
         walk(entity.shared_as<element>());
     }
 
@@ -182,6 +217,7 @@ public:
     void visit_try_catch_statement(try_catch_statement& stmt) override {
         walk(stmt.get_try_body());
         for (const auto& clause : stmt.get_catch_clauses()) walk(clause);
+        if (_include_finally) walk(stmt.get_finally_body());
     }
     void visit_catch_clause(catch_clause& clause) override { walk(clause.get_body()); }
     void visit_symbol_expression(symbol_expression& symbol) override {
@@ -842,6 +878,7 @@ std::vector<kdi::kdi_param> kdi_builder::to_kdi_params(const function& fn) const
         kp.name = p->get_short_name();
         kp.type = to_kdi_type(p->get_type());
         kp.is_varargs = p->is_varargs();
+        kp.is_ffi_cstring = p->is_ffi_cstring();
         if (p->has_default_expr()) {
             k_source_emitter emitter;
             kp.default_source = emitter.emit_parameter_default(*p);
@@ -860,6 +897,7 @@ std::vector<kdi::kdi_param> kdi_builder::to_kdi_signature_params(const function&
         kp.name = p->get_short_name();
         kp.type = to_kdi_signature_type(p->get_type(), ti);
         kp.is_varargs = p->is_varargs();
+        kp.is_ffi_cstring = p->is_ffi_cstring();
         if (p->has_default_expr()) {
             k_source_emitter emitter;
             kp.default_source = emitter.emit_parameter_default(*p);
@@ -1020,12 +1058,15 @@ kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const
          }
          if (!is_exported(fn->get_visibility()) &&
              !(fn->is_deleted() && fn->is_operator() && fn->get_short_name() == "__operator_aS_")) continue;
+         if (ti.is_generic) resolve_template_signature_annotations(*fn);
          kdi::kdi_method km;
          km.name = fn->get_short_name();
         km.fq_name = fn->get_fq_name();
         km.visibility = fn->get_visibility() == PRIVATE ? kdi::kdi_visibility::protected_
                                                         : to_kdi_vis(fn->get_visibility());
         km.is_static = fn->is_static();
+        km.is_extern = fn->is_extern();
+        if (km.is_extern) km.mangled_name = fn->get_extern_c_symbol().value_or(fn->get_short_name());
         km.is_const_member = fn->is_const_member();
         km.is_virtual = fn->is_virtual();
         km.is_abstract = fn->is_abstract_func();
@@ -1049,10 +1090,13 @@ kdi::kdi_function kdi_builder::build_generic_template_function_signature(const f
                                                                           const tpl_info& ti,
                                                                           const std::string& fq_name) {
     kdi::kdi_function sig;
+    if (ti.is_generic) resolve_template_signature_annotations(const_cast<function&>(fn));
     sig.name = fn.get_short_name();
     sig.fq_name = fq_name;
     sig.visibility = to_kdi_vis(fn.get_visibility());
     sig.is_static = fn.is_static();
+    sig.is_extern = fn.is_extern();
+    if (sig.is_extern) sig.mangled_name = fn.get_extern_c_symbol().value_or(fn.get_short_name());
     sig.is_operator = fn.is_operator();
     sig.return_type = to_kdi_signature_type(std::const_pointer_cast<type>(fn.get_return_type()), ti);
     sig.params = to_kdi_signature_params(fn, ti);
@@ -1967,6 +2011,7 @@ void kdi_builder::visit_function(function& fn) {
         km.visibility      = fn.get_visibility() == PRIVATE ? kdi::kdi_visibility::protected_
                                                             : to_kdi_vis(fn.get_visibility());
         km.is_static       = fn.is_static();
+        km.is_extern       = fn.is_extern();
         km.is_const_member = fn.is_const_member();
         km.is_virtual      = fn.is_virtual();
         km.is_abstract     = fn.is_abstract_func();
@@ -1997,6 +2042,7 @@ void kdi_builder::visit_function(function& fn) {
         kf.fq_name      = fn.get_fq_name();
         kf.visibility   = to_kdi_vis(fn.get_visibility());
         kf.is_static    = fn.is_static();
+        kf.is_extern    = fn.is_extern();
         kf.is_operator  = fn.is_operator();
         kf.return_type  = to_kdi_type(std::const_pointer_cast<type>(fn.get_return_type()));
         kf.params       = to_kdi_params(fn);
@@ -2450,9 +2496,6 @@ kdi::kdi_template_def kdi_builder::build_template_def(
             }
         }
     }
-    if (!is_generic && !ti.is_imported_signature_only && ti.source_text.empty()) {
-        is_generic = true;
-    }
     def.is_generic = is_generic;
 
     auto definition_ns = entity ? gen::scope_lookup::enclosing_namespace(*entity) : nullptr;
@@ -2466,7 +2509,7 @@ kdi::kdi_template_def kdi_builder::build_template_def(
     std::unordered_map<const expression*, std::string> source_reference_names;
     if (entity && !ti.source_text.empty()) {
         private_dependencies = std::make_unique<private_dependency_collector>(
-            const_cast<element&>(*entity), def.fq_name);
+            const_cast<element&>(*entity), def.fq_name, !is_generic);
         for (const auto& fn : private_dependencies->functions) {
             auto owner = gen::scope_lookup::enclosing_namespace(*fn);
             auto dependency_name = fn->get_short_name();
@@ -2521,6 +2564,7 @@ kdi::kdi_template_def kdi_builder::build_template_def(
                 build_generic_template_aggregate_signature(*agg_ptr, ti, def.fq_name));
         } else if (auto fn_ptr = dynamic_cast<const function*>(entity)) {
             // Generic function templates keep source so importing modules can instantiate bodies.
+            resolve_template_signature_annotations(const_cast<function&>(*fn_ptr));
             std::string emitted;
             if (entity) {
                 k_source_emitter emitter;
@@ -2550,15 +2594,31 @@ kdi::kdi_template_def kdi_builder::build_template_def(
     // Carry them in source, where K already expresses both privacy and the exact
     // native symbol, instead of changing KDI's public/protected function DTO.
     if (entity && !def.source.empty()) {
-        if (def.source == ti.source_text && !source_reference_names.empty()) {
+        const bool raw_source = def.source == ti.source_text;
+        if (raw_source && !source_reference_names.empty()) {
             // Parser capture ends at the declaration's last token. Rewrite only
             // actual symbol-expression spans, never comments or string literals.
-            auto last = entity->get_last_lexeme();
-            if (!last) throw std::runtime_error("Template dependency has no declaration source range");
-            const char* end = std::visit([](const auto& token) {
-                return token.content.data() + token.content.size();
-            }, *last);
-            const char* begin = end - ti.source_text.size();
+            std::string_view source_span;
+            if (!is_generic) {
+                if (auto agg = dynamic_cast<const aggregate*>(entity)) {
+                    if (auto ast = agg->get_ast_aggregate_decl()) source_span = ast->template_source_span;
+                } else if (auto fn = dynamic_cast<const function*>(entity)) {
+                    if (auto ast = fn->get_ast_function_decl()) source_span = ast->template_source_span;
+                }
+            }
+            const char* begin;
+            const char* end;
+            if (!source_span.empty() && source_span == std::string_view(ti.source_text)) {
+                begin = source_span.data();
+                end = begin + source_span.size();
+            } else {
+                auto last = entity->get_last_lexeme();
+                if (!last) throw std::runtime_error("Template dependency has no declaration source range");
+                end = std::visit([](const auto& token) {
+                    return token.content.data() + token.content.size();
+                }, *last);
+                begin = end - ti.source_text.size();
+            }
             struct replacement { size_t offset; size_t length; std::string name; };
             std::vector<replacement> replacements;
             for (const auto& [symbol, name] : source_reference_names) {
@@ -2588,6 +2648,12 @@ kdi::kdi_template_def kdi_builder::build_template_def(
                     throw std::runtime_error("Overlapping template dependency source references");
                 def.source.replace(replacement.offset, replacement.length, replacement.name);
                 next_offset = replacement.offset;
+            }
+        }
+        if (raw_source) {
+            if (auto fn = dynamic_cast<const function*>(entity)) {
+                k_source_emitter emitter;
+                def.source = emitter.emit_function_annotations(*fn) + def.source;
             }
         }
         std::string dependencies;

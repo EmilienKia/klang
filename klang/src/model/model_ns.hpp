@@ -170,10 +170,10 @@ protected:
     std::vector<std::shared_ptr<kdi::kdi_file>> _transitive_kdis;
 
     /**
-     * Cache of imported_function model nodes keyed by mangled name (C1 for ctors).
+     * Cache of imported_function model nodes keyed by their KDI declarations.
      * Created lazily by get_or_create_imported_function().
      */
-    std::unordered_map<std::string, std::shared_ptr<imported_function>>  _imported_functions;
+    std::unordered_map<const kdi::kdi_function*, std::shared_ptr<imported_function>>  _imported_functions;
 
     /**
      * Cache of imported_aggregate model nodes keyed by fully-qualified K name.
@@ -513,7 +513,7 @@ public:
 
     // ── Accessors ────────────────────────────────────────────────────────────
 
-    const std::unordered_map<std::string, std::shared_ptr<imported_function>>&
+    const std::unordered_map<const kdi::kdi_function*, std::shared_ptr<imported_function>>&
     get_imported_functions() const { return _imported_functions; }
 
     const std::unordered_map<std::string, std::shared_ptr<imported_aggregate>>&

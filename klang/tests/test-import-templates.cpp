@@ -28,12 +28,14 @@
 #include "../src/model/tools/kdi_exporter.hpp"
 #include "../src/model/tools/kdi_type_converter.hpp"
 #include "../src/model/template.hpp"
+#include "../src/model/template_instantiator.hpp"
 #include "../src/model/imported.hpp"
 #include "../src/model/template.hpp"
 #include "../src/model/expressions.hpp"
 #include "../src/model/tools/k_source_emitter.hpp"
 #include "../src/model/tools/kdi_exporter.hpp"
 #include "../src/model/type.hpp"
+#include "../src/parse/ast.hpp"
 #include "../src/errors.hpp"
 #include "../../libk/libk/src/runtime/callable_abi.h"
 
@@ -3147,6 +3149,106 @@ TEST_CASE("import member template — dependency preludes retain hosted and free
         INFO(result.err);
         REQUIRE(result.exit_code == 42);
     }
+}
+
+TEST_CASE("Private callable bindings retain their source through template cloning and KDI export",
+          "[import][template][ffi][private-dependency][callable][source-binding][regression]") {
+    auto compiler = compile_model_with_stdlib(R"K(
+        module tplprivatebinding;
+        @k::ffi::Extern("C", null, "abs") private __private_abs(value : int) : int;
+
+        template<typename T> // __private_abs remains a comment
+        apply(value : int, callback : *(int) : int = __private_abs) : int {
+            return callback(value);
+        }
+        probe() : int { return apply<int>(-42, __private_abs); }
+    )K");
+    REQUIRE(compiler);
+    auto root = compiler->get_unit()->get_root_namespace();
+    REQUIRE(root);
+    auto recipe = root->get_function("apply");
+    REQUIRE(recipe);
+    REQUIRE(recipe->get_tpl_info());
+    auto original_parameter = recipe->get_parameter("callback");
+    REQUIRE(original_parameter);
+    REQUIRE(original_parameter->get_default_expr());
+    auto original_identifier = original_parameter->get_default_expr()
+        ->get_ast_node_as<k::parse::ast::identifier_expr>();
+    REQUIRE(original_identifier);
+    REQUIRE(original_identifier->qident.to_name().to_string() == "__private_abs");
+
+    auto& instances = recipe->get_tpl_info()->instantiations;
+    REQUIRE(instances.size() == 1);
+    auto instance = std::get_if<std::shared_ptr<k::model::function>>(&instances.begin()->second);
+    REQUIRE(instance);
+    REQUIRE(*instance);
+    auto parameter = (*instance)->get_parameter("callback");
+    REQUIRE(parameter);
+    auto binding = std::dynamic_pointer_cast<k::model::callable_bind_expression>(
+        parameter->get_default_expr());
+    REQUIRE(binding);
+    REQUIRE(binding->get_target());
+    CHECK(binding->get_target()->get_short_name() == "__private_abs");
+    CHECK(binding->get_ast_node_as<k::parse::ast::identifier_expr>() == original_identifier);
+
+    auto cloned_binding = std::dynamic_pointer_cast<k::model::callable_bind_expression>(binding->clone());
+    REQUIRE(cloned_binding);
+    CHECK(cloned_binding->get_ast_node_as<k::parse::ast::identifier_expr>() == original_identifier);
+
+    // Export a recipe whose private reference has already been adapted to a callable.
+    original_parameter->set_default_expr(cloned_binding);
+    k::model::kdi_builder exporter(*compiler->get_context_for_test());
+    compiler->get_unit()->accept(exporter);
+    auto file = exporter.take();
+    auto entry = std::find_if(file.unit.root_ns.template_defs.begin(),
+        file.unit.root_ns.template_defs.end(),
+        [](const auto& definition) { return definition.name == "apply"; });
+    REQUIRE(entry != file.unit.root_ns.template_defs.end());
+    auto private_name = "::tplprivatebinding::"
+        + k::model::template_private_scope_name("tplprivatebinding") + "::__private_abs";
+    CHECK(entry->source.find("= " + private_name) != std::string::npos);
+    CHECK(entry->source.find("// __private_abs remains a comment") != std::string::npos);
+    CHECK(entry->source.find(".symbol = \"abs\"") != std::string::npos);
+
+    auto substituted = root->define_function("__binding_substitution_test", false);
+    REQUIRE(substituted);
+    k::model::template_instantiator::populate_function_from_template_public(
+        substituted, *recipe,
+        {{"T", compiler->get_context_for_test()->from_type(k::model::primitive_type::LONG)}},
+        {}, {}, true);
+    auto substituted_parameter = substituted->get_parameter("callback");
+    REQUIRE(substituted_parameter);
+    auto substituted_binding = std::dynamic_pointer_cast<k::model::callable_bind_expression>(
+        substituted_parameter->get_default_expr());
+    REQUIRE(substituted_binding);
+    CHECK(substituted_binding->get_ast_node_as<k::parse::ast::identifier_expr>() == original_identifier);
+}
+
+TEST_CASE("Private template dependencies are collected from finally blocks",
+          "[import][template][ffi][private-dependency][finally][source-binding]") {
+    auto compiler = compile_model_with_stdlib(R"K(
+        module tplprivatefinally;
+        @k::ffi::Extern("C", null, "abs") private __private_abs(value : int) : int;
+        template<typename T>
+        apply(value : int) : int {
+            result : int = 0;
+            try {} finally { result = __private_abs(value); }
+            return result;
+        }
+    )K");
+    REQUIRE(compiler);
+    k::model::kdi_builder exporter(*compiler->get_context_for_test());
+    compiler->get_unit()->accept(exporter);
+    auto file = exporter.take();
+    auto entry = std::find_if(file.unit.root_ns.template_defs.begin(),
+        file.unit.root_ns.template_defs.end(),
+        [](const auto& definition) { return definition.name == "apply"; });
+    REQUIRE(entry != file.unit.root_ns.template_defs.end());
+    auto private_name = "::tplprivatefinally::"
+        + k::model::template_private_scope_name("tplprivatefinally") + "::__private_abs";
+    CHECK(entry->source.find("private __private_abs") != std::string::npos);
+    CHECK(entry->source.find(".symbol = \"abs\"") != std::string::npos);
+    CHECK(entry->source.find("result = " + private_name + "(value)") != std::string::npos);
 }
 
 TEST_CASE("import template — private FFI dependencies keep their definition scope",

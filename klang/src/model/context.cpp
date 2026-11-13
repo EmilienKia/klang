@@ -18,6 +18,7 @@
 
 #include "context.hpp"
 #include <sstream>
+#include <stdexcept>
 
 #include <unordered_set>
 #include <string_view>
@@ -1719,14 +1720,17 @@ void context::attach_llvm_struct_type(std::shared_ptr<struct_type> st_type,
 
 llvm::Function*
 context::declare_llvm_function_from_def(const std::string& llvm_def,
-                                        const std::string& mangled_name)
+                                        const std::string& mangled_name,
+                                        bool native)
 {
     if (llvm_def.empty() || mangled_name.empty()) return nullptr;
     if (!_module) return nullptr;
 
     // If already declared in this module, return it.
-    if (auto* existing = _module->getFunction(mangled_name))
-        return existing;
+    if (!native) {
+        if (auto* existing = _module->getFunction(mangled_name))
+            return existing;
+    }
 
     // Parse the snippet in a temporary module sharing *_context so that
     // struct types referenced in the prototype are resolved.
@@ -1739,12 +1743,37 @@ context::declare_llvm_function_from_def(const std::string& llvm_def,
     auto* tmpFn = tmp->getFunction(mangled_name);
     if (!tmpFn) return nullptr;
 
+    if (native) {
+        if (!tmpFn->isDeclaration())
+            throw std::runtime_error("native symbol '" + mangled_name + "' is not a declaration");
+        if (tmpFn->getCallingConv() != llvm::CallingConv::C)
+            throw std::runtime_error("native symbol '" + mangled_name + "' does not use the C calling convention");
+        if (tmpFn->getAttributes().hasFnAttrs() || tmpFn->getAttributes().hasRetAttrs())
+            throw std::runtime_error("native symbol '" + mangled_name + "' has unsupported LLVM attributes");
+        for (unsigned i = 0; i < tmpFn->arg_size(); ++i) {
+            if (tmpFn->getAttributes().hasParamAttrs(i))
+                throw std::runtime_error("native symbol '" + mangled_name + "' has unsupported LLVM parameter attributes");
+        }
+        if (auto* named = _module->getNamedValue(mangled_name)) {
+            auto* existing = llvm::dyn_cast<llvm::Function>(named);
+            if (!existing || existing->getFunctionType() != tmpFn->getFunctionType()
+                || existing->getCallingConv() != tmpFn->getCallingConv()
+                || existing->getAttributes() != tmpFn->getAttributes())
+                throw std::runtime_error("native symbol '" + mangled_name + "' has incompatible LLVM declarations");
+            return existing;
+        }
+    }
+
     // Create/get the function in *_module with the same type and ExternalLinkage.
     auto* fn = llvm::Function::Create(
         tmpFn->getFunctionType(),
         llvm::GlobalValue::ExternalLinkage,
         mangled_name,
         *_module);
+    if (native) {
+        fn->setCallingConv(tmpFn->getCallingConv());
+        fn->setAttributes(tmpFn->getAttributes());
+    }
     return fn;
 }
 

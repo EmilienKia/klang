@@ -25,6 +25,7 @@
 #include "kdi_type_converter.hpp"
 #include "../../parse/parser.hpp"
 #include "../../gen/resolvers_scope_lookup.hpp"
+#include "../../gen/ffi_validation.hpp"
 
 #include <kdi.hpp>  // kdi_read_cbor_file, kdi_file, kdi_namespace, kdi_aggregate, …
 
@@ -45,6 +46,21 @@
 namespace k::model {
 
 namespace {
+
+bool identical_imported_function(const kdi::kdi_function& left,
+                                 const kdi::kdi_function& right) {
+    if (left.fq_name.empty() || left.fq_name != right.fq_name
+        || left.mangled_name != right.mangled_name) return false;
+    const auto encode = [](const kdi::kdi_function& function) {
+        kdi::kdi_file file;
+        file.unit.root_ns.functions.push_back(function);
+        file.unit.root_ns.functions.back().doc.reset();
+        std::ostringstream stream;
+        kdi::kdi_write_json(file, stream);
+        return stream.str();
+    };
+    return encode(left) == encode(right);
+}
 
 std::shared_ptr<ns> imported_namespace(unit& owner, std::string fq_name) {
     if (fq_name.starts_with("::")) fq_name.erase(0, 2);
@@ -232,6 +248,8 @@ void populate_template_signature_aggregate(aggregate& agg,
                                                                        : function::function_aliasing::NONE));
         ctor->set_throws_spec_unknown(!ctor_sig.throws_spec);
         for (const auto& param : ctor_sig.params) {
+            if (param.is_ffi_cstring)
+                throw std::runtime_error("CString parameter on imported generic constructor '" + agg.get_fq_name() + "'");
             auto p = ctor->append_parameter(param.name, nullptr);
             if (p) {
                 p->set_varargs(param.is_varargs);
@@ -251,12 +269,21 @@ void populate_template_signature_aggregate(aggregate& agg,
         fn->set_abstract_func(method_sig.is_abstract);
         fn->set_final_func(method_sig.is_final);
         fn->set_operator(method_sig.is_operator);
+        if (method_sig.is_extern) {
+            if (method_sig.mangled_name.empty() || !method_sig.is_static)
+                throw std::runtime_error("native generic method '" + method_sig.fq_name + "' has no valid static C declaration");
+            fn->set_extern_c_symbol(method_sig.mangled_name);
+            static_cast<named_element&>(*fn).update_mangled_name();
+        }
         if (method_sig.is_deleted) fn->set_aliasing(function::function_aliasing::DELETE);
         assign_return(fn, method_sig.return_type);
         for (const auto& param : method_sig.params) {
+            if (param.is_ffi_cstring && !method_sig.is_extern)
+                throw std::runtime_error("CString parameter on non-native generic method '" + method_sig.fq_name + "'");
             auto p = fn->append_parameter(param.name, nullptr);
             if (p) {
                 p->set_varargs(param.is_varargs);
+                p->set_ffi_cstring(param.is_ffi_cstring);
                 assign_type(p, param.type);
             }
         }
@@ -286,15 +313,24 @@ void populate_template_signature_function(function& fn,
     };
     fn.set_visibility(sig.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
     fn.set_operator(sig.is_operator);
+    if (sig.is_extern) {
+        if (sig.mangled_name.empty())
+            throw std::runtime_error("native generic function '" + sig.fq_name + "' has no C symbol");
+        fn.set_extern_c_symbol(sig.mangled_name);
+        static_cast<named_element&>(fn).update_mangled_name();
+    }
     if (!std::holds_alternative<kdi::kdi_void_type>(sig.return_type.value)) {
         auto ret_type = convert_signature(sig.return_type);
         if (ret_type) fn.set_return_type(ret_type);
         else pending_returns.emplace_back(fn.shared_as<function>(), &sig.return_type, definition_scope);
     }
     for (const auto& param : sig.params) {
+        if (param.is_ffi_cstring && !sig.is_extern)
+            throw std::runtime_error("CString parameter on non-native generic function '" + sig.fq_name + "'");
         auto p = fn.append_parameter(param.name, nullptr);
         if (p) {
             p->set_varargs(param.is_varargs);
+            p->set_ffi_cstring(param.is_ffi_cstring);
             auto param_type = convert_signature(param.type);
             if (param_type) p->set_type(std::move(param_type));
             else pending_variables.emplace_back(p, &param.type, definition_scope);
@@ -1118,8 +1154,15 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
         }
         fn.set_throws_spec(std::move(resolved_types));
     };
-    for (const auto& [fn, spec] : _pending_generic_contracts)
+    for (const auto& [fn, spec] : _pending_generic_contracts) {
         complete_throws(*fn, *spec, true);
+        for (const auto& param : fn->parameters()) {
+            if (!param->is_ffi_cstring() || type::contains_template_placeholder(param->get_type()))
+                continue;
+            gen::validate_ffi_cstring_parameter(_logger, *fn, *param, param->get_type());
+            param->set_ffi_cstring_type_validated();
+        }
+    }
     _pending_generic_contracts.clear();
 
     // Signatures can refer to unions or aliases in namespaces materialised later.
@@ -1140,6 +1183,12 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
                 throw k::log::compiler_error(std::move(diag));
             }
             param->set_type(std::move(resolved));
+        }
+        for (const auto& param : fn.parameters()) {
+            if (param->is_ffi_cstring()) {
+                gen::validate_ffi_cstring_parameter(_logger, fn, *param, param->get_type());
+                param->set_ffi_cstring_type_validated();
+            }
         }
         restore_parameter_defaults(fn, signature.params, ctx);
         if constexpr (requires { signature.return_type; }) {
@@ -1244,7 +1293,17 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
     // Pass 3 — free functions in this namespace
     for (const auto& fn : ns.functions) {
         materialise_function(fn, ctx);
-        model_ns->add_function_reference(_unit.get_or_create_imported_function(&fn, ctx));
+        auto imported = _unit.get_or_create_imported_function(&fn, ctx);
+        bool duplicate = false;
+        for (const auto& existing : model_ns->get_functions(fn.name)) {
+            auto prior = std::dynamic_pointer_cast<imported_function>(existing);
+            if (prior && prior->get_kdi_function()
+                && identical_imported_function(*prior->get_kdi_function(), fn)) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) model_ns->add_function_reference(imported);
     }
 
     // Pass 4 — global / static variables in this namespace

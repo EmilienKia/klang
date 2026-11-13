@@ -306,13 +306,11 @@ convert(const kdi::kdi_type& kdi_t, unit& owner, std::shared_ptr<context> ctx,
                                                          : type::make_pinned_pointer(inner);
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_link_type>) {
-            // link (~T) — represented as pointer in K model for now
             if (!v.inner) return nullptr;
             auto inner = convert(*v.inner, owner, ctx, mode);
             if (!inner) return nullptr;
-            if (mode == kdi_type_conversion::ordinary)
-                return needs_pinning(inner) ? type::make_pinned_pointer(inner) : inner->get_pointer();
-            return type::make_pinned_link(inner);
+            return mode == kdi_type_conversion::ordinary && !needs_pinning(inner) ? inner->get_link()
+                                                         : type::make_pinned_link(inner);
         }
         else if constexpr (std::is_same_v<T, kdi::kdi_view_type>) {
             if (!v.inner) return nullptr;

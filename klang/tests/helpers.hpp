@@ -50,6 +50,9 @@
  */
 bool ensure_libk_loaded();
 
+/** Forward an LLVM declaration to a live in-process function for JIT fixtures. */
+bool bind_jit_fixture(llvm::Function* declaration, void* address);
+
 /**
  * Create a TargetMachine configured for position-independent code (PIC),
  * suitable for shared-library compilation.

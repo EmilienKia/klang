@@ -25,9 +25,11 @@
 #include "../expressions.hpp"
 #include "../operators.hpp"
 #include "../statements.hpp"
+#include "../../parse/ast.hpp"
 
 #include <cassert>
 #include <algorithm>
+#include <stdexcept>
 #include <variant>
 
 namespace k::model {
@@ -62,6 +64,7 @@ std::string k_source_emitter::fq_name_for_source(const std::string& fq) {
 
 const char* k_source_emitter::aggregate_keyword(const aggregate& agg) {
     if (dynamic_cast<const interface*>(&agg)) return "interface";
+    if (agg.is_annotation()) return "annotation";
     if (agg.is_class()) return "class";
     return "struct";
 }
@@ -893,6 +896,87 @@ void k_source_emitter::emit_block(const block& blk, int ind) {
 // Parameter list emission
 // ═════════════════════════════════════════════════════════════════════════════
 
+bool k_source_emitter::emit_annotations(const annotation_holder& holder,
+                                        const std::string& ffi_name) {
+    bool ffi_emitted = false;
+    for (const auto& annotation : holder.get_annotations()) {
+        if (!annotation.ast_node || !annotation.ast_node->name) continue;
+        std::string name = annotation.ast_node->name->to_name().to_string();
+        if (annotation.resolved_type) {
+            name = annotation.resolved_type->get_fq_name();
+            if (name == "::k::ffi::" + ffi_name || name == "k::ffi::" + ffi_name) {
+                ffi_emitted = true;
+                name = fq_name_for_source(name);
+            } else if (!name.starts_with("::")) {
+                name = "::" + name;
+            }
+        } else if (!name.starts_with("::")) {
+            auto it = _alias_map.find(name);
+            if (it != _alias_map.end()) {
+                name = "::" + fq_name_for_source(it->second);
+            } else if (auto split = name.find("::"); split != std::string::npos) {
+                it = _alias_map.find(name.substr(0, split));
+                if (it != _alias_map.end())
+                    name = "::" + fq_name_for_source(it->second) + name.substr(split);
+            }
+        }
+        const auto last_name = annotation.ast_node->name->get_last_lexeme();
+        const auto last_annotation = annotation.ast_node->get_last_lexeme();
+        if (!last_name || !last_annotation)
+            throw std::runtime_error("cannot reconstruct annotation '" + annotation.raw_name + "'");
+        const auto name_end = std::visit([](const auto& token) {
+            return token.content.data() + token.content.size();
+        }, *last_name);
+        const auto annotation_end = std::visit([](const auto& token) {
+            return token.content.data() + token.content.size();
+        }, *last_annotation);
+        if (annotation_end < name_end)
+            throw std::runtime_error("invalid source range for annotation '" + annotation.raw_name + "'");
+        _os << "@" << name;
+        _os.write(name_end, annotation_end - name_end);
+        _os << " ";
+    }
+    return ffi_emitted;
+}
+
+void k_source_emitter::emit_native_annotation(const function& fn) {
+    const auto symbol = fn.get_extern_c_symbol().value_or(fn.get_short_name());
+    _os << "@k::ffi::Extern{.language = \"C\", .symbol = \"";
+    for (unsigned char ch : symbol) {
+        if (ch == '\\' || ch == '"') _os << '\\';
+        if (ch < 32 || ch == 127) {
+            _os << '\\' << static_cast<char>('0' + ((ch >> 6) & 7))
+                << static_cast<char>('0' + ((ch >> 3) & 7))
+                << static_cast<char>('0' + (ch & 7));
+        } else {
+            _os << static_cast<char>(ch);
+        }
+    }
+    _os << "\"} ";
+}
+
+void k_source_emitter::emit_throws(const function& fn) {
+    if (!fn.get_throws_spec().empty()) {
+        _os << " throws(";
+        bool first = true;
+        for (const auto& thrown : fn.get_throws_spec()) {
+            if (!first) _os << ", ";
+            first = false;
+            emit_type(std::const_pointer_cast<type>(thrown));
+        }
+        _os << ")";
+    } else if (!fn.get_throws_spec_raw().empty()) {
+        _os << " throws(";
+        bool first = true;
+        for (const auto& thrown : fn.get_throws_spec_raw()) {
+            if (!first) _os << ", ";
+            first = false;
+            _os << thrown;
+        }
+        _os << ")";
+    }
+}
+
 void k_source_emitter::emit_parameter_list(const function& fn, bool ffi_annotations) {
     _os << "(";
     bool first = true;
@@ -902,13 +986,9 @@ void k_source_emitter::emit_parameter_list(const function& fn, bool ffi_annotati
             continue;
         if (!first) _os << ", ";
         first = false;
-        if (ffi_annotations && (param->is_ffi_cstring()
-            || std::any_of(param->get_annotations().begin(), param->get_annotations().end(),
-                [](const auto& annotation) {
-                    if (!annotation.resolved_type) return false;
-                    auto name = annotation.resolved_type->get_fq_name();
-                    return name == "::k::ffi::CString" || name == "k::ffi::CString";
-                }))) _os << "@k::ffi::CString ";
+        const bool cstring_emitted = emit_annotations(*param, "CString");
+        if (ffi_annotations && param->is_ffi_cstring() && !cstring_emitted)
+            _os << "@k::ffi::CString ";
         _os << param->get_short_name();
         if (param->is_varargs()) _os << "...";
         _os << " : ";
@@ -938,6 +1018,7 @@ void k_source_emitter::emit_parameter_list(const function& fn, bool ffi_annotati
 // ═════════════════════════════════════════════════════════════════════════════
 
 void k_source_emitter::emit_member_variable(const member_variable_definition& var) {
+    emit_annotations(var, "");
     switch (var.get_visibility()) {
         case PUBLIC:    _os << "public ";    break;
         case PROTECTED: _os << "protected "; break;
@@ -973,6 +1054,8 @@ void k_source_emitter::emit_member_variable(const member_variable_definition& va
 // ═════════════════════════════════════════════════════════════════════════════
 
 void k_source_emitter::emit_function(const function& fn) {
+    const bool native_emitted = emit_annotations(fn, "Extern");
+    if (fn.is_extern() && !native_emitted) emit_native_annotation(fn);
     // Visibility
     switch (fn.get_visibility()) {
         case PUBLIC:    _os << "public ";    break;
@@ -982,48 +1065,40 @@ void k_source_emitter::emit_function(const function& fn) {
     }
 
     if (fn.is_static()) _os << "static ";
+    if (fn.is_const_member()) _os << "const ";
     // Note: do NOT emit 'virtual' — in K, class methods are virtual by default
     // and 'virtual' is not a valid K specifier keyword.
     if (fn.is_abstract_func()) _os << "abstract ";
     if (fn.is_default_method()) _os << "default ";
+    if (fn.is_override_specifier()) _os << "override ";
+    if (fn.is_final_func()) _os << "final ";
 
     _os << fn.get_short_name();
-    emit_parameter_list(fn);
-
-    if (fn.is_const_member()) _os << " const";
+    emit_parameter_list(fn, fn.is_extern());
 
     if (fn.has_return_type()) {
         _os << " : ";
         emit_type(std::const_pointer_cast<type>(fn.get_return_type()));
     }
 
-    if (fn.is_abstract_func()) {
+    emit_throws(fn);
+    auto body = fn.get_existing_block();
+    if (fn.is_defaulted()) {
+        _os << " -> default;\n";
+    } else if (fn.is_deleted()) {
+        _os << " -> delete;\n";
+    } else if (fn.is_abstract_func()) {
         _os << ";\n";
-    } else if (fn.is_override_specifier()) {
-        _os << " override";
-        if (const_cast<function&>(fn).get_block()) {
-            _os << " ";
-            emit_block(*const_cast<function&>(fn).get_block(), 1);
-        } else {
-            _os << ";\n";
-        }
-    } else if (fn.is_final_func()) {
-        _os << " final";
-        if (const_cast<function&>(fn).get_block()) {
-            _os << " ";
-            emit_block(*const_cast<function&>(fn).get_block(), 1);
-        } else {
-            _os << ";\n";
-        }
-    } else if (const_cast<function&>(fn).get_block()) {
+    } else if (body) {
         _os << " ";
-        emit_block(*const_cast<function&>(fn).get_block(), 1);
+        emit_block(*body, 1);
     } else {
         _os << ";\n";
     }
 }
 
 void k_source_emitter::emit_constructor(const constructor& ctor) {
+    emit_annotations(ctor, "Extern");
     switch (ctor.get_visibility()) {
         case PUBLIC:    _os << "public ";    break;
         case PROTECTED: _os << "protected "; break;
@@ -1066,6 +1141,13 @@ void k_source_emitter::emit_constructor(const constructor& ctor) {
 }
 
 void k_source_emitter::emit_destructor(const destructor& dtor) {
+    emit_annotations(dtor, "Extern");
+    switch (dtor.get_visibility()) {
+        case PUBLIC:    _os << "public "; break;
+        case PROTECTED: _os << "protected "; break;
+        case PRIVATE:   _os << "private "; break;
+        default: break;
+    }
     _os << "~";
     if (auto owner = const_cast<destructor&>(dtor).get_owner()) {
         _os << owner->get_short_name();
@@ -1085,27 +1167,18 @@ void k_source_emitter::emit_destructor(const destructor& dtor) {
 
 std::string k_source_emitter::emit_template_aggregate(const aggregate& agg) {
     reset();
-
     auto* ti = agg.get_tpl_info();
-
-    // Template clause
+    emit_annotations(agg, "");
     if (ti) emit_template_clause(*ti);
-
-    // Aggregate keyword + name
+    if (agg.is_abstract() && !dynamic_cast<const interface*>(&agg)) _os << "abstract ";
+    if (agg.is_final()) _os << "final ";
+    if (agg.is_const_struct() && !agg.is_annotation()) _os << "const ";
     _os << aggregate_keyword(agg) << " " << agg.get_short_name();
 
-    // Qualifiers
-    if (agg.is_abstract()) _os << " abstract";
-    if (agg.is_final()) _os << " final";
-    if (agg.is_const_struct()) _os << " const";
-
-    // Bases
     emit_bases(agg);
-
-    // Body
     _os << " {\n";
 
-    // Member variables and methods (from children)
+    // Nested types and local directives are not reconstructed here.
     for (auto& child : agg.get_children()) {
         if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(child)) {
             // Skip synthetic fields
@@ -1129,33 +1202,36 @@ std::string k_source_emitter::emit_template_aggregate(const aggregate& agg) {
             emit_function(*fn);
         } else if (auto gv = std::dynamic_pointer_cast<global_variable_definition>(child)) {
             // Static or threadlocal member variables
-            if (gv->is_thread_local()) {
-                _os << "\tthreadlocal " << gv->get_short_name() << " : ";
-            } else {
-                _os << "\tstatic " << gv->get_short_name() << " : ";
+            _os << "\t";
+            emit_annotations(*gv, "");
+            switch (gv->get_visibility()) {
+                case PUBLIC: _os << "public "; break;
+                case PROTECTED: _os << "protected "; break;
+                case PRIVATE: _os << "private "; break;
+                default: break;
             }
+            if (gv->is_thread_local()) {
+                _os << "threadlocal ";
+            } else {
+                _os << "static ";
+            }
+            if (gv->is_const()) _os << "const ";
+            _os << gv->get_short_name() << " : ";
             emit_type(std::const_pointer_cast<type>(gv->get_type()));
             if (auto init = gv->get_init_expr()) {
                 _os << " = ";
                 emit_expression(init);
             }
             _os << ";\n";
-        } else if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
-            // Nested aggregates — skip for now (template export typically
-            // does not contain nested type definitions)
-        } else if (auto en = std::dynamic_pointer_cast<enumeration>(child)) {
-            // Nested enumerations — skip for now
         }
     }
 
-    // Constructors
     for (auto& ctor : agg.constructors()) {
         if (!ctor || ctor->is_compiler_generated()) continue;
         _os << "\t";
         emit_constructor(*ctor);
     }
 
-    // Destructor
     if (auto dtor = agg.get_destructor()) {
         if (!dtor->is_compiler_generated()) {
             _os << "\t";
@@ -1171,13 +1247,8 @@ std::string k_source_emitter::emit_extern_function_declaration(const function& f
                                                              const std::string& name) {
     reset();
     if (!fn.is_extern() || fn.is_member() || fn.get_visibility() != PRIVATE) return {};
-    auto symbol = fn.get_extern_c_symbol().value_or(fn.get_short_name());
-    _os << "@k::ffi::Extern{.language = \"C\", .symbol = \"";
-    for (char ch : symbol) {
-        if (ch == '\\' || ch == '"') _os << '\\';
-        _os << ch;
-    }
-    _os << "\"} private " << (name.empty() ? fn.get_short_name() : name);
+    emit_native_annotation(fn);
+    _os << "private " << (name.empty() ? fn.get_short_name() : name);
     emit_parameter_list(fn, true);
     if (fn.has_return_type()) {
         _os << " : ";
@@ -1203,25 +1274,38 @@ std::string k_source_emitter::emit_template_function(const function& fn) {
     auto* ti = fn.get_tpl_info();
     if (!ti) return {};
 
+    const bool native_emitted = emit_annotations(fn, "Extern");
+    if (fn.is_extern() && !native_emitted) emit_native_annotation(fn);
+
     // Template clause
     emit_template_clause(*ti);
 
     // Function name + parameters + return type + body
     _os << fn.get_short_name();
-    emit_parameter_list(fn);
+    emit_parameter_list(fn, fn.is_extern());
 
     if (fn.has_return_type()) {
         _os << " : ";
         emit_type(std::const_pointer_cast<type>(fn.get_return_type()));
     }
 
-    if (const_cast<function&>(fn).get_block()) {
+    if (fn.is_extern()) {
+        emit_throws(fn);
+        _os << ";\n";
+    } else if (auto body = fn.get_existing_block()) {
         _os << " ";
-        emit_block(*const_cast<function&>(fn).get_block(), 0);
+        emit_block(*body, 0);
     } else {
         _os << ";\n";
     }
 
+    return _os.str();
+}
+
+std::string k_source_emitter::emit_function_annotations(const function& fn) {
+    reset();
+    const bool native_emitted = emit_annotations(fn, "Extern");
+    if (fn.is_extern() && !native_emitted) emit_native_annotation(fn);
     return _os.str();
 }
 
@@ -1259,7 +1343,6 @@ void k_source_emitter::emit_bases(const aggregate& agg) {
         if (bs->base) {
             _os << fq_name_for_source(bs->base->get_fq_name());
         } else {
-            // Base not resolved — check alias map
             if (auto it = _alias_map.find(bs->raw_name); it != _alias_map.end()) {
                 _os << it->second;
             } else {

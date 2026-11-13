@@ -57,6 +57,7 @@
 #include "parse/ast_dump.hpp"
 #include "model/model_builder.hpp"
 #include "model/context.hpp"
+#include "model/imported.hpp"
 #include "model/model_dump.hpp"
 #include "model/mangler.hpp"
 #include "model/tools/kdi_exporter.hpp"
@@ -714,18 +715,11 @@ void compiler::verify_mangled_names() {
     // Preserve the first declaration for detailed collision diagnostics.
     std::unordered_map<std::string, const k::model::named_element*> seen;
 
-    const auto same_native_declaration = [&](const k::model::named_element& first,
-                                            const k::model::named_element& second) {
+    const auto same_native_contract = [&](const k::model::named_element& first,
+                                         const k::model::named_element& second) {
         auto left = dynamic_cast<const k::model::function*>(&first);
         auto right = dynamic_cast<const k::model::function*>(&second);
         if (!left || !right || !left->is_extern() || !right->is_extern()) return false;
-        const auto is_dependency = [](const k::model::function& fn) {
-            auto owner = fn.parent<const k::model::ns>();
-            return owner && owner->get_short_name().starts_with("__kdi_private_");
-        };
-        if (!is_dependency(*left) && !is_dependency(*right)
-            && (left->get_visibility() != k::model::PRIVATE
-                || right->get_visibility() != k::model::PRIVATE)) return false;
         const auto return_type = [&](const k::model::function& fn) {
             return fn.get_return_type() ? std::const_pointer_cast<k::model::type>(fn.get_return_type())
                 : _context->from_string("void");
@@ -737,7 +731,9 @@ void compiler::verify_mangled_names() {
             if (!k::model::type::are_layout_equal(
                     left->parameters()[i]->get_type(), right->parameters()[i]->get_type())
                 || left->parameters()[i]->is_ffi_cstring()
-                    != right->parameters()[i]->is_ffi_cstring()) return false;
+                    != right->parameters()[i]->is_ffi_cstring()
+                || left->parameters()[i]->is_varargs()
+                    != right->parameters()[i]->is_varargs()) return false;
         }
         for (size_t i = 0; i < left->get_throws_spec().size(); ++i) {
             if (!k::model::type::are_layout_equal(
@@ -745,6 +741,48 @@ void compiler::verify_mangled_names() {
                     std::const_pointer_cast<k::model::type>(right->get_throws_spec()[i]))) return false;
         }
         return true;
+    };
+    const auto is_native_dependency = [](const k::model::function& fn) {
+        auto owner = fn.parent<const k::model::ns>();
+        return owner && owner->get_short_name().starts_with("__kdi_private_");
+    };
+    const auto same_native_declaration = [&](const k::model::named_element& first,
+                                            const k::model::named_element& second) {
+        auto left = dynamic_cast<const k::model::function*>(&first);
+        auto right = dynamic_cast<const k::model::function*>(&second);
+        if (!left || !right) return false;
+        if (!is_native_dependency(*left) && !is_native_dependency(*right)
+            && left->is_external() && right->is_external()
+            && left->is_extern() && right->is_extern()) return true;
+        if (!is_native_dependency(*left) && !is_native_dependency(*right)
+            && (left->get_visibility() != k::model::PRIVATE
+                || right->get_visibility() != k::model::PRIVATE)) return false;
+        return same_native_contract(first, second);
+    };
+
+    std::unordered_map<std::string, std::vector<const k::model::function*>> callable_symbols;
+    const auto check_callable = [&](const k::model::function& fn) {
+        if (fn.get_mangled_name().empty()) return;
+        auto& previous = callable_symbols[fn.get_mangled_name()];
+        for (const auto* other : previous) {
+            if (other == &fn) return;
+            if (!other->is_extern() && !fn.is_extern()) continue;
+            // Public aliases may have different K contracts; their LLVM
+            // prototypes are checked when declarations are emitted.
+            const bool private_contract = is_native_dependency(*other)
+                || is_native_dependency(fn)
+                || other->get_visibility() == k::model::PRIVATE
+                || fn.get_visibility() == k::model::PRIVATE;
+            if (other->is_extern() && fn.is_extern()
+                && (!private_contract || same_native_contract(*other, fn))) continue;
+            auto diag = k::log::diagnostic::make_fatal(
+                static_cast<unsigned int>(k::diag::codegen_diag::ERR_DUPLICATE_MANGLED_NAME),
+                "Native symbol '{0}' has incompatible declarations '{1}' and '{2}'",
+                {fn.get_mangled_name(), describe_element(*other), describe_element(fn)});
+            report(diag);
+            throw k::log::compiler_error(std::move(diag));
+        }
+        previous.push_back(&fn);
     };
 
     const auto check = [&](const k::model::named_element& elem, const char* kind) {
@@ -783,7 +821,10 @@ void compiler::verify_mangled_names() {
                 // Template definitions are blueprints; deleted functions are never emitted
                 // and legitimately carry no mangled name. Generic-function facades are
                 // never emitted (they forward to the erased synthesis).
-                if (!fn->is_template() && !fn->is_deleted() && !fn->get_erased_target()) check(*fn, "function");
+                if (!fn->is_template() && !fn->is_deleted() && !fn->get_erased_target()) {
+                    check(*fn, "function");
+                    check_callable(*fn);
+                }
                 return;
             }
             if (auto un = std::dynamic_pointer_cast<k::model::union_type_def>(elem)) {
@@ -808,6 +849,15 @@ void compiler::verify_mangled_names() {
 
     if (_model_unit) {
         walk(_model_unit->get_root_namespace());
+        for (const auto& [descriptor, fn] : _model_unit->get_imported_functions())
+            if (fn) check_callable(*fn);
+        for (const auto& [name, agg] : _model_unit->get_imported_aggregates()) {
+            for (const auto& child : agg->get_children()) {
+                if (auto method = std::dynamic_pointer_cast<k::model::imported_method>(child);
+                    method && !method->is_deleted() && !method->is_abstract_func())
+                    check_callable(*method);
+            }
+        }
     }
 }
 

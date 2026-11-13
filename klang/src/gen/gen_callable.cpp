@@ -942,6 +942,64 @@ llvm::Value* implementation_generator::build_callable_from_function(
             "Internal error: LLVM declaration not found for function '{}' while binding a callable",
             {func->get_fq_name()});
     }
+    if (!func->is_extern() && needs_sret_return(func->get_return_type())
+        && !llvm_fn->getReturnType()->isVoidTy()) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F05B), where,
+            "Cannot bind '{}' as a K callable: its LLVM return ABI is not K sret; "
+            "rebuild imported descriptors with native ABI metadata",
+            {func->get_fq_name()});
+    }
+    if (func->is_extern() && needs_sret_return(func->get_return_type())) {
+        auto* native_type = llvm_fn->getFunctionType();
+        auto* result_type = _context->get_llvm_type(func->get_return_type());
+        if (ctx_ptr || !result_type || native_type->getReturnType() != result_type
+            || native_type->isVarArg() || llvm_fn->getCallingConv() != llvm::CallingConv::C
+            || native_type->getNumParams() != func->parameters().size()) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F05B), where,
+                "Internal error: incompatible native ABI for callable target '{}'",
+                {func->get_fq_name()});
+        }
+        std::vector<llvm::Type*> parameters{
+            llvm::PointerType::get(**_context, 0)};
+        for (size_t i = 0; i < func->parameters().size(); ++i) {
+            auto* param_type = _context->get_llvm_type(func->parameters()[i]->get_type());
+            if (!param_type || native_type->getParamType(i) != param_type) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F05B), where,
+                    "Internal error: incompatible native parameter ABI for callable target '{}'",
+                    {func->get_fq_name()});
+            }
+            parameters.push_back(param_type);
+        }
+        auto* adapter_type = llvm::FunctionType::get(llvm::Type::getVoidTy(**_context), parameters, false);
+        auto& module = get_module();
+        llvm::Function* adapter = nullptr;
+        for (auto& candidate : module) {
+            auto attr = candidate.getFnAttribute("k.native_callable_target");
+            if (attr.isStringAttribute() && attr.getValueAsString() == llvm_fn->getName()
+                && candidate.getFunctionType() == adapter_type) {
+                adapter = &candidate;
+                break;
+            }
+        }
+        if (!adapter) {
+            adapter = llvm::Function::Create(adapter_type, llvm::Function::InternalLinkage,
+                                             "__k_native_callable_adapter", module);
+            adapter->addFnAttr("k.native_callable_target", llvm_fn->getName());
+            adapter->addParamAttr(0, llvm::Attribute::get(**_context, llvm::Attribute::StructRet, result_type));
+            auto* entry = llvm::BasicBlock::Create(**_context, "entry", adapter);
+            llvm::IRBuilder<> builder(entry);
+            auto arg = adapter->arg_begin();
+            llvm::Value* destination = &*arg++;
+            std::vector<llvm::Value*> args;
+            for (; arg != adapter->arg_end(); ++arg) args.push_back(&*arg);
+            auto* call = builder.CreateCall(native_type, llvm_fn, args);
+            call->setCallingConv(llvm_fn->getCallingConv());
+            call->setAttributes(llvm_fn->getAttributes());
+            builder.CreateStore(call, destination);
+            builder.CreateRetVoid();
+        }
+        llvm_fn = adapter;
+    }
     auto* callable_ty = _context->get_or_create_callable_llvm_type();
     llvm::Value* ctx = ctx_ptr
         ? ctx_ptr

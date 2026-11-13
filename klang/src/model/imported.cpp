@@ -60,8 +60,11 @@ imported_function::imported_function(std::shared_ptr<element> parent,
     , _kdi_function(kdi_fn)
 {
     if (kdi_fn) {
+        if (kdi_fn->is_extern && kdi_fn->mangled_name.empty())
+            throw std::runtime_error("native imported function '" + kdi_fn->fq_name + "' has no C symbol");
         _mangled_name = kdi_fn->mangled_name;
         _is_operator  = kdi_fn->is_operator;
+        if (kdi_fn->is_extern) set_extern_c_symbol(kdi_fn->mangled_name);
     }
 }
 void imported_function::update_mangled_name() {
@@ -129,7 +132,10 @@ imported_method::imported_method(std::shared_ptr<element> parent,
     , _kdi_method(kdi_m)
 {
     if (kdi_m) {
+        if (kdi_m->is_extern && (kdi_m->mangled_name.empty() || !kdi_m->is_static))
+            throw std::runtime_error("native imported method '" + kdi_m->fq_name + "' has no valid static C declaration");
         _mangled_name     = kdi_m->mangled_name;
+        if (kdi_m->is_extern) set_extern_c_symbol(kdi_m->mangled_name);
         _is_virtual       = kdi_m->is_virtual;
         _is_const_member  = kdi_m->is_const_member;
         _is_abstract_func = kdi_m->is_abstract;
@@ -619,11 +625,16 @@ static void attach_params(function& fn,
                           std::shared_ptr<context> ctx)
 {
     for (const auto& kp : params) {
+        if (kp.is_ffi_cstring && !fn.is_extern())
+            throw std::runtime_error("CString parameter on non-native imported function '" + fn.get_fq_name() + "'");
         auto model_type = kdi_type_to_model_type(kp.type, owner, ctx);
         // Use an anonymous name if the KDI entry has no name
         const std::string& pname = kp.name.empty() ? "__p" : kp.name;
         auto p = fn.append_parameter(pname, model_type);
-        if (p) p->set_varargs(kp.is_varargs);
+        if (p) {
+            p->set_varargs(kp.is_varargs);
+            p->set_ffi_cstring(kp.is_ffi_cstring);
+        }
     }
 }
 
@@ -799,7 +810,7 @@ unit::get_or_create_imported_function(const kdi::kdi_function* kdi_fn,
     if (!kdi_fn) return nullptr;
 
     // Check cache
-    auto it = _imported_functions.find(kdi_fn->mangled_name);
+    auto it = _imported_functions.find(kdi_fn);
     if (it != _imported_functions.end()) return it->second;
 
     // Create node — parent is the root_ns (logical ownership)
@@ -839,7 +850,7 @@ unit::get_or_create_imported_function(const kdi::kdi_function* kdi_fn,
         fn->set_documentation(std::move(doc));
     }
 
-    _imported_functions[kdi_fn->mangled_name] = fn;
+    _imported_functions[kdi_fn] = fn;
     return fn;
 }
 

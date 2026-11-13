@@ -159,6 +159,9 @@ enum class codegen_diag : unsigned int {
      */
     ERR_TYPE_NOT_COPYABLE                         = 0x0F06,
 
+    /** An imported native prototype cannot be reconciled with its KDI signature. */
+    ERR_KDI_NATIVE_ABI_UNPROVEN                    = 0x0F07,
+
     /**
      * `mangler::mangle_type()` was given a type it cannot encode. `mangle_type()` is
      * total by contract: returning an empty string here would silently collapse distinct
