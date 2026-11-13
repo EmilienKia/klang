@@ -564,6 +564,287 @@ TEST_CASE("HKDF SHA-256 RFC 5869 extract expand and combined vectors", "[crypto]
     CHECK(test() == 0);
 }
 
+TEST_CASE("HKDF SHA-1 RFC 5869 appendix A.4 to A.7 vectors", "[crypto][hkdf][rfc5869]") {
+    auto jit = gen_jit_with_crypto(std::string(prelude) + R"K(
+        test() : int {
+            try {
+                h: k::crypto::Hkdf! = k::crypto::Hkdf::create(k::crypto::MessageDigestAlgorithms::SHA1);
+                if (!h) return 77;
+                if (h.hashSize() != 20u || h.maxOutputSize() != 5100u) return 1;
+                empty: unsigned byte[]! = new unsigned byte[0u];
+
+                ikm4: unsigned byte[]! = repeated((unsigned byte) 0x0b, 11u);
+                if (!checkVector(h, ikm4, sequence(0u, 13u), sequence(0xf0u, 10u),
+                    fromHex(String("9b6c18c432a7bf8f0e71c8eb88f4b30baa2ba243")),
+                    fromHex(String("085a01ea1b10f36933068b56efa5ad81a4f14b822f5b091568a9cdd4f155fda2c22e422478d305f3f896"))))
+                    return 2;
+
+                if (!checkVector(h, sequence(0u, 80u), sequence(0x60u, 80u), sequence(0xb0u, 80u),
+                    fromHex(String("8adae09a2a307059478d309b26c4115a224cfaf6")),
+                    fromHex(String("0bd770a74d1160f7c9f12cd5912a06ebff6adcae899d92191fe4305673ba2ffe8fa3f1a4e5ad79f3f334b3b202b2173c486ea37ce3d397ed034c7f9dfeb15c5e927336d0441f4c4300e2cff0d0900b52d3b4"))))
+                    return 3;
+
+                ikm6: unsigned byte[]! = repeated((unsigned byte) 0x0b, 22u);
+                if (!checkVector(h, ikm6, empty, empty,
+                    fromHex(String("da8c8a73c7fa77288ec6f5e7c297786aa0d32d01")),
+                    fromHex(String("0ac1af7002b3d761d1e55298da9d0506b9ae52057220a306e07b6b87e8df21d0ea00033de03984d34918"))))
+                    return 4;
+
+                ikm7: unsigned byte[]! = repeated((unsigned byte) 0x0c, 22u);
+                prk7: unsigned byte[]! = fromHex(String("2adccada18779e7c2077ad2eb19d3f3e731385dd"));
+                okm7: unsigned byte[]! = fromHex(String(
+                    "2c91117204d745f3500d636a62f64f0ab3bae548aa53d423b0d1f27ebba6f5e5673a081d70cce7acfc48"));
+                p7: k::crypto::HkdfPrk! = h.extract(ikm7);
+                if (!equal(p7.exportBytes(), prk7) || !equal(p7.expand(empty, 42u), okm7) ||
+                    !equal(h.derive(ikm7, empty, 42u), okm7)) return 5;
+                zeros: unsigned byte[]! = repeated((unsigned byte) 0, 20u);
+                if (!equal(h.extract(ikm7, zeros).exportBytes(), prk7) ||
+                    !equal(h.extract(ikm7, empty).exportBytes(), prk7)) return 6;
+                return 0;
+            } catch (e: k::crypto::CryptoException&) { return -1; }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    const int result = test();
+    if (result == 77) SKIP("SHA-1 HKDF is unavailable from the selected provider");
+    CHECK(result == 0);
+}
+
+TEST_CASE("HKDF SHA-224 SHA-384 and SHA-512 match independent HMAC-based vectors",
+          "[crypto][hkdf][rfc5869]") {
+    auto jit = gen_jit_with_crypto(std::string(prelude) + R"K(
+        check(algorithm: const String&, hashSize: unsigned int, prkHex: const String&,
+              okmHex: const String&) : int {
+            try {
+                h: k::crypto::Hkdf! = k::crypto::Hkdf::create(algorithm);
+                if (!h) return 77;
+                if (h.hashSize() != hashSize || h.maxOutputSize() != hashSize * 255u ||
+                    h.algorithm() != algorithm) return 1;
+                ikm: unsigned byte[]! = repeated((unsigned byte) 0x0b, 22u);
+                if (!checkVector(h, ikm, sequence(0u, 13u), sequence(0xf0u, 10u),
+                                 fromHex(prkHex), fromHex(okmHex))) return 2;
+                return 0;
+            } catch (e: k::crypto::CryptoException&) { return -1; }
+        }
+        sha224() : int {
+            return check(String("SHA-224"), 28u,
+                String("94f65bed12265c1fa2747db60cadfcabbbbaede6be5a7a450de78231"),
+                String("2f21cd7cbc818ca5c561b933728e2e08e154a87e1432399a820dee13aa222d0cee6152fa539ab70f8e80"));
+        }
+        sha384() : int {
+            return check(String("SHA-384"), 48u,
+                String("704b39990779ce1dc548052c7dc39f303570dd13fb39f7acc564680bef80e8dec70ee9a7e1f3e293ef68eceb072a5ade"),
+                String("9b5097a86038b805309076a44b3a9f38063e25b516dcbf369f394cfab43685f748b6457763e4f0204fc5"));
+        }
+        sha512() : int {
+            return check(String("SHA-512"), 64u,
+                String("665799823737ded04a88e47e54a5890bb2c3d247c7a4254a8e61350723590a26c36238127d8661b88cf80ef802d57e2f7cebcf1e00e083848be19929c61b4237"),
+                String("832390086cda71fb47625bb5ceb168e4c8e26a1a16ed34d9fc7fe92c1481579338da362cb8d9f925d7cb"));
+        }
+    )K");
+    REQUIRE(jit);
+    for (const char *name : {"sha224", "sha384", "sha512"}) {
+        DYNAMIC_SECTION(name) {
+            auto test = jit->lookup_symbol<int(*)()>(name);
+            REQUIRE(test);
+            const int result = test();
+            if (result == 77) SKIP("digest HKDF is unavailable from the selected provider");
+            CHECK(result == 0);
+        }
+    }
+}
+
+TEST_CASE("HKDF empty input keying material and maximum output boundary",
+          "[crypto][hkdf][rfc5869]") {
+    auto jit = gen_jit_with_crypto(std::string(prelude) + R"K(
+        test() : int {
+            try {
+                h: k::crypto::Hkdf! = k::crypto::Hkdf::SHA256();
+                h512: k::crypto::Hkdf! = k::crypto::Hkdf::SHA512();
+                if (!h || !h512) return 77;
+                empty: unsigned byte[]! = new unsigned byte[0u];
+                salt: unsigned byte[]! = sequence(0u, 13u);
+                info: unsigned byte[]! = sequence(0xf0u, 10u);
+                if (!checkVector(h, empty, salt, info,
+                    fromHex(String("90a33d186b940bac8a4e69efce8b74ba4c718640140d54d853b5e30ed8d7706b")),
+                    fromHex(String("4dd449ba1911c57d79603e7e902452f79601b5e4d7b235ce0e11a7789a17766099725013cd1c97a52d03"))))
+                    return 1;
+                p: k::crypto::HkdfPrk! = h.extract(empty);
+                if (!equal(p.exportBytes(), fromHex(String(
+                        "b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"))) ||
+                    !equal(p.expand(empty, 42u), fromHex(String(
+                        "eb70f01dede9afafa449eee1b1286504e1f62388b3f7dd4f956697b0e828fe181e59c2ec0fe6e7e7ac26"))))
+                    return 2;
+
+                ikm: unsigned byte[]! = repeated((unsigned byte) 0x0b, 22u);
+                okm: unsigned byte[]! = h.derive(ikm, salt, info, h.maxOutputSize());
+                if (okm.size != 8160u) return 3;
+                head: unsigned byte[]! = fromHex(String(
+                    "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf"));
+                tail: unsigned byte[]! = fromHex(String(
+                    "76a3f78bcffe95fecf91923c22ad6ee64d48a6d1b981d7e523d5c0f22154ee88"));
+                i: unsigned int = 0u;
+                while (i < 32u) {
+                    if (okm[i] != head[i] || okm[okm.size - 32u + i] != tail[i]) return 4;
+                    ++i;
+                }
+                okm512: unsigned byte[]! = h512.derive(ikm, salt, info, h512.maxOutputSize());
+                tail512: unsigned byte[]! = fromHex(String(
+                    "6f4c862c43cc05f02bbc375f8e523cf7a8148162f9266a8e90e9de9261973f47931623de9936c096438e9f180736960acc54a28763012fec34d40b7c12ee8560"));
+                if (okm512.size != 16320u) return 5;
+                i = 0u;
+                while (i < 64u) {
+                    if (okm512[okm512.size - 64u + i] != tail512[i]) return 6;
+                    ++i;
+                }
+                return 0;
+            } catch (e: k::crypto::CryptoException&) { return -1; }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("HKDF key-producing helpers reject lengths above the RFC limit",
+          "[crypto][hkdf][rfc5869]") {
+    auto jit = gen_jit_with_crypto(std::string(prelude) + R"K(
+        test() : int {
+            try {
+                h: k::crypto::Hkdf! = k::crypto::Hkdf::SHA256();
+                raw: unsigned byte[]! = sequence(0u, 32u);
+                info: unsigned byte[]! = sequence(0xf0u, 10u);
+                key: k::crypto::HmacKey! = k::crypto::HmacKey::fromBytes(raw);
+                prk: k::crypto::HkdfPrk! = h.importPrk(raw);
+                tooLong: unsigned int = h.maxOutputSize() + 1u;
+                rejected: int = 0;
+                try { h.deriveHmacKey(raw, info, tooLong); }
+                catch (e: k::crypto::CryptoInvalidInputException&) { ++rejected; }
+                try { h.deriveHmacKey(key, raw, info, tooLong); }
+                catch (e: k::crypto::CryptoInvalidInputException&) { ++rejected; }
+                try { h.derive(key, info, tooLong); }
+                catch (e: k::crypto::CryptoInvalidInputException&) { ++rejected; }
+                try { prk.expandHmacKey(info, tooLong); }
+                catch (e: k::crypto::CryptoInvalidInputException&) { ++rejected; }
+                try { prk.expand(info, 0xffffffffu); }
+                catch (e: k::crypto::CryptoInvalidInputException&) { ++rejected; }
+                if (rejected != 5) return 1;
+                exact: k::crypto::HmacKey! = h.deriveHmacKey(raw, info, h.maxOutputSize());
+                if (exact.keySize() != h.maxOutputSize()) return 2;
+                return 0;
+            } catch (e: k::crypto::CryptoException&) { return -1; }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("HKDF descriptors and PRKs can be shared by concurrent readers",
+          "[crypto][hkdf][thread]") {
+    auto jit = gen_jit_with_crypto(std::string(prelude) + R"K(
+        sharedHkdf: k::crypto::Hkdf! = null;
+        sharedPrk: k::crypto::HkdfPrk! = null;
+        setup() : int {
+            try {
+                sharedHkdf = k::crypto::Hkdf::SHA256();
+                sharedPrk = sharedHkdf.importPrk(fromHex(String(
+                    "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5")));
+                return 0;
+            } catch (e: k::crypto::CryptoException&) { return -1; }
+        }
+        worker(iterations: int) : int {
+            try {
+                ikm: unsigned byte[]! = repeated((unsigned byte) 0x0b, 22u);
+                salt: unsigned byte[]! = sequence(0u, 13u);
+                info: unsigned byte[]! = sequence(0xf0u, 10u);
+                okm: unsigned byte[]! = fromHex(String(
+                    "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"));
+                i: int = 0;
+                while (i < iterations) {
+                    p: k::crypto::HkdfPrk! = sharedHkdf.extract(ikm, salt);
+                    if (!equal(sharedHkdf.derive(ikm, salt, info, 42u), okm) ||
+                        !equal(sharedPrk.expand(info, 42u), okm) ||
+                        !equal(p.expand(info, 42u), okm)) return 1;
+                    ++i;
+                }
+                return 0;
+            } catch (e: k::crypto::CryptoException&) { return -1; }
+        }
+        teardown() {
+            sharedPrk = null;
+            sharedHkdf = null;
+        }
+    )K");
+    REQUIRE(jit);
+    auto setup = jit->lookup_symbol<int(*)()>("setup");
+    auto worker = jit->lookup_symbol<int(*)(int)>("worker");
+    auto teardown = jit->lookup_symbol<void(*)()>("teardown");
+    REQUIRE(setup);
+    REQUIRE(worker);
+    REQUIRE(teardown);
+    REQUIRE(setup() == 0);
+    std::vector<int> results(4, -99);
+    std::vector<std::thread> threads;
+    for (size_t i = 0; i < results.size(); ++i)
+        threads.emplace_back([&, i] { results[i] = worker(25); });
+    for (auto &thread : threads) thread.join();
+    teardown();
+    for (int result : results) CHECK(result == 0);
+}
+
+TEST_CASE("HKDF guide example derives the RFC 5869 prefix as an AES-256-GCM key",
+          "[crypto][hkdf][guide]") {
+    auto jit = gen_jit_with_crypto(std::string(prelude) + R"K(
+        deriveAesKey(ikm: const unsigned byte[], salt: const unsigned byte[],
+                     info: const unsigned byte[]) : k::crypto::SymmetricKey!
+                throws(k::crypto::CryptoException) {
+            cipher: k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::AES256GCM();
+            hkdf: k::crypto::Hkdf! = k::crypto::Hkdf::SHA256();
+            if (cipher == null || hkdf == null) return null;
+
+            prk: k::crypto::HkdfPrk! = hkdf.extract(ikm, salt);
+            return prk.expandSymmetricKey(cipher, info);
+        }
+        seal(cipher: const k::crypto::SymmetricCipher&, key: const k::crypto::SymmetricKey&,
+             plain: const unsigned byte[]) : unsigned byte[]! throws(k::crypto::CryptoException) {
+            nonce: unsigned byte[]! = repeated((unsigned byte) 0, cipher.nonceSize());
+            enc: k::crypto::EncryptSession! = cipher.encrypt(key, nonce);
+            out: unsigned byte[]! = enc.update(plain, 0u, plain.size);
+            enc.finish();
+            finalBytes: unsigned byte[16];
+            if (enc.readFinal(finalBytes, 0u, 16u) != 0u) return null;
+            return out;
+        }
+        test() : int {
+            try {
+                cipher: k::crypto::SymmetricCipher! = k::crypto::SymmetricCipher::AES256GCM();
+                if (!cipher) return 77;
+                derived: k::crypto::SymmetricKey! = deriveAesKey(
+                    repeated((unsigned byte) 0x0b, 22u), sequence(0u, 13u), sequence(0xf0u, 10u));
+                if (!derived || derived.keySize() != 32u) return 1;
+                direct: k::crypto::SymmetricKey! = cipher.importKey(fromHex(String(
+                    "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf")));
+                plain: unsigned byte[]! = fromHex(String("000102030405060708090a0b0c0d0e0f"));
+                a: unsigned byte[]! = seal(cipher, derived, plain);
+                b: unsigned byte[]! = seal(cipher, direct, plain);
+                if (!a || !b || a.size != plain.size || !equal(a, b)) return 2;
+                return 0;
+            } catch (e: k::crypto::CryptoException&) { return -1; }
+        }
+    )K");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    const int result = test();
+    if (result == 77) SKIP("AES-256-GCM is unavailable");
+    CHECK(result == 0);
+}
+
 TEST_CASE("HKDF ownership bounds and key integration", "[crypto][hkdf]") {
     auto jit = gen_jit_with_crypto(std::string(prelude) + R"K(
         makePrk() : k::crypto::HkdfPrk! throws(k::crypto::CryptoException) {
