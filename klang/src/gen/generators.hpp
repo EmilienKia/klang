@@ -21,6 +21,7 @@
 
 #include <optional>
 #include <stack>
+#include <variant>
 #include <vector>
 
 #include <llvm/ADT/STLExtras.h>
@@ -198,6 +199,35 @@ protected:
     std::unique_ptr<llvm::IRBuilder<>> _builder;
 
     llvm::Value* _value;
+
+    // These results describe only the current, untracked raw-pointer ABI.
+    struct place_result {
+        llvm::Value* address;
+    };
+    struct value_result {
+        llvm::Value* value;
+    };
+    struct legacy_result {
+        llvm::Value* value;
+    };
+    using expression_result = std::variant<place_result, value_result, legacy_result>;
+
+    struct expression_result_frame {
+        const expression* target;
+        std::optional<expression_result> result;
+    };
+    // Only the frame's target may publish into it; nested legacy visitors
+    // still exchange their results through the checked raw ABI bridge.
+    expression_result_frame* _expression_result_frame = nullptr;
+
+    value_result load_place(place_result place, llvm::Type* type, const llvm::Twine& name = "");
+    static value_result address_of_place(place_result place);
+    static place_result dereference_address(value_result address);
+    expression_result evaluate_expression(expression& expr);
+    void publish_expression_result(expression& expr, expression_result result);
+    llvm::Value* checked_legacy_result(const expression_result& result);
+    place_result require_place(const expression_result& result, expression& source);
+    value_result require_value(const expression_result& result, expression& source);
 
     std::unique_ptr<debug_info_emitter> _debug_info;
     llvm::DIScope* _current_debug_scope = nullptr;

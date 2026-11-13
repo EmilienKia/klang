@@ -241,6 +241,95 @@ TEST_CASE("Reference assignment through ref modifies underlying object", "[gen][
     REQUIRE(fn() == 2);
 }
 
+TEST_CASE("Nested address and dereference preserve places", "[gen][indirection][refs][member-access]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_indirection_nested_places;
+
+        struct Point {
+            x : int = 0;
+        }
+
+        test() : int {
+            x : int = 1;
+            r : int& = x;
+            p : int* = &r;
+            nested : int* = &*p;
+            *nested = 42;
+            pt : Point();
+            member : int* = &pt.x;
+            *member = 7;
+            y : int = *&r;
+            return y * 100 + pt.x;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 4207);
+}
+
+TEST_CASE("Nested member projections load pointer fields", "[gen][indirection][refs][member-access]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_indirection_nested_members;
+
+        struct Leaf {
+            value : int = 0;
+        }
+
+        struct Holder {
+            leaf : Leaf;
+            ptr : Leaf* = null;
+        }
+
+        test() : int {
+            h : Holder();
+            p : Holder* = &h;
+            p->ptr = &p->leaf;
+            *(&p->ptr->value) = 17;
+            return p->leaf.value + *(&h.ptr->value);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 34);
+}
+
+TEST_CASE("Assignment keeps nested destination across RHS effects", "[gen][indirection][refs][member-access]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_indirection_assignment_destination;
+
+        struct Holder {
+            ptr : int* = null;
+        }
+
+        struct Outer {
+            holder : Holder;
+        }
+
+        redirect(h : Holder&, first : int&, second : int&) : int {
+            h.ptr = &second;
+            first = 30;
+            return 7;
+        }
+
+        test() : int {
+            first : int = 1;
+            second : int = 9;
+            outer : Outer();
+            outer.holder.ptr = &first;
+            simple : int = (*outer.holder.ptr = redirect(outer.holder, first, second));
+            outer.holder.ptr = &first;
+            compound : int = (*outer.holder.ptr += redirect(outer.holder, first, second));
+            return simple * 10000 + compound * 100 + second;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 73709);
+}
+
 // Positive test: assignment through a reference changes the underlying object.
 TEST_CASE("Assignment through reference modifies underlying object", "[gen][indirection][refs]") {
     auto jit = gen_jit(R"SRC(

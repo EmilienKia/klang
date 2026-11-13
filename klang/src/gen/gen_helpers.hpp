@@ -479,7 +479,7 @@ inline void emit_owner_cleanup_if_nonnull(
 {
     auto& llvm_ctx = builder->getContext();
     auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
-    llvm::Value* cur_ptr = builder->CreateLoad(ptr_ty, owner_alloca, label_prefix + "_ptr");
+    auto* cur_ptr = builder->CreateLoad(ptr_ty, owner_alloca, label_prefix + "_ptr");
     auto* fn = builder->GetInsertBlock()->getParent();
     auto* nonnull_bb = llvm::BasicBlock::Create(llvm_ctx, label_prefix + "_nonnull", fn);
     auto* done_bb    = llvm::BasicBlock::Create(llvm_ctx, label_prefix + "_done",    fn);
