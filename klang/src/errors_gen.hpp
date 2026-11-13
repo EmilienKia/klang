@@ -159,6 +159,9 @@ enum class codegen_diag : unsigned int {
      */
     ERR_TYPE_NOT_COPYABLE                         = 0x0F06,
 
+    /** An imported native prototype cannot be reconciled with its KDI signature. */
+    ERR_KDI_NATIVE_ABI_UNPROVEN                    = 0x0F07,
+
     /**
      * `mangler::mangle_type()` was given a type it cannot encode. `mangle_type()` is
      * total by contract: returning an empty string here would silently collapse distinct
@@ -645,6 +648,13 @@ enum class generic_diag : unsigned int {
      * importing module cannot use it.
      */
     ERR_GENERIC_IMPORT_NO_SYNTHESIS               = 0x1109,
+
+    /**
+     * The erased body of a generic reads or writes a value through an addresser of a type
+     * parameter (e.g. '*p = null' with 'p : T*'), but the type argument at the use site is
+     * not pointer-like: the erased slot is pointer-sized and would not match its layout.
+     */
+    ERR_GENERIC_POINTEE_ACCESS_ON_NON_POINTER     = 0x110A,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

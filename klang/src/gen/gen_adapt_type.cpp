@@ -61,6 +61,26 @@ bool is_generic_erasure_pair(const std::shared_ptr<type>& a, const std::shared_p
 
 } // anonymous namespace
 
+void type_reference_resolver::check_union_owner_extraction(
+    const std::shared_ptr<expression>& source, const union_alternative& alternative) {
+    auto source_type = type::canonical(source->get_type());
+    if (type::is_reference(source_type)) {
+        source_type = type::canonical(source_type->get_subtype());
+    }
+    auto bare_source = type::remove_const(source_type);
+    bool const_union = type::is_const(source_type);
+    if (type::is_pointer(bare_source) || type::is_link(bare_source) || type::is_view(bare_source)) {
+        const_union = type::is_const(type::canonical(bare_source->get_subtype()));
+    }
+    if (const_union || alternative.is_const ||
+        type::is_const(type::canonical(alternative.resolved_type))) {
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ASSIGN_TO_CONST),
+            source->first_lexeme(),
+            "Cannot move owner alternative '{}' from a const union or const alternative",
+            {alternative.name});
+    }
+}
+
 
 // ── adapt_callable_type ──────────────────────────────────────────────────
 
@@ -206,13 +226,15 @@ type_reference_resolver::adapt_callable_type(
                         }
                     }
                     fn = select_callable_target(cands, tgt_frt, fn->get_short_name(),
-                                                expr->first_lexeme());
+                                                expr->first_lexeme(),
+                                                find_generic_qualifier_usage(sym.get()));
                     auto bind = callable_bind_expression::make_shared(
                         fn->is_static() || !fn->parent<aggregate>()
                             ? (fn->parent<aggregate>() ? callable_bind_expression::kind::static_method
                                                        : callable_bind_expression::kind::free_function)
                             : callable_bind_expression::kind::bound_method,
                         fn);
+                    bind->set_ast_expression(expr->get_ast_expression());
                     bind->set_type(tgt_frt);
                     return bind;
                 }
@@ -649,6 +671,15 @@ type_reference_resolver::adapt_from_owner(
             cast->set_type(type_nc);
             return cast;
         }
+        // Upcast: owner<Derived> → lnk<Base> / view<Base>
+        auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+        auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+        if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+            src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+            auto upcast = cast_expression::make_shared(expr, type_nc);
+            upcast->set_type(type_nc);
+            return upcast;
+        }
     }
     // Step 3: owner<T> → ref<T>: borrow owned object as reference
     // owner<T> → ref<T>: borrow owned object as reference (same LLVM representation)
@@ -692,7 +723,7 @@ type_reference_resolver::adapt_from_drain(
     // drain<T> → drain<T>: identity
     if (type::is_drain(type_nc)) {
         auto tgt_sub_nc = type::remove_const(type_nc->get_subtype());
-        if (src_sub_nc == tgt_sub_nc) return expr;
+        if (same_conversion_type(src_sub_nc, tgt_sub_nc)) return expr;
         // Struct upcast: drain<Derived> → drain<Base>
         auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
         auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
@@ -707,8 +738,10 @@ type_reference_resolver::adapt_from_drain(
     // Step 2: drain<T> → ref<T>: implicit borrow (drain can always be used as a reference)
     // drain<T> → ref<T>: implicit cast (drain is a superset of reference)
     if (type::is_reference(type_nc)) {
-        auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype());
-        if (src_sub_nc == tgt_sub_nc || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
+        auto tgt_sub = std::dynamic_pointer_cast<reference_type>(type_nc)->get_subtype();
+        auto tgt_sub_nc = type::remove_const(tgt_sub);
+        if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return {};
+        if (same_conversion_type(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
             auto cast = cast_expression::make_shared(expr, type_nc);
             cast->set_type(type_nc);
             return cast;
@@ -737,10 +770,8 @@ type_reference_resolver::adapt_from_drain(
     }
     // Step 4: drain<T> → T: load through drain
     // drain<T> → value T: load through drain (like ref → value)
-    if (src_sub_nc == type_nc) {
-        auto loaded = load_value_expression::make_shared(expr);
-        loaded->set_type(src_sub_nc);
-        return loaded;
+    if (type::are_equal(type::canonical(src_sub_nc), type::canonical(type_nc))) {
+        return adapt_reference_load_value(expr);
     }
     // Step 5: drain<T> → different primitive: load + cast
     // drain<primA> → primB: load first, then cast
@@ -845,6 +876,17 @@ type_reference_resolver::adapt_from_ref_owner(
             cast->set_type(type_nc);
             return cast;
         }
+        // Upcast: ref<owner<Derived>> → lnk<Base> / view<Base>
+        auto src_st = std::dynamic_pointer_cast<struct_type>(own_sub_nc);
+        auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+        if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+            src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+            auto loaded = load_value_expression::make_shared(expr);
+            loaded->set_type(inner_nc);
+            auto upcast = cast_expression::make_shared(loaded, type_nc);
+            upcast->set_type(type_nc);
+            return upcast;
+        }
     }
     // Step 3: ref<owner<T>> → ref<T>: load owner pointer, borrow as reference
     // ref<owner<T>> → ref<T>: load owner pointer value, borrow as reference
@@ -908,6 +950,10 @@ type_reference_resolver::adapt_from_reference(
                         auto poly_st = poly_base->get_struct_type();
                         auto tgt_st = std::dynamic_pointer_cast<struct_type>(bare_tgt);
                         if (tgt_st == poly_st || (tgt_st && tgt_st->get_struct() && poly_base->is_derived_from(tgt_st->get_struct()))) {
+                            if (!type::is_reference(type_nc) && tgt_st && tgt_st->get_struct()
+                                && !std::dynamic_pointer_cast<temporary_construction_expression>(expr)) {
+                                return adapt_union_value_copy(expr, tgt_st, type::is_const(ref_src_early->get_subtype()));
+                            }
                             auto cast = cast_expression::make_shared(expr, type_nc, true);
                             cast->set_type(type_nc);
                             return cast;
@@ -925,6 +971,18 @@ type_reference_resolver::adapt_from_reference(
                     }
                 }
                 if (matches.size() == 1) {
+                    if (type::is_owner(type::remove_const(type::canonical(type_nc)))) {
+                        check_union_owner_extraction(expr, *matches[0]);
+                    }
+                    if (!type::is_reference(type_nc)
+                        && !std::dynamic_pointer_cast<temporary_construction_expression>(expr)) {
+                        auto tgt_st = std::dynamic_pointer_cast<struct_type>(bare_tgt);
+                        if (tgt_st && tgt_st->get_struct()) {
+                            return adapt_union_value_copy(expr, tgt_st,
+                                type::is_const(ref_src_early->get_subtype())
+                                || matches[0]->is_const || type::is_const(matches[0]->resolved_type));
+                        }
+                    }
                     auto cast = cast_expression::make_shared(expr, type_nc, true);
                     cast->set_type(type_nc);
                     return cast;
@@ -986,6 +1044,15 @@ type_reference_resolver::adapt_from_reference(
         auto tgt_sub = tgt_ref->get_referenced_type();
         auto src_sub_nc = type::remove_const(src_sub);
         auto tgt_sub_nc = type::remove_const(tgt_sub);
+        if (is_enum_backing_const_reference(
+                std::dynamic_pointer_cast<enum_type>(src_sub_nc), type_nc)) {
+            auto parent = expr->parent<element>();
+            auto loaded = adapt_reference_load_value(expr);
+            if (!loaded) return {};
+            auto adapted = adapt_enum_type(loaded, type_nc);
+            if (adapted) adapted->set_parent(parent);
+            return adapted;
+        }
         // Exact match: ref<T> → ref<T> (structural equality, not just pointer identity)
         if (type::are_equal(src_sub_nc, tgt_sub_nc) && type::is_const(src_sub) == type::is_const(tgt_sub)) {
             return expr;
@@ -1077,8 +1144,10 @@ type_reference_resolver::adapt_from_reference(
     }
     // ref<drain<T>> → T/ref<T>/link<T>/...: load the drain, then adapt it
     if (type::is_drain(ref_subtype)) {
+        auto parent = expr->parent<element>();
         auto loaded = load_value_expression::make_shared(expr);
         loaded->set_type(ref_subtype);
+        loaded->set_parent(parent);
         return adapt_type(loaded, type_nc);
     }
     // Step 3: ref<T> → lnk<T>/view<T>: borrow as link or view
@@ -1216,26 +1285,11 @@ type_reference_resolver::adapt_enum_type(
     // Step 3: enum → underlying primitive or vice versa: cast_expression
     // enum → primitive int: implicit (use underlying type)
     if (enum_src && !enum_tgt) {
-        // ── Object-backed enum → const struct reference: GEP into backing table ──
-        // Check if target is a reference (or const reference) to the backing object type
-        if (enum_src->is_object_backed()) {
-            auto obj_type = enum_src->get_object_type();
-            auto tgt_ref = std::dynamic_pointer_cast<reference_type>(type_nc);
-            if (!tgt_ref) {
-                // Also check const_type wrapping a reference (const E &)
-                if (auto tgt_const = std::dynamic_pointer_cast<const_type>(type_nc)) {
-                    tgt_ref = std::dynamic_pointer_cast<reference_type>(tgt_const->get_subtype());
-                }
-            }
-            if (tgt_ref && obj_type) {
-                auto ref_inner_nc = type::remove_const(tgt_ref->get_subtype());
-                if (ref_inner_nc == obj_type) {
-                    // Cast: object-backed enum → const T& (backed by table GEP)
-                    auto cast = cast_expression::make_shared(expr, type_nc);
-                    cast->set_type(type_nc);
-                    return cast;
-                }
-            }
+        // Object-backed enum → const T&: reference the table entry.
+        if (is_enum_backing_const_reference(enum_src, type_nc)) {
+            auto cast = cast_expression::make_shared(expr, type_nc);
+            cast->set_type(type_nc);
+            return cast;
         }
 
         auto prim_tgt = std::dynamic_pointer_cast<primitive_type>(type_nc);
@@ -1372,6 +1426,9 @@ type_reference_resolver::adapt_primitive_or_struct_type(
                         }
                     }
                     if (matches.size() == 1) {
+                        if (type::is_owner(type::remove_const(type::canonical(type_nc)))) {
+                            check_union_owner_extraction(expr, *matches[0]);
+                        }
                         auto cast = cast_expression::make_shared(expr, type_nc, true);
                         cast->set_type(type_nc);
                         return cast;

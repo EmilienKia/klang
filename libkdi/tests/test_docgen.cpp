@@ -261,6 +261,9 @@ kdi_file make_docgen_model() {
         ctor_param.type = kdi_type::make_template_param("T");
         ctor.params.push_back(ctor_param);
         sig.constructors.push_back(ctor);
+        kdi_constructor throwing_ctor;
+        throwing_ctor.throws_spec = std::vector<kdi_type>{kdi_type::make_aggregate("demo::mod::Error")};
+        sig.constructors.push_back(throwing_ctor);
 
         kdi_method get_value;
         get_value.name = "getValue";
@@ -485,6 +488,8 @@ TEST_CASE("docgen: generate markdown tree with module root index", "[docgen]") {
     REQUIRE(container_md.find("box`](#field-box-0): `Box&lt;T&gt;`") != std::string::npos);
     REQUIRE(container_md.find("## Members") != std::string::npos);
     REQUIRE(container_md.find("getValue() : T") != std::string::npos);
+    REQUIRE(container_md.find("throws contract unknown") != std::string::npos);
+    REQUIRE(container_md.find("throws(demo::mod::Error)") != std::string::npos);
     // Raw source is now a supplementary section, not the primary content.
     REQUIRE(container_md.find("## Declaration Source") != std::string::npos);
     REQUIRE(container_md.find("class Container {") != std::string::npos);
@@ -637,6 +642,8 @@ TEST_CASE("docgen: generate html tree with direct links on names", "[docgen]") {
     // Nested generic reference (Box<T>) preserved structurally.
     REQUIRE(container_page.find("Box&lt;T&gt;") != std::string::npos);
     REQUIRE(container_page.find("getValue() : T") != std::string::npos);
+    REQUIRE(container_page.find("throws contract unknown") != std::string::npos);
+    REQUIRE(container_page.find("throws(demo::mod::Error)") != std::string::npos);
     REQUIRE(container_page.find("Declaration Source") != std::string::npos);
     REQUIRE(container_page.find("class Container {") != std::string::npos);
     // Regression: a template's raw generic base reference ("Boxed<T>") must

@@ -182,6 +182,43 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
             // This is a union type (struct_type with no owning aggregate).
             // Mark the constructor invocation as null (no real constructor to call).
             expr.set_constructor(nullptr);
+            if (ctor_args.size() == 1 && ctor_args[0]
+                && !std::dynamic_pointer_cast<temporary_construction_expression>(ctor_args[0])) {
+                auto source = type::canonical(type::remove_const(ctor_args[0]->get_type()));
+                const bool by_reference = type::is_reference(source) || type::is_drain(source);
+                const bool source_const = by_reference && type::is_const(source->get_subtype());
+                if (by_reference) source = type::canonical(type::remove_const(source->get_subtype()));
+                if (source && type::are_equal(source, st_type))
+                    check_union_payload_copy_contract(st_type, source_const, expr.first_lexeme());
+            }
+            if (ctor_args.size() == 1 && ctor_args[0] &&
+                (type::is_reference(ctor_args[0]->get_type()) || type::is_drain(ctor_args[0]->get_type()))) {
+                auto arg_type = type::canonical(type::remove_const(ctor_args[0]->get_type()->get_subtype()));
+                if (type::is_drain(arg_type)) {
+                    arg_type = type::canonical(type::remove_const(arg_type->get_subtype()));
+                }
+                auto arg_struct = std::dynamic_pointer_cast<struct_type>(arg_type);
+                auto union_def = find_union_by_struct_type(_unit.get_root_namespace(), st_type);
+                if (union_def && ((arg_struct && arg_struct->get_struct())
+                                  || type::is_owner(arg_type) || type::is_sized_array(arg_type))) {
+                    for (const auto* alt : union_def->all_alternatives_ptrs()) {
+                        if (alt && alt->resolved_type &&
+                            type::are_equal(type::canonical(type::remove_const(alt->resolved_type)), arg_type)) {
+                            if (type::is_sized_array(arg_type)) {
+                                const bool source_const = type::is_const(ctor_args[0]->get_type()->get_subtype());
+                                check_union_payload_copy_contract(arg_type, source_const, expr.first_lexeme());
+                                break;
+                            }
+                            ctor_args[0] = adapt_type(ctor_args[0], alt->resolved_type);
+                            if (auto load = std::dynamic_pointer_cast<load_value_expression>(ctor_args[0])) {
+                                if (auto selected = load->get_value_constructor())
+                                    check_union_lifecycle_constructor_contract(*selected, expr.first_lexeme());
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
             expr.arguments(ctor_args);
             return;
         }
@@ -239,11 +276,29 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
             if (is_direct_copy) {
                 // For lvalue copies: reject non-trivial structs that have no copy constructor.
                 if (is_lvalue_copy && st) {
-                    bool has_cc    = st->get_copy_constructor() != nullptr;
+                    auto copy_ctor = st->get_copy_constructor();
+                    if (copy_ctor && !copy_ctor->is_generated_bytewise_copy()) {
+                        auto [selected, adapted] = get_best_matching_constructor(
+                            copy_constructors_of(*st), ctor_args, true, expr.first_lexeme());
+                        check_constructor_visibility(*selected, expr);
+                        check_call_contract(*selected, expr.first_lexeme(),
+                                            dynamic_cast<const element*>(var_def.get()));
+                        expr.set_constructor(selected);
+                        expr.arguments(adapted);
+                        return;
+                    }
+                    if (!std::dynamic_pointer_cast<temporary_construction_expression>(ctor_args[0])
+                        && scalar_union_wrapper(st, _unit.get_root_namespace())) {
+                        check_union_payload_copy_contract(st_type,
+                            type::is_const(arg_type_nc->get_subtype()), expr.first_lexeme());
+                    }
+                    bool has_cc = copy_ctor != nullptr;
+                    // A constructor-call initializer is a prvalue: it is moved into the variable.
+                    const bool is_prvalue_init = std::dynamic_pointer_cast<temporary_construction_expression>(ctor_args[0]) != nullptr;
                     // Check for a resource-referencing field (owner/pointer/link/view,
                     // recursively through nested struct members) — such a field makes
                     // shallow copy unsafe even without a direct owner-typed field.
-                    if (!has_cc && aggregate_type_has_resource_field(st_type)) {
+                    if (!has_cc && !is_prvalue_init && aggregate_type_has_resource_field(st_type)) {
                         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE),
                             expr.first_lexeme(),
                             "Type '{}' is not copyable: variable initialisation from a lvalue requires a copy constructor",
@@ -257,7 +312,8 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
             }
         }
 
-        auto [best_constructor, adapted_args] = get_best_matching_constructor(st->constructors(), ctor_args);
+        auto [best_constructor, adapted_args] = get_best_matching_constructor(
+            st->constructors(), ctor_args, false, expr.get_interest_lexeme(), true);
         if (!best_constructor) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_MEMBER_NO_MATCH), expr.get_interest_lexeme(),
                 "No matching constructor found for member initialisation of type '{}': "
@@ -280,7 +336,8 @@ void type_reference_resolver::visit_constructor_invocation_expression(constructo
         // Check constructor visibility
         check_constructor_visibility(*best_constructor, expr);
         // Check exception contract for throwing constructors
-        check_call_contract(*best_constructor, expr.first_lexeme());
+        check_call_contract(*best_constructor, expr.first_lexeme(),
+                            dynamic_cast<const element*>(var_def.get()));
         expr.set_constructor(best_constructor);
         expr.arguments(adapted_args);
     }
@@ -322,6 +379,7 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
     // Union temporary construction (struct_type with no owning aggregate):
     // allow U() and U(x) where x matches one alternative.
     if (!st_type->get_struct()) {
+        expr._union_alternative_index.reset();
         if (expr.empty()) {
             expr.set_type(st_type->get_reference());
             return;
@@ -340,19 +398,40 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
         }
 
         auto src = expr.argument(0);
-        std::shared_ptr<expression> best_expr;
+        auto source_type = src ? type::canonical(type::remove_const(src->get_type())) : nullptr;
+        if (type::is_reference(source_type) || type::is_drain(source_type))
+            source_type = type::canonical(type::remove_const(source_type->get_subtype()));
+        if (source_type && type::are_equal(source_type, st_type)) {
+            if (!std::dynamic_pointer_cast<temporary_construction_expression>(src)) {
+                auto source = type::canonical(type::remove_const(src->get_type()));
+                const bool source_const = (type::is_reference(source) || type::is_drain(source))
+                    && type::is_const(source->get_subtype());
+                check_union_payload_copy_contract(st_type, source_const, expr.first_lexeme());
+            }
+            expr.set_type(st_type->get_reference());
+            return;
+        }
         const union_alternative* matched_alt = nullptr;
-        cast_weight best_weight = CAST_IMPOSSIBLE;
+        std::vector<std::pair<cast_weight, const union_alternative*>> alternatives;
         for (const auto* alt : union_def->all_alternatives_ptrs()) {
             if (!alt || !alt->resolved_type) continue;
             auto w = compute_cast_weight(src, alt->resolved_type);
             if (w == CAST_IMPOSSIBLE) continue;
-            auto adapted = (w == CAST_NONE) ? src : adapt_type(src, alt->resolved_type);
-            if (!adapted) continue;
-            if (!best_expr || w < best_weight) {
-                best_expr = adapted;
-                best_weight = w;
+            alternatives.emplace_back(w, alt);
+        }
+        std::stable_sort(alternatives.begin(), alternatives.end(),
+            [](const auto& a, const auto& b) { return a.first < b.first; });
+        std::shared_ptr<expression> best_expr;
+        for (const auto& [weight, alt] : alternatives) {
+            auto candidate = weight == CAST_NONE ? src : adapt_type(src, alt->resolved_type);
+            if (candidate) {
+                if (auto load = std::dynamic_pointer_cast<load_value_expression>(candidate)) {
+                    if (auto selected = load->get_value_constructor())
+                        check_union_lifecycle_constructor_contract(*selected, expr.first_lexeme());
+                }
+                best_expr = std::move(candidate);
                 matched_alt = alt;
+                break;
             }
         }
         if (!best_expr) {
@@ -364,6 +443,13 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
         if (best_expr != src) {
             expr.assign_argument(0, best_expr);
         }
+        if (type::is_sized_array(type::canonical(type::remove_const(matched_alt->resolved_type)))) {
+            auto source = type::canonical(type::remove_const(src->get_type()));
+            const bool source_const = (type::is_reference(source) || type::is_drain(source))
+                && type::is_const(source->get_subtype());
+            check_union_payload_copy_contract(matched_alt->resolved_type, source_const, expr.first_lexeme());
+        }
+        expr._union_alternative_index = matched_alt->index;
         expr.set_type(st_type->get_reference());
         if (matched_alt && best_expr->is_constant()) {
             auto res = constant_evaluator::eval_union_init(
@@ -409,6 +495,24 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
             }
         }
         if (is_direct_copy) {
+            if (type::is_reference(arg_type) &&
+                !std::dynamic_pointer_cast<temporary_construction_expression>(expr.argument(0))) {
+                auto copy_ctor = st->get_copy_constructor();
+                if (copy_ctor && !copy_ctor->is_generated_bytewise_copy()) {
+                    auto [selected, adapted] = get_best_matching_constructor(
+                        copy_constructors_of(*st), expr.arguments(), true, expr.first_lexeme());
+                    check_constructor_visibility(*selected, expr);
+                    check_call_contract(*selected, expr.first_lexeme(), &expr);
+                    expr.set_constructor(selected);
+                    expr.assign_arguments(adapted);
+                    expr.set_type(st_type->get_reference());
+                    return;
+                }
+                if (scalar_union_wrapper(st, _unit.get_root_namespace())) {
+                    check_union_payload_copy_contract(st_type,
+                        type::is_const(arg_type_nc->get_subtype()), expr.first_lexeme());
+                }
+            }
             expr.set_constructor(nullptr);
             expr.set_type(st_type->get_reference());
             if (!st->is_class() && expr.argument(0) && expr.argument(0)->is_constant()) {
@@ -424,7 +528,8 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
             {st->get_short_name(), std::to_string(expr.size())});
     }
 
-    auto [best_constructor, adapted_args] = get_best_matching_constructor(constructors, expr.arguments());
+    auto [best_constructor, adapted_args] = get_best_matching_constructor(
+        constructors, expr.arguments(), false, expr.first_lexeme(), true);
     if (!best_constructor) {
         throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_CTOR_ARG_MISMATCH), expr.first_lexeme(),
             "No matching constructor found for temporary construction of '{}' with {} argument(s)",
@@ -433,7 +538,7 @@ void type_reference_resolver::visit_temporary_construction_expression(temporary_
 
     check_constructor_visibility(*best_constructor, expr);
     // Check exception contract for throwing constructors
-    check_call_contract(*best_constructor, expr.first_lexeme());
+    check_call_contract(*best_constructor, expr.first_lexeme(), &expr);
     expr.set_constructor(best_constructor);
     expr.assign_arguments(adapted_args);
     // The temporary is an alloca → its type is a reference to the struct
@@ -578,7 +683,10 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                     expr.argument(0)->accept(*this);
                     llvm::Value* src_val = _value;
                     if (src_val && src_val != object_ref) {
-                        emit_value_copy_or_move(object_ref, src_val, st_type, /*destroy_dest_first=*/false, expr.first_lexeme(), "copy");
+                        const bool source_const = type::is_reference(arg_type)
+                            && type::is_const(arg_type->get_subtype());
+                        emit_value_copy_or_move(object_ref, src_val, st_type, false,
+                            expr.first_lexeme(), "copy", false, true, nullptr, source_const);
                     }
                     _value = object_ref;
                     return;
@@ -590,8 +698,11 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                 _builder->CreateStore(zero_val, object_ref);
 
                 // Evaluate the argument
+                auto* saved_sret_destination = _sret_destination;
+                _sret_destination = nullptr;
                 _value = nullptr;
                 expr.argument(0)->accept(*this);
+                _sret_destination = saved_sret_destination;
                 llvm::Value* init_val = _value;
 
                 if (init_val) {
@@ -603,22 +714,26 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                         union_def = find_union_by_struct_type(root_ns, st_type);
                     }
 
-                    uint32_t disc_value = 0;
+                    const union_alternative* selected_alt = nullptr;
                     if (union_def) {
-                        auto arg_type = expr.argument(0)->get_type();
-                        // Strip reference if the argument is a reference (lvalue)
-                        if (type::is_reference(arg_type)) {
-                            arg_type = arg_type->get_subtype();
-                        }
-                        // Search the FULL inheritance chain for a matching alternative
+                        auto arg_type = type::canonical(type::remove_const(expr.argument(0)->get_type()));
+                        if (type::is_reference(arg_type) || type::is_drain(arg_type))
+                            arg_type = type::canonical(type::remove_const(arg_type->get_subtype()));
                         for (const auto* alt_ptr : union_def->all_alternatives_ptrs()) {
-                            if (alt_ptr->resolved_type == arg_type ||
-                                alt_ptr->resolved_type == type::remove_const(arg_type)) {
-                                disc_value = static_cast<uint32_t>(alt_ptr->index);
+                            if (alt_ptr && alt_ptr->resolved_type &&
+                                type::are_equal(type::canonical(type::remove_const(alt_ptr->resolved_type)), arg_type)) {
+                                selected_alt = alt_ptr;
                                 break;
                             }
                         }
                     }
+                    if (!selected_alt) {
+                        auto arg_type = expr.argument(0)->get_type();
+                        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F02C), expr.first_lexeme(),
+                            "Internal error: no union alternative of '{}' matches argument type '{}'",
+                            {st_type->to_string(), arg_type ? arg_type->to_string() : "?"});
+                    }
+                    const auto disc_value = static_cast<uint32_t>(selected_alt->index);
 
                     // Store discriminant
                     auto* disc_ptr = _builder->CreateStructGEP(llvm_struct_ty, object_ref, 0, "union_disc");
@@ -628,20 +743,44 @@ void implementation_generator::visit_constructor_invocation_expression(construct
 
                     // Store value in storage
                     auto* storage_ptr = _builder->CreateStructGEP(llvm_struct_ty, object_ref, 1, "union_storage");
-                    // If init_val is a pointer (reference to value), load the value first
-                    if (type::is_reference(expr.argument(0)->get_type())) {
-                        // Look up the alternative by global index to get its LLVM type
-                        if (union_def) {
-                            const auto* alt_ptr = union_def->get_alternative_by_global_index(disc_value);
-                            if (alt_ptr && alt_ptr->resolved_type) {
-                                auto* val_type = alt_ptr->resolved_type->get_llvm_type();
-                                if (val_type) {
-                                    init_val = _builder->CreateLoad(val_type, init_val, "init_load");
+                    // Load addressable values, but not pointer-valued alternatives.
+                    if (union_def) {
+                        const auto* alt_ptr = union_def->get_alternative_by_global_index(disc_value);
+                        if (alt_ptr && type::is_sized_array(type::remove_const(alt_ptr->resolved_type))) {
+                            auto* source = init_val;
+                            if (!source->getType()->isPointerTy()) {
+                                auto* fn = _builder->GetInsertBlock()->getParent();
+                                llvm::IRBuilder<> entry(&fn->getEntryBlock(), fn->getEntryBlock().begin());
+                                source = entry.CreateAlloca(_context->get_llvm_type(alt_ptr->resolved_type),
+                                                            nullptr, "union_array_source");
+                                _builder->CreateStore(init_val, source);
+                            }
+                            _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
+                            const bool source_const = type::is_reference(expr.argument(0)->get_type())
+                                && type::is_const(expr.argument(0)->get_type()->get_subtype());
+                            if (emit_union_payload_copy(storage_ptr, source, alt_ptr->resolved_type, source_const)) {
+                                _builder->CreateStore(_builder->getInt32(disc_value), disc_ptr);
+                                set_union_live_state(object_ref, *union_def, true);
+                            }
+                            _value = object_ref;
+                            return;
+                        }
+                        if (alt_ptr && alt_ptr->resolved_type &&
+                            (type::is_reference(expr.argument(0)->get_type())
+                             || (init_val->getType()->isPointerTy()
+                                 && type::is_struct(type::remove_const(alt_ptr->resolved_type))))) {
+                            auto* val_type = alt_ptr->resolved_type->get_llvm_type();
+                            if (val_type) {
+                                if (std::dynamic_pointer_cast<temporary_construction_expression>(expr.argument(0))
+                                    || !type::is_reference(expr.argument(0)->get_type())) {
+                                    cancel_temporary_cleanup(init_val);
                                 }
+                                init_val = _builder->CreateLoad(val_type, init_val, "init_load");
                             }
                         }
                     }
                     _builder->CreateStore(init_val, storage_ptr);
+                    if (union_def) set_union_live_state(object_ref, *union_def, true);
                 }
             }
             _value = object_ref;
@@ -654,8 +793,11 @@ void implementation_generator::visit_constructor_invocation_expression(construct
         // performs a move (memcpy + cancel cleanup). For lvalue references, it calls the
         // copy constructor (if any) or falls back to memcpy for trivially copyable types.
         if (!function && expr.size() == 1) {
+            auto* saved_sret_destination = _sret_destination;
+            _sret_destination = nullptr;
             _value = nullptr;
             expr.argument(0)->accept(*this);
+            _sret_destination = saved_sret_destination;
             if (_value && _value != object_ref) {
                 auto arg_type = expr.argument(0)->get_type();
                 bool src_is_pointer = type::is_reference(arg_type) || _value->getType()->isPointerTy();
@@ -663,7 +805,8 @@ void implementation_generator::visit_constructor_invocation_expression(construct
                     // Source is addressable (alloca, reference): use emit_value_copy_or_move.
                     // This handles lvalue copy-ctor calls and prvalue move (cancel cleanup).
                     emit_value_copy_or_move(object_ref, _value, st_type, /*destroy_dest_first=*/false,
-                        expr.first_lexeme(), "variable initialisation");
+                        expr.first_lexeme(), "variable initialisation", false, true, nullptr,
+                        type::is_reference(arg_type) && type::is_const(arg_type->get_subtype()));
                 } else {
                     // Source is an immediate aggregate value (e.g. template aggregate constant):
                     // store directly without going through memcpy.
@@ -1152,21 +1295,23 @@ void implementation_generator::visit_temporary_construction_expression(temporary
                 "Internal error: union temporary '{}' has no LLVM struct type",
                 {st_type->to_string()});
         }
+        auto union_def = find_union_by_struct_type(_unit.get_root_namespace(), st_type);
+        if (!union_def) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F02C), expr.first_lexeme(),
+                "Internal error: union temporary '{}' has no union definition metadata",
+                {st_type->to_string()});
+        }
 
         // Default union temporary: discriminant/storage zeroed.
         _builder->CreateStore(llvm::ConstantAggregateZero::get(union_llvm_ty), temp_alloca);
 
         if (expr.size() == 1) {
-            auto union_def = find_union_by_struct_type(_unit.get_root_namespace(), st_type);
-            if (!union_def) {
-                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F02C), expr.first_lexeme(),
-                    "Internal error: union temporary '{}' has no union definition metadata",
-                    {st_type->to_string()});
-            }
-
+            auto* saved_sret = _sret_destination;
+            _sret_destination = nullptr;
             _value = nullptr;
             expr.argument(0)->accept(*this);
             llvm::Value* init_val = _value;
+            _sret_destination = saved_sret;
             if (!init_val) {
                 throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F030), expr.first_lexeme(),
                     "Internal error: union temporary '{}' argument produced no LLVM value",
@@ -1179,18 +1324,25 @@ void implementation_generator::visit_temporary_construction_expression(temporary
             if (type::is_reference(arg_nc) || type::is_drain(arg_nc)) {
                 arg_nc = type::remove_const(arg_nc->get_subtype());
             }
-
-            const union_alternative* selected_alt = nullptr;
-            for (const auto* alt : union_def->all_alternatives_ptrs()) {
-                if (!alt || !alt->resolved_type) continue;
-                if (type::remove_const(alt->resolved_type) == arg_nc) {
-                    selected_alt = alt;
-                    break;
+            if (type::are_equal(type::canonical(arg_nc), type::canonical(st_type))) {
+                const bool source_const = arg_is_ref && type::is_const(arg_type->get_subtype());
+                emit_value_copy_or_move(temp_alloca, init_val, st_type, false,
+                    expr.first_lexeme(), "union temporary", false, true, nullptr, source_const);
+                if ((!_sret_destination || temp_alloca != _sret_destination)
+                    && union_def->has_nontrivial_destructor_alternative()) {
+                    if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(temp_alloca))
+                        _expression_temporaries.push_back({alloca, nullptr, nullptr, union_def});
                 }
+                _value = temp_alloca;
+                return;
             }
+
+            const auto* selected_alt = expr._union_alternative_index
+                ? union_def->get_alternative_by_global_index(*expr._union_alternative_index)
+                : nullptr;
             if (!selected_alt || !selected_alt->resolved_type) {
                 throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F02C), expr.first_lexeme(),
-                    "Internal error: no union alternative of '{}' matches argument type '{}'",
+                    "Internal error: union '{}' has no resolved alternative for argument type '{}'",
                     {st_type->to_string(), arg_type ? arg_type->to_string() : "?"});
             }
 
@@ -1202,19 +1354,52 @@ void implementation_generator::visit_temporary_construction_expression(temporary
 
             auto* storage_ptr = _builder->CreateStructGEP(union_llvm_ty, temp_alloca, 1, "union_storage");
             llvm::Type* alt_llvm_type = _context->get_llvm_type(selected_alt->resolved_type);
-            if (arg_is_ref || init_val->getType()->isPointerTy()) {
+            if (type::is_sized_array(type::remove_const(selected_alt->resolved_type))) {
+                auto* source = init_val;
+                if (!source->getType()->isPointerTy()) {
+                    auto* fn = _builder->GetInsertBlock()->getParent();
+                    llvm::IRBuilder<> entry(&fn->getEntryBlock(), fn->getEntryBlock().begin());
+                    source = entry.CreateAlloca(alt_llvm_type, nullptr, "union_array_source");
+                    _builder->CreateStore(init_val, source);
+                }
+                _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
+                const bool source_const = arg_is_ref && type::is_const(arg_type->get_subtype());
+                if (emit_union_payload_copy(storage_ptr, source, selected_alt->resolved_type, source_const)) {
+                    _builder->CreateStore(_builder->getInt32(selected_alt->index), disc_ptr);
+                    set_union_live_state(temp_alloca, *union_def, true);
+                }
+                if ((!_sret_destination || temp_alloca != _sret_destination)
+                    && union_def->has_nontrivial_destructor_alternative()) {
+                    if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(temp_alloca))
+                        _expression_temporaries.push_back({alloca, nullptr, nullptr, union_def});
+                }
+                _value = temp_alloca;
+                return;
+            }
+            if (arg_is_ref || (init_val->getType()->isPointerTy()
+                && type::is_struct(type::remove_const(selected_alt->resolved_type)))) {
+                if (std::dynamic_pointer_cast<temporary_construction_expression>(expr.argument(0))
+                    || !type::is_reference(arg_type)) {
+                    cancel_temporary_cleanup(init_val);
+                }
                 init_val = _builder->CreateLoad(alt_llvm_type, init_val, "union_tmp_init_load");
             }
             auto* typed_storage_ptr = _builder->CreateBitCast(
                 storage_ptr, llvm::PointerType::get(alt_llvm_type->getContext(), 0),
                 "union_storage_typed");
             _builder->CreateStore(init_val, typed_storage_ptr);
+            set_union_live_state(temp_alloca, *union_def, true);
         } else if (!expr.empty()) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_CTOR_ARG_MISMATCH), expr.first_lexeme(),
                 "Union temporary construction of '{}' accepts at most one argument, but {} were provided",
                 {st_type->to_string(), std::to_string(expr.size())});
         }
 
+        if ((!_sret_destination || temp_alloca != _sret_destination)
+            && union_def->has_nontrivial_destructor_alternative()) {
+            if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(temp_alloca))
+                _expression_temporaries.push_back({alloca, nullptr, nullptr, union_def});
+        }
         _value = temp_alloca;
         return;
     }
@@ -1238,7 +1423,9 @@ void implementation_generator::visit_temporary_construction_expression(temporary
                 // double free.
                 emit_value_copy_or_move(temp_alloca, _value, st_type,
                                         /*destroy_dest_first=*/false,
-                                        expr.first_lexeme(), "temporary construction");
+                                        expr.first_lexeme(), "temporary construction", false, true, nullptr,
+                                        type::is_reference(expr.argument(0)->get_type())
+                                            && type::is_const(expr.argument(0)->get_type()->get_subtype()));
             } else {
                 // Already a loaded scalar/aggregate value: store directly.
                 _builder->CreateStore(_value, temp_alloca);

@@ -21,6 +21,8 @@
 
 #include <optional>
 #include <stack>
+#include <variant>
+#include <vector>
 
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/IR/BasicBlock.h>
@@ -198,15 +200,47 @@ protected:
 
     llvm::Value* _value;
 
+    // These results describe only the current, untracked raw-pointer ABI.
+    struct place_result {
+        llvm::Value* address;
+    };
+    struct value_result {
+        llvm::Value* value;
+    };
+    struct legacy_result {
+        llvm::Value* value;
+    };
+    using expression_result = std::variant<place_result, value_result, legacy_result>;
+
+    struct expression_result_frame {
+        const expression* target;
+        std::optional<expression_result> result;
+    };
+    // Only the frame's target may publish into it; nested legacy visitors
+    // still exchange their results through the checked raw ABI bridge.
+    expression_result_frame* _expression_result_frame = nullptr;
+
+    value_result load_place(place_result place, llvm::Type* type, const llvm::Twine& name = "");
+    static value_result address_of_place(place_result place);
+    static place_result dereference_address(value_result address);
+    expression_result evaluate_expression(expression& expr);
+    void publish_expression_result(expression& expr, expression_result result);
+    llvm::Value* checked_legacy_result(const expression_result& result);
+    place_result require_place(const expression_result& result, expression& source);
+    value_result require_value(const expression_result& result, expression& source);
+
     std::unique_ptr<debug_info_emitter> _debug_info;
     llvm::DIScope* _current_debug_scope = nullptr;
 
     std::stack<std::shared_ptr<aggregate>> _struct_stack;
+    std::shared_ptr<function> _current_function;
 
     /** Stack of active cleanup BasicBlocks, one per block with destructible local variables. */
     std::stack<llvm::BasicBlock*> _cleanup_blocks;
     /** Parallel stack: for each cleanup block, the list of variable_statements to destroy (declaration order). */
     std::stack<std::vector<std::shared_ptr<variable_statement>>> _cleanup_vars_stack;
+    /** Innermost exception-context depth belonging to each cleanup scope. */
+    std::stack<unsigned> _cleanup_scope_depth_stack;
 
     /** Stack of loop exit blocks for 'break' statements. */
     std::stack<llvm::BasicBlock*> _loop_exit_blocks;
@@ -227,6 +261,8 @@ protected:
         llvm::AllocaInst* alloca = nullptr;
         llvm::Function* destructor = nullptr;
         std::shared_ptr<sized_array_type> array_type;
+        std::shared_ptr<union_type_def> union_type;
+        llvm::Value* live = nullptr;
     };
 
     /**
@@ -280,6 +316,7 @@ protected:
         llvm::AllocaInst* exc_ptr_alloca; ///< Alloca holding the exception pointer
         llvm::AllocaInst* exc_sel_alloca; ///< Alloca holding the exception selector
         unsigned depth = 0;               ///< Nesting depth (higher = innermost)
+        bool has_handler = false;        ///< This or an enclosing try has catch clauses
     };
 
     /** Stack of landing pad contexts for try-catch exception handling.
@@ -287,6 +324,20 @@ protected:
      *  try-catch — function calls within the try body should invoke to
      *  top().lpad_bb instead of using a plain call. */
     std::stack<eh_landing_context> _landing_pad_stack;
+
+    struct caught_exception_metadata {
+        llvm::AllocaInst* chain;
+        llvm::AllocaInst* type;
+    };
+    std::vector<caught_exception_metadata> _caught_exception_metadata;
+
+    struct pending_exception_metadata {
+        llvm::AllocaInst* chain;
+        llvm::AllocaInst* type;
+    };
+
+    pending_exception_metadata save_pending_exception_metadata();
+    void restore_pending_exception_metadata(const pending_exception_metadata& metadata);
 
     /** Cleanup landing pad context for exception unwinding.
      *  Each block scope with destructible variables gets its own cleanup landing
@@ -311,9 +362,10 @@ protected:
     class call_argument_cleanup_scope {
         implementation_generator& _gen;
         struct entry {
-            llvm::AllocaInst* storage;
+            llvm::Value* storage;
             llvm::AllocaInst* live;
             std::shared_ptr<type> value_type;
+            std::shared_ptr<variable_statement> variable;
         };
         std::vector<entry> _entries;
         cleanup_lpad_context _context{};
@@ -324,6 +376,8 @@ protected:
         call_argument_cleanup_scope(implementation_generator& gen, bool enabled);
         ~call_argument_cleanup_scope() noexcept(false);
         llvm::Value* track(const std::shared_ptr<type>& value_type, llvm::Value* value);
+        void track_storage(const std::shared_ptr<type>& value_type, llvm::Value* storage);
+        void track_variable(const std::shared_ptr<variable_statement>& variable);
         void transfer();
     };
 
@@ -331,6 +385,8 @@ protected:
      *  Incremented each time a landing pad or cleanup lpad is pushed.
      *  Used by create_call_or_invoke to determine the innermost handler. */
     unsigned _lpad_depth_counter = 0;
+    unsigned _function_cleanup_depth = 0;
+    std::shared_ptr<variable_statement> _pending_return_result;
 
     /** Per-function shared alloca for storing the exception pointer during unwinding.
      *  Created once at function entry when the function has any cleanup obligations.
@@ -350,16 +406,17 @@ protected:
     std::map<std::shared_ptr<variable_definition>, llvm::AllocaInst*> _constructor_member_dtor_flags;
     std::vector<std::shared_ptr<variable_definition>> _constructor_initialized_members;
 
-    /** Context for a finally block that must be emitted on early exit (return/break/continue). */
+    /** Catch/finally boundary to leave on early exit (return/break/continue). */
     struct finally_context {
         std::shared_ptr<block> finally_body;  ///< The finally body block to emit
         bool in_catch = false;                ///< Whether we are inside a catch body
         lex::opt_any_lexeme origin_lexeme;    ///< Source anchor for synthetic finally emission
+        size_t cleanup_scope_depth = 0;
+        unsigned outer_lpad_depth = 0;
+        llvm::AllocaInst* abandoned_exception = nullptr;
     };
 
-    /** Stack of finally contexts. When return/break/continue is encountered inside
-     *  a try-catch-finally body, all finally blocks from top to the relevant boundary
-     *  must be emitted before the exit. */
+    /** On early exit, end catches and emit finally blocks up to the relevant boundary. */
     std::stack<finally_context> _finally_stack;
 
     /** Stack: finally stack depth at each loop entry (for break/continue scoping). */
@@ -436,17 +493,19 @@ protected:
                                      bool use_dtor_flags = false,
                                      const std::shared_ptr<variable_statement>& extra_skip = nullptr);
 
-    /** Emit cleanup for the innermost @p scope_count active cleanup scopes. */
-    void emit_active_scope_cleanup(size_t scope_count,
-                                   const std::string& owner_cleanup_name,
-                                   bool use_dtor_flags = false,
-                                   const std::shared_ptr<variable_statement>& extra_skip = nullptr);
+    /** Exit lexical cleanup and finally scopes in innermost-first order. */
+    void emit_early_exit_cleanup(size_t scope_count, size_t finally_count,
+                                 const std::string& owner_cleanup_name,
+                                 const lex::opt_any_lexeme& fallback_lexeme,
+                                 const std::shared_ptr<variable_statement>& extra_skip = nullptr);
+
+    void emit_abandoned_exception_cleanup(llvm::Value* exception);
+    void emit_pending_exception_finally(const std::shared_ptr<block>& body,
+                                        llvm::AllocaInst* exception,
+                                        const lex::opt_any_lexeme& origin);
 
     /** Emit cleanup for active function parameters owned by the current frame. */
     void emit_active_parameter_cleanup(const std::string& owner_cleanup_name);
-
-    /** Emit the innermost @p finally_count finally blocks, including catch finalization. */
-    void emit_finally_cleanup(size_t finally_count, const lex::opt_any_lexeme& fallback_lexeme);
 
     [[noreturn]] void throw_error(unsigned int code, const lex::opt_any_lexeme& lexeme, const std::string& message, const std::vector<std::string>& args = {}) {
         auto diag = k::log::diagnostic::make_error(code, message, args);
@@ -472,6 +531,7 @@ public:
     void visit_klass(klass&) override;
     void visit_interface(interface&) override;
     void visit_annotation_type(annotation_type&) override;
+    void visit_enumeration(enumeration&) override;
     void visit_member_variable_definition(member_variable_definition&) override;
 
     // ── global main entry point helpers (defined in gen_unit.cpp) ────────────
@@ -627,6 +687,8 @@ public:
 
     llvm::Value* process_unary_expression(unary_expression&);
     std::pair<llvm::Value*,llvm::Value*> process_binary_expression(binary_expression&);
+    place_result evaluate_assignment_place(expression&);
+    std::pair<place_result, llvm::Value*> process_assignment_operands(assignation_expression&);
 
     /**
      * Generate a function call for a binary operator overload.
@@ -816,6 +878,9 @@ public:
 
     void visit_cast_expression(cast_expression&) override;
 
+    void emit_expression_temporary_cleanup(const expression_temporary_cleanup& temporary,
+                                           bool direct_call = false);
+
     /**
      * Emit destructor calls for all tracked expression temporaries, in reverse
      * creation order, then clear the list.  Must be called at full-expression
@@ -874,13 +939,9 @@ public:
                                  const lex::opt_any_lexeme& lexeme,
                                  const char* copy_context,
                                  bool named_result_assignment = false,
-                                 bool allow_move = true);
-
-    /**
-     * Emit cleanup (destructor / owner free) for a single condition variable.
-     * Used for if-let condition variable cleanup at end of then/else blocks.
-     */
-    void emit_cond_var_cleanup(const std::shared_ptr<variable_statement>& var_stmt);
+                                 bool allow_move = true,
+                                 const std::shared_ptr<constructor>& selected_copy = nullptr,
+                                 bool source_const = false);
 
     /**
      * Emit union scope-exit cleanup: switch on the discriminant and call the
@@ -890,6 +951,31 @@ public:
      */
     void emit_union_cleanup(llvm::Value* storage, union_type_def& udef);
     void emit_union_cleanup_on_reassign(llvm::Value* union_base, union_type_def& udef, size_t new_alt_idx);
+    void emit_union_payload_cleanup(llvm::Value* storage, const std::shared_ptr<type>& payload_type,
+                                    bool protect_remaining = true, bool default_state = false);
+    /** Release the resource slots of a never-constructed aggregate field by field. */
+    void emit_default_aggregate_cleanup(llvm::Value* storage, const std::shared_ptr<struct_type>& agg_type,
+                                        bool protect_remaining);
+    /** i1: every resource slot of an unconstructed aggregate is empty. */
+    llvm::Value* emit_default_aggregate_empty(llvm::Value* storage, const std::shared_ptr<struct_type>& agg_type);
+    /** Mark a default-state first alternative "default, escaped" (live state 2). */
+    void activate_default_union_alternative(llvm::Value* storage, union_type_def& udef);
+    void emit_union_copy(llvm::Value* dest, llvm::Value* source, union_type_def& dest_def,
+                         union_type_def& source_def,
+                         bool destroy_dest_first, bool source_const,
+                         llvm::Value* allow_empty_default_owner = nullptr);
+    bool emit_union_payload_copy(llvm::Value* dest, llvm::Value* source,
+                                 const std::shared_ptr<type>& payload_type, bool source_const,
+                                 llvm::Value* allow_empty_default_owner = nullptr);
+    bool emit_scalar_union_wrapper_copy(llvm::Value* dest, llvm::Value* source,
+                                        const std::shared_ptr<aggregate>& wrapper,
+                                        bool destroy_dest_first, bool source_const,
+                                        bool move = false);
+    /** Copy-construct the bases and members of `st` that own resources (synthesized memberwise copy). */
+    void emit_memberwise_copy_fields(const std::shared_ptr<aggregate>& st, llvm::Value* dest, llvm::Value* source);
+    void emit_union_copy_failure();
+    llvm::Value* union_live_state_ptr(llvm::Value* storage, union_type_def& udef);
+    void set_union_live_state(llvm::Value* storage, union_type_def& udef, bool live);
 
     void generate();
 

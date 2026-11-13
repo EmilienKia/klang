@@ -370,7 +370,8 @@ public:
      * Returns nullptr if _module is not yet initialised or parsing fails.
      */
     llvm::Function* declare_llvm_function_from_def(const std::string& llvm_def,
-                                                   const std::string& mangled_name);
+                                                   const std::string& mangled_name,
+                                                   bool native = false);
 
     /**
      * Look up the LLVM Function* for a model function.

@@ -629,6 +629,10 @@ test() : int {
    prefer the reference overload and drains prefer the drain overload.
 6. **Primitive no-op** — draining a primitive type is permitted but provides no benefit
    (a copy is always performed).
+7. **Conversion to an aggregate value** — constructing a value from a drain
+   selects a viable drain constructor when one matches; otherwise it uses a
+   viable copy constructor. A selected deleted or inaccessible constructor is
+   an error. The source must remain valid in either case.
 
 **Mangling:** Drain types use the `D` modifier in mangled names (e.g. `Di` for `int#`).
 
@@ -742,6 +746,11 @@ g   : double[100];      // global array of 100 doubles, zero-initialised
   ```k
   arr : int[3] {1, , 3};            // element 1 is zero-initialised
   ```
+  For an aggregate element type, an empty slot (or a trailing slot beyond the list) runs the
+  default constructor, i.e. a constructor callable without arguments. An aggregate without any
+  user-declared constructor is zero-initialised or uses its field defaults. If the aggregate
+  declares constructors but none is callable without arguments, the omitted slot is a
+  **compile error** (`0x0931`).
 - If fewer elements are provided than the array size, remaining elements are default-initialised
   and a **warning** is emitted.
 - If more elements are provided than the array size, a **compile error** is emitted.
@@ -1200,6 +1209,7 @@ This applies to all four indirection types:
 | `Derived*` or `Derived+` | `Base+`               | Initialisation only (link is non-null; null-check inserted if source is nullable) |
 | `Derived+`            | `Base*`                  | Init and rebind (link widened to pointer) |
 | `Derived?` or `Derived*` | `Base*`               | Rebind |
+| `Derived!` (owner lvalue) | `Base+`, `Base?`, `Base*` | Borrow: the address is copied, ownership stays in the owner |
 
 **Rules:**
 
@@ -1212,6 +1222,7 @@ This applies to all four indirection types:
    - Assigning a nullable source (ptr* or `view?`) to a non-null destination (`link+` or `ref&`) inserts a **runtime null-check** (throws `NullAssignationError` if null) and emits **warning 0x0C04**.
 5. Transitive upcasts (e.g. `C*→A*` where `C→B→A`) are supported via chained GEP.
 6. Virtual base upcasts are supported via the vbptr mechanism.
+7. In overload resolution, an upcast that keeps the observer kind (`Derived+` → `Base+`, `Derived*` → `Base*`, `Derived?` → `Base?`) ranks above one that changes it (`Derived+` → `Base*`). An owner argument (`Derived!`) ranks the link/view upcast (`Base+`, `Base?`) above the pointer upcast (`Base*`). Overloads on `Base+` and `Base*` therefore stay distinguishable for such arguments.
 
 **Cross-indirection widening (same pointed-at type):**
 

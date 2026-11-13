@@ -241,6 +241,11 @@ bool opt_bool(cbor_item_t* map, const std::string& key, bool def = false) {
     return cbor_ctrl_value(v) == CBOR_CTRL_TRUE;
 }
 
+bool opt_strict_bool(cbor_item_t* map, const std::string& key, const std::string& path) {
+    auto* v = map_get(map, key);
+    return v ? read_bool(v, path + "." + key) : false;
+}
+
 // ─── int (may be negative) ────────────────────────────────────────────────────
 
 cbor_item_t* cbor_int32(int32_t v) {
@@ -591,6 +596,7 @@ cbor_item_t* encode_param(const kdi_param& p) {
     map_push(m, "name", cbor_str(p.name));
     map_push(m, "type", encode_type(p.type));
     if (p.is_varargs) map_push(m, "is_varargs", cbor_build_bool(true));
+    if (p.is_ffi_cstring) map_push(m, "is_ffi_cstring", cbor_bool(true));
     if (p.default_source) map_push(m, "default_source", cbor_str(*p.default_source));
     return m;
 }
@@ -603,6 +609,7 @@ kdi_param decode_param(cbor_item_t* item, const std::string& path) {
     if (!tp) throw kdi_parse_error("missing 'type' at " + path);
     p.type = decode_type(tp, path + ".type");
     p.is_varargs = opt_bool(item, "is_varargs", false);
+    p.is_ffi_cstring = opt_strict_bool(item, "is_ffi_cstring", path);
     if (auto* source = map_get(item, "default_source"))
         p.default_source = read_string(source, path + ".default_source");
     return p;
@@ -666,6 +673,7 @@ cbor_item_t* encode_function(const kdi_function& f) {
     map_push(m, "visibility",   encode_visibility(f.visibility));
     if (f.is_static)   map_push(m, "is_static",   cbor_bool(true));
     if (f.is_operator) map_push(m, "is_operator",  cbor_bool(true));
+    map_push(m, "is_extern", cbor_bool(f.is_extern));
     map_push(m, "return_type",  encode_type(f.return_type));
     map_push(m, "params",       encode_params(f.params));
     map_push(m, "mangled_name", cbor_str(f.mangled_name));
@@ -688,6 +696,7 @@ kdi_function decode_function(cbor_item_t* item, const std::string& path) {
     f.visibility   = decode_visibility(item, "visibility", path);
     f.is_static    = opt_bool(item, "is_static");
     f.is_operator  = opt_bool(item, "is_operator");
+    f.is_extern    = opt_strict_bool(item, "is_extern", path);
     auto* rt = map_get(item, "return_type");
     if (!rt) throw kdi_parse_error("missing 'return_type' at " + path);
     f.return_type  = decode_type(rt, path + ".return_type");
@@ -716,6 +725,9 @@ cbor_item_t* encode_method(const kdi_method& m) {
     if (m.is_abstract)     map_push(map, "is_abstract",      cbor_bool(true));
     if (m.is_final)        map_push(map, "is_final",         cbor_bool(true));
     if (m.is_operator)     map_push(map, "is_operator",      cbor_bool(true));
+    if (m.is_deleted)      map_push(map, "is_deleted",       cbor_bool(true));
+    if (m.is_private)      map_push(map, "is_private",       cbor_bool(true));
+    map_push(map, "is_extern", cbor_bool(m.is_extern));
     if (m.vtable_slot >= 0) map_push(map, "vtable_slot",     cbor_build_uint32(static_cast<uint32_t>(m.vtable_slot)));
     map_push(map, "return_type",  encode_type(m.return_type));
     map_push(map, "params",       encode_params(m.params));
@@ -743,6 +755,9 @@ kdi_method decode_method(cbor_item_t* item, const std::string& path) {
     m.is_abstract    = opt_bool(item, "is_abstract");
     m.is_final       = opt_bool(item, "is_final");
     m.is_operator    = opt_bool(item, "is_operator");
+    m.is_deleted     = opt_strict_bool(item, "is_deleted", path);
+    m.is_private     = opt_strict_bool(item, "is_private", path);
+    m.is_extern      = opt_strict_bool(item, "is_extern", path);
     m.vtable_slot    = opt_int32(item, "vtable_slot", -1);
     auto* rt = map_get(item, "return_type");
     if (!rt) throw kdi_parse_error("missing 'return_type' at " + path);
@@ -767,10 +782,16 @@ cbor_item_t* encode_constructor(const kdi_constructor& c) {
     if (c.is_copy_constructor) map_push(m, "is_copy_constructor", cbor_bool(true));
     if (c.is_defaulted)        map_push(m, "is_defaulted",        cbor_bool(true));
     if (c.is_deleted)          map_push(m, "is_deleted",          cbor_bool(true));
+    if (c.is_private)          map_push(m, "is_private",          cbor_bool(true));
     map_push(m, "params",          encode_params(c.params));
     map_push(m, "mangled_name",    cbor_str(c.mangled_name));
     map_push(m, "mangled_name_c2", cbor_str(c.mangled_name_c2));
     map_push(m, "llvm_def",        cbor_str(c.llvm_def));
+    if (c.throws_spec) {
+        cbor_item_t* ts = cbor_new_indefinite_array();
+        for (const auto& t : *c.throws_spec) cbor_array_push(ts, cbor_move(encode_type(t)));
+        map_push(m, "throws_spec", ts);
+    }
     if (c.doc) map_push(m, "doc", encode_doc_function(*c.doc));
     return m;
 }
@@ -780,11 +801,20 @@ kdi_constructor decode_constructor(cbor_item_t* item, const std::string& path) {
     c.visibility         = decode_visibility(item, "visibility", path);
     c.is_copy_constructor= opt_bool(item, "is_copy_constructor");
     c.is_defaulted       = opt_bool(item, "is_defaulted");
-    c.is_deleted         = opt_bool(item, "is_deleted");
+    c.is_deleted         = opt_strict_bool(item, "is_deleted", path);
+    c.is_private         = opt_strict_bool(item, "is_private", path);
     c.params             = decode_params(item, "params", path);
     c.mangled_name       = req_string(item, "mangled_name", path);
     c.mangled_name_c2    = opt_string(item, "mangled_name_c2");
     c.llvm_def           = req_string(item, "llvm_def", path);
+    if (auto* ts = map_get(item, "throws_spec")) {
+        if (!cbor_isa_array(ts))
+            throw kdi_parse_error("constructor throws_spec must be an array at " + path);
+        c.throws_spec.emplace();
+        size_t n = cbor_array_size(ts);
+        for (size_t i = 0; i < n; ++i)
+            c.throws_spec->push_back(decode_type(cbor_array_get(ts, i), path + ".throws_spec[" + std::to_string(i) + "]"));
+    }
     if (auto* doc = map_get(item, "doc")) c.doc = decode_doc_function(doc, path + ".doc");
     return c;
 }
@@ -1087,6 +1117,7 @@ cbor_item_t* encode_aggregate(const kdi_aggregate& agg) {
     cbor_item_t* bases = cbor_new_indefinite_array();
     for (auto& b : agg.bases) cbor_array_push(bases, cbor_move(encode_base(b)));
     map_push(m, "bases", bases);
+    if (agg.bases_complete) map_push(m, "bases_complete", cbor_bool(true));
 
     // layout
     cbor_item_t* layout = cbor_new_indefinite_array();
@@ -1178,6 +1209,7 @@ kdi_aggregate decode_aggregate(cbor_item_t* item, const std::string& path) {
             agg.bases.push_back(decode_base(cbor_array_get(ba, i),
                                             path + ".bases[" + std::to_string(i) + "]"));
     }
+    agg.bases_complete = opt_bool(item, "bases_complete");
     auto* la = map_get(item, "layout");
     if (la && cbor_isa_array(la)) {
         size_t n = cbor_array_size(la);
@@ -1314,6 +1346,8 @@ cbor_item_t* encode_enum(const kdi_enum& e) {
         map_push(m, "object_type", encode_type(*e.object_type));
     if (e.object_table_symbol.has_value())
         map_push(m, "object_table_symbol", cbor_str(*e.object_table_symbol));
+    if (e.object_table_kind.has_value())
+        map_push(m, "object_table_kind", cbor_str(*e.object_table_kind));
     if (e.base_fq_name.has_value())
         map_push(m, "base_fq_name", cbor_str(*e.base_fq_name));
     cbor_item_t* entries = cbor_new_indefinite_array();
@@ -1350,6 +1384,8 @@ kdi_enum decode_enum(cbor_item_t* item, const std::string& path) {
         e.object_type = decode_type(ot, path + ".object_type");
     if (auto* ots = map_get(item, "object_table_symbol"); ots && cbor_isa_string(ots))
         e.object_table_symbol = read_string(ots, path + ".object_table_symbol");
+    if (auto* kind = map_get(item, "object_table_kind"))
+        e.object_table_kind = read_string(kind, path + ".object_table_kind");
     auto* bn = map_get(item, "base_fq_name");
     if (bn && cbor_isa_string(bn))
         e.base_fq_name = read_string(bn, path + ".base_fq_name");

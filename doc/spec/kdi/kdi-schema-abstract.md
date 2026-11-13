@@ -124,6 +124,15 @@ KdiType = one of:
     -- a single "void" placeholder entry in `args`.
 ```
 
+Consumers must preserve the order and recursive structure of `generic_ref`
+arguments. A `void` placeholder does not encode the original value and must
+not be treated as a recoverable template argument.
+
+`template_param` must name a type parameter declared by the enclosing template
+definition. It must not occur in a concrete declaration, including recursively
+within constructor exception types. `erased_param` remains valid in a generic
+synthesis.
+
 ---
 
 ## KdiUnit
@@ -296,6 +305,9 @@ Rules:
   same way as a regular (non-template) aggregate/function, with
   template-parameter-dependent types tagged as `template_param` /
   `generic_ref` instead of only a raw source dump.
+  An uninstantiated classic template's annotations are validated on
+  instantiation, not when exporting this signature. Its native-call and
+  CString fields therefore do not establish an ABI; the source is authoritative.
 
 * Re-parsed templates retain the original namespace identified by
   `origin_module` (or their declaring namespace when it is absent). Import
@@ -334,6 +346,13 @@ Rules:
 * Same-named function template definitions must all be retained when their
   parameter lists differ. Deduplication must identify a definition, not only
   its name.
+* Template `source` of a classic template is the verbatim definition text. It MAY begin
+  with `::`-rooted `using` directives (aliases or `using namespace`) copied from the
+  producer's enclosing scopes for the names the text mentions; importers materialise them
+  in the private definition namespace, never in consumer-visible scope.
+* A template nested in a non-template aggregate is exported as a `KdiTemplateDef` with
+  `entity_kind` `struct`/`class`/`interface`, `fq_name = <host>::<name>` and `host_fq_name`
+  identifying the host; importers attach it to the imported host.
 * Template `source` may include a private FFI declaration prelude in a
   compiler-generated namespace whose name begins with `__kdi_private_`.
   Such declarations are lexical dependencies of the originating template,
@@ -400,6 +419,12 @@ KdiAggregate {
 
   -- Inheritance
   bases        : [KdiBase]
+  bases_complete : bool             -- true when `bases` lists EVERY declared direct
+                                    -- base. Absent in older files => false. A consumer
+                                    -- may conclude "does not derive from X" by walking
+                                    -- the hierarchy only when every aggregate on it
+                                    -- has bases_complete == true; otherwise the
+                                    -- relation is unknown, not negative.
 
   -- Physical layout (LLVM field order, ALL fields including synthetic)
   layout       : [KdiLayoutField]
@@ -562,6 +587,7 @@ KdiEnum {
   underlying_type   : KdiType
   object_type       : KdiType?      -- aggregate ref for object-backed enums
   object_table_symbol : string?     -- required when object_type is set
+  object_table_kind : "runtime"?    -- absent denotes a constant table
   base_fq_name      : string?       -- enum derivation base
   entries           : [KdiEnumEntry]
   doc               : KdiDocBlock?
@@ -582,9 +608,14 @@ KdiObjectInitMember {
 
 Compatibility rules:
 
-* Integer-backed enums omit `object_type` and `object_table_symbol`.
+* Integer-backed enums omit `object_type`, `object_table_symbol`, and
+  `object_table_kind`.
 * Legacy payloads without typed-enum fields remain valid.
 * If `object_type` is present, importers must treat the enum as object-backed.
+* When `object_table_kind` is absent, `object_table_symbol` names the constant
+  array, including in older descriptors. When it is `"runtime"`, the symbol
+  names a no-argument function returning a pointer to the initialized array.
+  Importers must call it before accessing an entry. Other kinds are invalid.
 
 ---
 
@@ -599,7 +630,7 @@ KdiUnion {
   alternatives             : [KdiUnionAlternative]
   base_union_fq_name       : string?   -- parent union for union inheritance
   polymorphic_base_fq_name : string?   -- base class or interface for polymorphic unions
-  llvm_def                 : string    -- LLVM IR struct definition, e.g. "{ i32, [8 x i8] }"
+  llvm_def                 : string    -- LLVM IR union layout, e.g. "%U = type { i64, [8 x i8] }"
   template_origin          : KdiTemplateOrigin?
   doc                      : KdiDocBlock?
 }
@@ -611,6 +642,22 @@ KdiUnionAlternative {
 }
 ```
 
+`llvm_def` is mandatory in practice. Its layout is always `{ i64, [N x i8] }` with
+`N >= 1`: the `i64` header holds the discriminant and the lifecycle state, and the
+byte payload holds the largest alternative. Importers must fail closed with a
+diagnostic when the layout is missing, empty, malformed, uses another header (older
+32-bit tag layouts), or when `N` is smaller than the size of an alternative they
+can resolve. They must not fall back to a default payload size.
+
+A private union nested in an exported aggregate is exported as a layout-only entry in
+the aggregate's `nested_unions`: `llvm_def` is set, `alternatives` is empty, and no
+importer-side union model is created. Its lifecycle is fully handled by the
+aggregate's exported (possibly compiler-generated) destructor and copy operations,
+so an importer never needs to inspect its alternatives. For the same reason, an
+imported aggregate whose exported destructor is compiler-generated and which has no
+exported copy constructor must be treated as holding hidden resources: importers
+must not copy it bytewise.
+
 ---
 
 ## KdiFunction
@@ -621,6 +668,7 @@ KdiFunction {
   fq_name      : string
   visibility   : "public" | "protected"
   is_static    : bool
+  is_extern    : bool?             -- absent means false
   return_type  : KdiType
   params       : [KdiParam]
   mangled_name : string
@@ -635,9 +683,40 @@ KdiParam {
   name           : string
   type           : KdiType
   is_varargs     : bool?           -- defaults to false
+  is_ffi_cstring : bool?           -- defaults to false
   default_source : string?         -- K expression, absent for required parameters
 }
 ```
+
+`is_extern` identifies a native C declaration, not a K ABI declaration.
+It is independent of whether a declaration is imported from another module.
+For a native declaration `mangled_name` is the exact C symbol, including an
+explicit symbol alias. This also applies to signature-only generic functions
+and methods; a native signature must retain the symbol even if `llvm_def` is
+empty. `is_ffi_cstring` records the `@ffi::CString` parameter contract and
+does not perform string conversion. These fields must be booleans when present.
+Writers emit `is_extern` for both native and K declarations.
+An `is_ffi_cstring` parameter must belong to a native declaration and, after
+resolving aliases and substituting generic arguments, satisfy the same
+character-addresser rules as a source `@ffi::CString` parameter.
+
+For a concrete imported native declaration, the compiler requires an LLVM
+prototype compatible with its resolved KDI signature and C calling convention.
+The current compiler does not propagate LLVM declaration attributes to native
+call sites and therefore rejects attributed native prototypes rather than
+assuming that their ABI is equivalent. Native aliases may have distinct K
+parameter contracts when their actual LLVM prototypes agree; the separate
+private template-dependency contract rules still apply.
+If the prototype cannot be parsed, a model-derived declaration may be used
+only when its complete printed prototype proves equivalence; otherwise import
+fails with a diagnostic. Signature-only generic records are exempt from the
+prototype requirement until instantiated.
+
+Older descriptors without these fields retain the previous false defaults.
+They cannot distinguish an old native declaration from a K declaration and
+therefore are not sufficient for an ABI that represents K observers differently
+from C pointers. Rebuild producers and consumers together for such an ABI.
+These semantic fields are not artifact-version or compatibility markers.
 
 `default_source` preserves the default argument of functions, methods, and
 constructors. Consumers must parse and type-check it in the declaring callable's
@@ -658,15 +737,18 @@ KdiMethod {
   fq_name        : string
   visibility     : "public" | "protected"
   is_static      : bool
+  is_extern      : bool?          -- absent means false; native methods are static
   is_const_member: bool
   is_virtual     : bool
   is_abstract    : bool
   is_final       : bool
+  is_deleted     : bool           -- absent means false
+  is_private     : bool           -- absent means false; private deleted method metadata
   vtable_slot    : int             -- -1 if not virtual
   return_type    : KdiType
   params         : [KdiParam]     -- excluding 'this'
-  mangled_name   : string
-  llvm_def       : string          -- LLVM IR prototype (with implicit 'this'
+  mangled_name   : string          -- may be empty when deleted
+  llvm_def       : string          -- empty when deleted, else prototype (with implicit 'this'
                                    -- as first arg), e.g.
                                    -- "declare i32 @_ZN2ns5Adder3addEi
                                    --   (%struct.ns.Adder* %this, i32)"
@@ -684,15 +766,58 @@ KdiConstructor {
   is_copy_constructor: bool
   is_defaulted       : bool
   is_deleted         : bool
+  is_private         : bool        -- absent means false; private deleted constructor metadata
   params             : [KdiParam]
-  mangled_name       : string      -- C1 variant
-  mangled_name_c2    : string      -- C2 (base-subobject) variant
-  llvm_def           : string      -- LLVM IR prototype of the C1 variant, e.g.
+  mangled_name       : string      -- C1 variant; may be empty when deleted
+  mangled_name_c2    : string      -- C2 variant; may be empty when deleted
+  throws_spec        : [KdiType]?  -- absent: unknown; present empty: no checked exceptions
+  llvm_def           : string      -- empty when deleted, else C1 prototype, e.g.
                                    -- "declare void @_ZN7CounterC1Ev
                                    --   (%struct.Counter* %this)"
   doc                : KdiDocFunction?
 }
 ```
+
+For a concrete constructor with a resolved contract the producer must include
+`throws_spec`, including an empty array for a known empty checked-exception
+contract. It must omit the field if the contract is unknown. Entries use the
+same type encoding as function and method exception specifications. If a
+non-generic template signature has not resolved its exception types, it may
+omit the field; its source recipe remains authoritative. Generic aggregate
+signatures have no source recipe and must preserve constructor exception
+types, including unresolved types resolved in the defining scope. A producer
+must reject a generic signature if it cannot export that contract.
+Aggregate exception types referenced by constructor contracts, including
+types from dependencies, must be registered in the type table.
+The compiler also omits the field if a constructor's exception type cannot be
+exported, preserving the constructor record without asserting a false contract.
+
+An absent field in an older descriptor means **unknown**, not noexcept.
+Regenerate the defining library's KDI with an updated compiler and use an
+updated importer before relying on constructor exception contracts. The current
+compiler model preserves unknown separately from empty, but existing call-contract
+checks do not reject unknown contracts; legacy imports therefore remain unsafe
+for exception-sensitive ordinary calls. The same limitation applies when a
+new descriptor omits a contract whose exception type cannot be exported.
+Union lifecycle operations reject an
+unknown constructor contract. Older readers ignore the new field and can
+likewise miscompile throwing constructor calls even after regeneration.
+Schema version remains `0.1`; this additive extension is not fail-closed.
+
+`is_private` is reserved for private deleted declarations included solely
+to enforce copy restrictions when importing an aggregate. When true it overrides
+`visibility`; readers must not expose the declaration as public API. For older
+readers the `visibility` fallback is `protected`, not `public`. If present,
+constructor and method `is_private` and `is_deleted` fields must be booleans;
+readers must reject other values.
+
+The schema remains 0.1. Readers predating these optional fields ignore method
+deletion and private markers: a protected fallback cannot guarantee rejection
+of a copy, and such readers can accept unsafe operations or fail at link time.
+Older descriptors may omit private deleted declarations or method deletion
+metadata altogether; regenerate them with the updated producer and consume
+them with an updated reader to enforce those restrictions. The additive encoding
+does not provide fail-closed forward compatibility with older readers.
 
 ---
 
@@ -746,7 +871,8 @@ KdiVariable {
   top-level map: `"schema_major"` and `"schema_minor"`.
 * The `llvm_def` field is **mandatory** on `KdiFunction`, `KdiMethod`,
   `KdiConstructor`, `KdiDestructor`, `KdiAggregate`, and `KdiVtable`.
-  It must not be empty.  This field carries the exact LLVM IR text emitted
+  It must not be empty except for a deleted method or constructor, which has
+  no implementation and may also have an empty `mangled_name`. This field carries the exact LLVM IR text emitted
   by the exporting compiler and is authoritative for ABI-faithful import.
 * The `dependencies` field in `KdiHeader` is **optional** (omitted when the
   module has no imports).  When present, it lists the canonical module names

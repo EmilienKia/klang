@@ -91,6 +91,254 @@
 
 #### Current bugs and gaps to fix
 
+- [x] **Root-qualified imported base classes are not found.** Fixed:
+      `scope_lookup::lookup_structure_or_import` now treats a leading `::` as a
+      root marker (the scope chain is not searched, and a repeated module name
+      prefix is accepted). Regressions: `[rooted-base]` in
+      `test-gen-inheritance.cpp` and the rooted `::k::Exception` base/bound test
+      in `test-gen-template-constraints.cpp`. This entry can be removed once
+      the fix is committed.
+
+- [x] **Preserve nested template aggregate descriptors during outer specialization.**
+      Fixed for KDI: `clone_nested_aggregate` clones the nested `tpl_info`, and
+      the exporter no longer rebuilds classic template bodies with the lossy
+      `k_source_emitter` when raw source exists (it was dropping nested templates,
+      defaults and friends whenever a `using` alias was in scope). The verbatim
+      source is exported with a `::`-rooted `using` prelude (only for names the
+      source mentions), and templates nested in non-template aggregates are exported
+      through `host_fq_name` and specialised in the definition namespace under a
+      host-qualified name. Regressions: the two `[using-alias]`/nested-host cases in
+      `test-import-templates.cpp` and the previously failing import-interop cases.
+      Remaining: `k_source_emitter` is still used for generic function templates and
+      when no source text exists; it still drops nested children there.
+      Not covered: private-only `using namespace X` targets that the consumer does
+      not import. This entry can be removed once the fix is committed.
+
+- [ ] **Do not treat unresolved template base constraints as satisfied.**
+      Stage A is done: `evaluate_template_arg_constraints` in
+      `klang/src/model/template.cpp` returns a verified/invalid/deferred verdict;
+      the legacy bool validators are fail-closed wrappers (an unresolved or
+      non-aggregate bound is not satisfied), aggregate, CTAD, deduction and
+      function-template call sites use the tri-state result, and
+      `type_reference_resolver::validate_function_template_constraints` resolves
+      independent written bounds (including imported ones) and rejects proven
+      violations during overload selection. Regressions:
+      `[fail-closed-bound-constraints]`, `[import-function-bound]`,
+      the imported-bound overload tests and the model-level unresolved-bound test.
+      Stage B: the KDI aggregate record now carries `bases_complete` (true only
+      when every declared base was resolved at export; absent in older files means
+      false). The importer sets `aggregate::imported_bases_complete()` only when the
+      flag is true and every base was materialised, and `analyze_hierarchy` walks an
+      imported aggregate as a closed world only in that case; otherwise its
+      hierarchy is unknown (deferred). The legacy final-instantiation check still
+      rejects an argument it cannot prove derived (fail-closed), so an imported
+      class from an older KDI whose exported base list was partial is still
+      over-rejected; re-export it to fix. Function-template overload selection
+      still only proves violations for local concrete arguments; an imported
+      argument unrelated to the bound is rejected at instantiation (diagnostic
+      `01004` plus `00910`). A CTAD call with an unrelated class (`C(w)`) still
+      reports the generic `01009` instead of the constraint diagnostic.
+      Same-list dependent bounds (`template<class B, class T : B>`)
+      are now bound to the concrete earlier argument and decided at every
+      instantiation (`bind_same_list_dependent_bounds`); dependent bounds on other
+      template parameters of an enclosing template and deferred CTAD cases are still
+      accepted without an obligation replay (an unproven obligation inside a template
+      body is checked when that body is instantiated with concrete arguments).
+
+- [ ] **Reject unparsed top-level input.** `parser::parse_declarations()` stops
+      when no declaration matches and `parser::parse_unit()` returns without
+      requiring end-of-file. For example, an annotated function named with the
+      reserved keyword `alias` followed by a valid `struct` can compile while
+      silently omitting that function and every following declaration. See
+      `klang/src/parse/parser_declarations.cpp` and the full-parse loop in
+      `klang/src/compiler.cpp`; diagnose the first unconsumed token.
+
+- [ ] **Investigate symbol checks for native dependencies.** KDI symbol
+      checking collects every function's mangled name in
+      `libkdi/src/kdi_symbols.cpp` and compares it with `nm --defined-only`
+      output. A public `@ffi::Extern("C")` declaration whose symbol is
+      supplied by a native dependency may therefore be reported missing from
+      the exporting binary even when linking is correct. Reproduce with such a
+      declaration and `check-symbols`; distinguish imported native dependencies
+      from definitions after the KDI callable ABI metadata is available.
+
+- [ ] **Preserve default owner member initializers.** A member declaration
+      such as `owned: Resource! = new Resource();` in a class with a user
+      constructor currently emits the initializer as a discarded expression;
+      the compiler warns that the owner is immediately destroyed. This was
+      observed while running the const-union ownership regression. Cover
+      default initialization and explicit constructor initializer overrides
+      before repairing the injection in
+      `klang/src/gen/gen_constructor.cpp`.
+
+- [x] **Guard incoming owners during reassignment.** If the old owner's
+      destructor throws, the moved or newly allocated incoming owner is
+      cleaned up during unwinding. Regression tests cover the source and
+      destination states, normal and self-assignment, a throwing RHS, and an
+      upcast incoming owner.
+
+- [ ] **Check standalone virtual-base constructor contracts.** In
+      `klang/src/gen/gen_constructor.cpp`, base-initializer injection skips a
+      virtual base when the class has no `__vbase_X__` storage. Nevertheless,
+      `implementation_generator::emit_constructor_pre_block` in
+      `klang/src/gen/gen_function.cpp` allocates standalone storage for a class
+      with `__vbptr_X__` but no `__vbase_X__`, selects the first non-copy
+      zero-argument constructor, and emits a direct LLVM `call` without
+      `check_call_contract` or an unwind-aware cleanup path. It also silently
+      omits the call if no LLVM declaration is found.
+
+      Source-level reproduction to add as a compiler regression (not run):
+      ```k
+      module virtual_base_contract;
+      class Failure : public Exception {}
+      class Root { Root() throws(Failure) { throw Failure(); } }
+      class Left : public Root { Left() {} }
+      class Right : public Root { Right() {} }
+      class Diamond : public Left, public Right {
+          Diamond() throws(Failure) {}
+      }
+      use() { value: Left; }
+      ```
+      The diamond prepass can promote the `Left`/`Right` edges to `Root` to
+      virtual, leaving `Left` with a pointer but no collector field; constructing
+      `Left` then executes `Root()` despite `Left()` neither catching nor
+      declaring `Failure`. `Diamond`'s separately injected collector initializer
+      does not check the standalone call in `Left`. Validate this reproduction
+      and fix selection and contract checking in the semantic pass, then pass
+      the selected constructor and appropriate unwind handling to codegen.
+      No imported-generic reachability has been established.
+
+- [x] **Preserve imported KDI generic-reference arguments.**
+      The converter retains nested arguments through substitution, resolution
+      and re-export, including signature components and template-parameter
+      metadata referring to aliases materialised later. Invalid nested types
+      receive an explicit diagnostic; legacy `void` value placeholders remain
+      unrecoverable.
+- [ ] **Complete constructor exception-contract coverage.** Imported generic
+      constructors now use per-site type bindings and their facade contracts
+      for the tested variable, member, temporary, allocation and array paths.
+      Unknown contracts and unresolvable or ambiguous signatures are diagnosed.
+      Verify the separate standalone virtual-base path described above and
+      constructor selection in slot intrinsics; their interaction with
+      imported generics is not established.
+- [x] **Validate imported union layouts.**
+      The importer now rejects unions whose `llvm_def` is missing, malformed,
+      uses a non-`i64` header, or whose payload cannot hold a resolvable
+      alternative (no fallback layout). Remaining: old 64-bit lifecycle
+      semantics cannot be distinguished from the current ones; rebuild
+      affected libraries, KDI descriptors and consumers together rather than
+      mixing artifacts. The alignment of the payload is not validated.
+- [ ] **Investigate foreach cleanup during exception unwinding.** Static review
+      found that `visit_foreach_statement` in `klang/src/gen/gen_statements.cpp`
+      registers the iterator and loop variable on `_cleanup_vars_stack`, but
+      not on `_cleanup_lpad_stack`. Check a foreach with destructible values
+      when an inner `try/finally` throws to an outer catch: the unwind route may
+      skip their destructors. Cover iterator construction, `next()`, and
+      normal, break, continue, and exceptional exits.
+- [ ] **Investigate throwing destructors during cleanup.** `visit_block` in
+      `klang/src/gen/gen_statements.cpp` removes its cleanup landing context
+      before emitting local destructors. If the last of two local destructors
+      throws during an unwind, earlier locals may be skipped. Define whether
+      the new exception replaces the pending exception or terminates, then
+      test and preserve exactly-once cleanup for locals, members, and arrays.
+- [ ] **Investigate unmatched typed catches across function boundaries.**
+      `visit_try_catch_statement` in `klang/src/gen/gen_statements.cpp` uses a
+      catch-all landing-pad clause for typed catches, then resumes if none
+      matches. Existing unmatched-catch tests use an enclosing catch in the same
+      function; check a callee with only a nonmatching catch and a matching
+      caller catch for correct propagation and cleanup.
+
+- [ ] **Exception metadata and catch cleanup outside bare rethrow remain incomplete.**
+      The bare-rethrow repair snapshots the caught chain and restores it only
+      when its type matches `__cxa_current_exception_type()`. It does not repair
+      normal catch exit or exception unwinding: a destructor or finally block
+      can throw and catch a different exception while a primary exception is
+      already unwinding, overwriting the thread-local chain before the primary
+      reaches its next typed handler. Preserve the in-flight chain and type
+      through each cleanup continuation without overwriting a genuinely new
+      exception. Also, `visit_try_catch_statement` currently pushes a catch
+      finalization context only when there is a `finally` block, so
+      `return`/`break`/`continue` from a catch without `finally` can bypass
+      `__cxa_end_catch()`. Fix all catch exits and their cleanup ordering with
+      focused regressions; see also the constructor try/finally issue below.
+
+- [ ] **Implicit member access through a virtual diamond fails codegen.**
+      The following source was rejected with internal diagnostic `0F01E`:
+      unable to reach owning struct `Root` for member `x` from `Diamond`.
+      `klang/src/gen/gen_expressions.cpp` walks non-virtual `__base_` fields
+      and skips virtual base edges when lowering an implicit member symbol.
+      The constructor return is not needed to explain that lookup path; the
+      reported failure was observed with the complete fixture below.
+      ```k
+      module constructor_return_diamond;
+      class Root {
+          public x : int;
+          Root() : x(0) {}
+          value() : int { return x; }
+      }
+      class Left : public Root { Left() {} }
+      class Right : public Root { Right() {} }
+      class Diamond : public Left, public Right {
+          Diamond(early : bool) { if (early) return; }
+          override value() : int { return x + 5; }
+      }
+      setLeft(left : Left&) { left.x = 37; }
+      getRight(right : Right&) : int { return right.x; }
+      dispatch(root : Root&) : int { return root.value(); }
+      test(early : bool) : int {
+          diamond : Diamond(early);
+          setLeft(diamond);
+          return getRight(diamond) * 100 + dispatch(diamond);
+      }
+      ```
+
+- [ ] **Constructor throw inside top-level try/finally hangs during propagation.**
+      In `klang-tests-gen-exceptions`, the following fixture returned 1 for
+      `test(0)` and `test(1)`, but `test(2)` consumed CPU until the 120-second
+      timeout. The constructor-return vptr fix emits stores only on `return`,
+      not on this throw path; an unmodified-compiler rerun and runtime
+      backtrace are still needed to confirm the hang's precise cause.
+      Source inspection: `visit_try_catch_statement` emits a catch-all landing
+      pad for a try/finally and, with no enclosing try in that function, resumes
+      after local and parameter cleanup without chaining to the function-level
+      constructor-member cleanup. Investigate both propagation and member
+      destruction; the source observation alone does not establish the loop.
+      ```k
+      module constructor_return_cleanup;
+      order : int = 0;
+      wholeDrops : int = 0;
+      struct Guard {
+          id : int;
+          Guard(value : int) : id(value) {}
+          ~Guard() { order = order * 10 + id; }
+      }
+      class Base { value() : int { return 0; } }
+      class Derived : public Base {
+          member : Guard;
+          Derived(mode : int) : member(1) {
+              local : Guard(2);
+              try {
+                  if (mode == 0) return;
+                  if (mode == 2) throw Exception(923);
+              } finally { order = order * 10 + 3; }
+          }
+          override value() : int { return 42; }
+          ~Derived() { ++wholeDrops; }
+      }
+      test(mode : int) : int {
+          order = 0; wholeDrops = 0;
+          result : int = 0;
+          try {
+              value : Derived(mode);
+              base : Base& = value;
+              result = base.value();
+          } catch (e : Throwable&) { result = e.getCode(); }
+          if (mode == 2)
+              return result == 923 && order == 321 && wholeDrops == 0 ? 1 : 0;
+          return result == 42 && order == 321 && wholeDrops == 1 ? 1 : 0;
+      }
+      ```
+
 - [ ] **Unsigned conversion-operator lookup omits short/int/long targets (blocks BigInteger casts).**
       The BigInteger standard library now builds after the frozen-observer
       fix, but its public cast cases fail with diagnostic `00945`:
@@ -237,6 +485,93 @@
       the diagnostic limitation, so these pre-existing compiler issues do
       not block the documentation.
 
+- [ ] **Preserve ownership when copying unions and draining values.**
+      Direct deleted-copy checks, drain-to-value conversion, and selected
+      union and scalar-wrapper lifecycle paths have fixes and focused passing
+      regressions. Complete discriminant-aware construction, copy, assignment
+      and destruction without rejecting copies of active copyable alternatives.
+      Preserve exactly-once cleanup, self-assignment, checked exceptions, and
+      inactive state after a failed transition.
+
+      Focused regressions pass for recursive first-nested-union dispatch and
+      owner extraction through value casts and argument adaptation.
+
+      Step 1 done (default state of a resource-bearing first alternative):
+      - [x] A third live state, "default, escaped" (live flag 2), is set by any
+        mutable access to alternative 0 when it is a struct, class or sized array
+        with owner leaves (`union_first_alternative_tracks_default`,
+        `activate_default_union_alternative`).
+      - [x] Cleanup releases the leaf owners field by field without running the
+        never-executed constructor or destructor (null vptr safe); copy of a
+        dtor-less/ctor-less escaped aggregate is by value only when every leaf
+        is empty, otherwise UCOP; user copy constructors go through the live
+        path; assignment of the first alternative releases then copy-constructs.
+      - [x] Permanent regressions in `klang/tests/test-gen-union.cpp`
+        (reference escape, direct access, class first alternative, nested
+        owner structs, wrapper copy, trivial first alternative, owner array).
+      - [x] Step 2: imported and private layout-only unions. The importer
+        (`kdi_importer.cpp` `parse_union_layout`, `validate_union_layout`,
+        `materialise_union`) fails closed on missing, malformed, legacy or
+        undersized layouts. Layout-only private unions need no metadata: the
+        exported compiler-generated destructor of the owning aggregate cleans
+        them up, and copies of imported aggregates with a compiler-generated
+        destructor are rejected (`aggregate_type_has_resource_field`).
+        Regressions: `test-import-core.cpp` (layout guard) and
+        `test-gen-union.cpp` (imported private-union holder).
+      - [ ] Imported aggregate as the FIRST alternative of a consumer union.
+        Its layout is opaque, so a never-constructed instance mutated through
+        a reference or member call (`u.holder.setKey()`) is not tracked and its
+        owner leaks at scope exit (no double free). Running the exported
+        destructor on zero-filled storage is unsafe (user destructors,
+        vptrs). Owner decision needed between: (1) export zero-state leaf
+        descriptors in KDI (format change); (2) construct on first mutable
+        access when a default constructor exists (behaviour change); (3) keep
+        the gap documented.
+      - [ ] An imported aggregate whose hidden resources are not covered by a
+        compiler-generated destructor (user-written destructor, private owner,
+        no exported copy constructor) is still bytewise copied. KDI has no
+        "has resource field" bit; adding one is a format change.
+
+      Remaining gaps in step 1: arrays nested inside tracked aggregates,
+      imported / virtual-base / inner aggregates and owning callable fields of
+      tracked classes are not tracked; an escaped owner-element array first
+      alternative is rejected on copy and its cleanup does not unwind-protect
+      remaining elements; any non-const access (even a read) escapes the
+      alternative; stale aliases after reset are not handled.
+
+      A naive direct-field cleanup is unsafe under destination reentrancy.
+      Suppose a default first struct has two owners, and the second owner's
+      destructor writes another alternative through a pointer to the same
+      union. That write can overwrite the first owner's slot before its cleanup;
+      reading the slot afterward can free a corrupted pointer. Staging and
+      clearing both slots avoids that read, but the destructor can activate a
+      new owned alternative that the original replacement would overwrite
+      without cleaning; throwing during this transition also requires coordinated
+      unwind cleanup. A repair needs a proven transition protocol covering
+      reactivation, staged resources, and exceptions. No such repair has been
+      installed.
+
+      Private/imported opaque layouts, inherited fields, nested resource-bearing
+      aggregates, arrays, callable owners, alternatives without a parent
+      destructor and stale aliases need separate proven handling. Independently,
+      exceptional virtual-owner deallocation is a pre-existing, source-level
+      suspicion shared with ordinary owner cleanup; see the separate
+      polymorphic-owner entry below. It is not reproduced or fixed here.
+      Cover nested and multiple-union wrappers, inherited alternatives,
+      const-qualified fields, arrays, temporaries, and imported wrappers with
+      private layouts. In particular, do not raw-copy an unconstructed
+      aggregate that may contain indirectly initialized owned state.
+      Throwing owner replacement still requires coverage for these distinct
+      union ownership paths.
+
+- [ ] **Struct with owner fields and no destructor never releases them.**
+      A `struct Pair { a: Resource!; b: Resource!; }` without a user destructor
+      leaks its owner fields when a local goes out of scope, outside unions
+      (inside a union alternative the field-wise release now applies). Repro:
+      declare such a struct, assign `new Resource()` to a field in a block and
+      count `Resource` destructor calls at the end of the block: 0 drops.
+      Needs an owner decision on generating an implicit field-wise release.
+
 - [ ] **Language FFI reference still confuses UTF-32 characters with C byte strings.**
       `doc/spec/language/functions/ffi.md`, sections 2-5, describes K
       `const char*` as a direct C byte-string mapping and uses ordinary
@@ -324,6 +659,13 @@
       assignment operators guard self-assignment, so this existing defect does
       not block runtime FFI. Add a sequential-collection regression before
       fixing the general Vector assignment operator.
+
+- [ ] **Vector membership always returns false.**
+      `Vector<T>::contains` in `libk/libk/src/vector.k` unconditionally returns
+      `false`. For example, `a: int[1] = {7}; values: Vector<int> =
+      Vector<int>(a); values.contains(7)` should be true but is false. This was
+      found during crypto capability discovery, which explicitly checks values
+      instead. Add a sequential-collection regression when fixing membership.
 
 - [x] **Application singleton test now handles the checked `Thread.join()` interruption.**
       Direct reproduction: run `libk-tests-types --reporter compact [singleton]`.
@@ -508,6 +850,55 @@
   restrictions; its body is synthesised once with every type parameter erased to an opaque
   pointer (today `byte*`), only non-owning addressers (`& * ? +`) may be applied to a
   parameter, and users of the generic keep the concrete types and perform the checks/casts.
+    - [ ] **Preserve constraints through erased generic forwarding.**
+      The compiler currently accepts this invalid program without a diagnostic,
+      even though `Wrong` does not derive from `Bound`:
+      ```k
+      class Bound {}
+      class Good : Bound {}
+      class Wrong {}
+      generic<class T : Bound> sink(value : T*) : int { return 1; }
+      generic<class U> forward(value : U*) : int { return sink(value); }
+      test() : int {
+          good : Good;
+          wrong : Wrong;
+          sink<Good>(&good);
+          return forward<Wrong>(&wrong);
+      }
+      ```
+      The equivalent `forward<Good>(&good)` compiles. Deduction inside the
+      erased body loses `U`'s concrete source identity, and
+      `validate_template_arg_constraints` skips erased arguments. A sound fix
+      needs declaration-scoped binder identities, deferred obligation replay
+      for every concrete call and cached synthesis, overload selection and
+      recursion handling. Signature-only imported generics also need retained
+      obligations and provenance in KDI; unknown metadata must not be treated
+      as proof that no constraints apply. A single erased body cannot directly
+      select different inner overloads for different concrete arguments; define
+      uniform selection semantics or provide suitable dispatch. Recursive calls
+      may encounter an in-progress synthesis before its obligations are known.
+    - [x] **Generic erased-pointee operations.** `generic<typename T> struct Host {
+      static clear(value : T*) { *value = null; } }` moves a pointer-sized value through
+      `value`, which is only correct for a pointer-like `T`. The generic constraint validator
+      now records, per function, the type parameters whose value is read or written through
+      an addresser (`*p`, `p[i]`; `&*p` excluded), and every use (instance call, static
+      qualified call, callable binding) of a binding that is not pointer/link/view/reference
+      is rejected with `0x110A`. Limitation: signature-only imported generics do not carry the
+      record in KDI (no format change), so they are not checked.
+    - [x] **Generic-host static callables and direct calls (D8).**
+      Overload selection, argument checks, return types, callable compatibility and
+      `@ffi::CString` validation of `Host<char>::text(&c)` and
+      `callable : &(char*):int = Host<char>::text` now use the signature with the type
+      arguments substituted (`type_reference_resolver::concrete_generic_signature`); the
+      erased symbol is still the call target. When the substitution cannot be fully
+      resolved the erased signature is kept.
+    - [ ] **CString obligations through nested/imported generic forwarding.** Direct and
+      one-level forwarding (`forward<U>(U*)` calling an extern with `@ffi::CString`)
+      are replayed per instantiation from `function::get_cstring_obligations()`.
+      Still unsupported (fail closed with an unresolved-parameter-type error): forwarding
+      through another generic whose substituted type is still erased, calls through a
+      qualified member call inside a generic body, generic aggregate methods, and
+      signature-only imported generics (obligations are not exported in KDI).
     - [x] **Owners and drains as generic parameters/arguments**: not supported, by design
       (`T!`, `T#`, `Box<Dog!>` are rejected with `0x1102` / `0x1106` / `0x1107`). Possible
       future support through an owned destruction callable passed to the generic (under study).
@@ -1072,7 +1463,9 @@
   On a destructor exception that return value is unavailable. This batch makes
   the call unwind-aware and clears the owner before it, but cannot safely free
   a nonzero-offset base pointer on the exceptional path without additional ABI
-  information. Candidate repro: own a multiply-derived object through a
+  information. This is a pre-existing, source-level suspicion affecting
+  ordinary owner cleanup as well as partial union cleanup; it has not been
+  reproduced or fixed. Candidate repro: own a multiply-derived object through a
   secondary base, let its destructor throw inside `try { delete owner; }`,
   then check both catch continuation and allocation release. Non-virtual struct
   destroy/free and closure environment release now have exceptional cleanup;
@@ -1153,6 +1546,15 @@
   before changing that independent path. Native-prelude coverage keeps the function
   contract `throws(k::Exception)` and tests alias canonicalization in its callable
   component instead, so this does not block the scoped dependency export changes.
+
+- [ ] **Strong typedefs in imported `throws` contracts bypass call checks
+  (static finding, not run).** `get_exception_aggregate()` in
+  `klang/src/gen/gen_statements.cpp` accepts `struct_type` but does not unwrap
+  `alias_type`; `check_call_contract()` skips entries it cannot identify.
+  Reproduce with a KDI constructor `throws_spec` containing an `alias` reference
+  to a typedef of an exception, then call it from a function declaring only an
+  unrelated exception. The import must preserve the typedef, but the call
+  checker must still recognize its underlying exception type.
 
 - [ ] **Visibility of ordinary function addresses (static finding, not run).**
   `type_reference_resolver::visit_symbol_expression` in
@@ -1387,6 +1789,36 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **Assigning a struct or class value leaks the replaced destination.**
+  `g = h` for an aggregate with a copy constructor copy-constructs a staging value
+  and stores it over `g` without destroying the previous contents of `g` (only the
+  pointer right-hand-side path passes `destroy_dest_first`). With a user-declared or
+  synthesized memberwise copy constructor the old owned resources (e.g. a `k::String`
+  buffer) leak; there is no double free. Struct operator `=` generated by the compiler
+  is correct (it destroys, then copy-constructs). Long-standing; classes have no
+  generated `operator=`. Repro: `class H { public: n : k::String; }`, `g : H; h : H;
+  g.n = k::String("a"); g = h;` in a loop and watch the heap.
+
+- [ ] **Generic aggregate instantiations do not receive the memberwise copy constructor.**
+  The implicit memberwise copy (`aggregate_needs_memberwise_copy`) is synthesized by
+  `aggregate_type_resolver::resolve()` for non-template, non-instantiated aggregates
+  only. `Pair<k::String>`-like instantiations holding a copyable-but-owning member
+  keep the old bytewise copy.
+
+- [ ] **Temporary array of a class type rejects direct (implicit-constructor) element values.**
+  `Marked[]{1, , 3}` where `Marked` is a `class` (not a `struct`) with
+  `Marked(x : int)` compiles but leaves the explicit slots zero-initialised
+  (`pick(Marked[]{1, , 3}, 0)` yields 0); the same program with `struct Marked`
+  works, and `Marked[]{Marked(1), , Marked(3)}` works for both. Long-standing
+  (old and new compiler). Omitted-slot default construction itself is fixed.
+
+- [ ] **Capability discovery is not cancellation-safe inside OpenSSL async jobs.**
+  The existing inline discovery path in `libk/crypto/src/openssl_ffi.c` can
+  run provider callbacks on an active OpenSSL async job. Cancellation during
+  that work may interrupt it or leak native resources. Preserve async provider
+  behavior while making cleanup safe; add a pausing-provider cancellation
+  regression. This edge case was identified by source inspection.
+
 - [ ] **Implicit return upcast from a const aggregate's pointer field loses value-level const normalization.**
   Fresh `ffi-final-gen-casts-rerun.log` records `00E01` for
   `const Derived*& -> Base*` in a const member function. The stored pointer is
@@ -1615,3 +2047,38 @@
   - serialization
   - database client
   - message-bus client
+
+#### Crypto
+
+- [ ] Secure random bytes for salts, tokens, and application-managed nonces.
+- [x] HMAC generation and constant-time verification, including stream adapters.
+- [x] Complete HKDF for deriving purpose-specific symmetric keys.
+  - Provider-backed extract, expand, combined derivation, key integration,
+    capability discovery and documentation are implemented. The full
+    incremental build, the HKDF suite (RFC 5869 A.1-A.7, SHA-224/384/512,
+    255-block limit, concurrency, guide example), the crypto suites,
+    focused compiler/KDI regressions and the guide example have passed.
+    `HkdfPrk` drain-by-value stays rejected by design (like `HmacKey` and
+    `SymmetricKey`); `HkdfPrk!` transfers ownership.
+  - [x] Union ownership and imported-layout handling needed by the PRK: copies
+    through unions are rejected, drains by value are rejected, and private
+    owner unions of imported aggregates are cleaned exactly once. Remaining
+    union gaps are tracked in the language bugs above and do not affect HKDF.
+  - [x] Rebuilt affected artifacts and validated the compiler, KDI, HKDF and
+    guide changes, including the union owner-array regression.
+  - [x] Synchronized the language and crypto documentation and removed the PRK
+    ownership warning.
+- [ ] Password-based key derivation: Argon2id, scrypt, and PBKDF2 compatibility.
+- [ ] Asymmetric key pairs: generation, public/private keys, and metadata.
+- [ ] Digital signatures and verification: Ed25519, ECDSA, and RSA-PSS.
+- [ ] Key agreement: X25519 and ECDH, with HKDF integration.
+- [ ] Key serialization: PEM/DER, SubjectPublicKeyInfo, PKCS#1, and SEC1.
+- [ ] PKCS#8 private-key import/export, including encrypted keys.
+- [ ] X.509 certificate creation, extensions, and self-signing.
+- [ ] Certificate signing requests: creation, signing, parsing, and verification.
+- [ ] CA signing and issuance of certificates from signing requests.
+- [ ] Certificate and chain validation, trust stores, and hostname checks.
+- [ ] Certificate revocation checks using CRLs and OCSP.
+- [ ] PKCS#12 import/export for keys and certificate chains.
+- [ ] PKCS#7/CMS signed and encrypted message support.
+- [ ] Provider-aware capability discovery for the new crypto operations.

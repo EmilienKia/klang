@@ -92,8 +92,8 @@ type_reference_resolver::resolve_named_binary_operator_overload(
         if (!deduction.success) continue;
         size_t constraint_error_index = 0;
         std::string constraint_error_reason;
-        if (!validate_template_arg_constraints(
-                *ti, deduction.deduced_args, constraint_error_index, constraint_error_reason)) {
+        if (!validate_function_template_constraints(
+                *func, deduction.deduced_args, constraint_error_index, constraint_error_reason)) {
             continue;
         }
 
@@ -197,8 +197,8 @@ type_reference_resolver::resolve_named_binary_operator_overload(
         if (!deduction.success) continue;
         size_t constraint_error_index = 0;
         std::string constraint_error_reason;
-        if (!validate_template_arg_constraints(
-                *ti, deduction.deduced_args, constraint_error_index, constraint_error_reason)) continue;
+        if (!validate_function_template_constraints(
+                *func, deduction.deduced_args, constraint_error_index, constraint_error_reason)) continue;
 
         const auto key = build_instantiation_key(deduction.deduced_args);
         std::shared_ptr<function> concrete;
@@ -473,6 +473,12 @@ type_reference_resolver::resolve_binary_operator_overload(
     if (!func) return {nullptr, nullptr};
     func = materialize_binary_operator(func);
     if (!func) return {nullptr, nullptr};
+    if (func->is_deleted()) {
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_SUBSCRIPT_OVERLOAD_BAD_RETURN),
+            expr.first_lexeme(), "Use of deleted operator '{}' on type '{}'",
+            {get_operator_symbol(op_name),
+             left_expr->get_type() ? left_expr->get_type()->to_string() : "?"});
+    }
     if (left_target_type) left_target_type = func->parameters()[0]->get_type();
     adapt_target_type = func->parameters()[func->is_member() ? 0 : 1]->get_type();
     if (left_target_type) {

@@ -42,6 +42,7 @@ struct function_decl;
 struct parameter_spec;
 struct aggregate_decl;
 struct enum_decl;
+struct enum_entry;
 struct annotation_def;
 struct brace_init_list;
 struct alias_decl;
@@ -81,6 +82,7 @@ class annotation_type;
 class union_type_def;
 class alias_definition;
 class alias_type;
+class generic_source_type;
 class ns;
 class unit;
 

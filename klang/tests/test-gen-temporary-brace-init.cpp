@@ -504,6 +504,7 @@ module gen_temporary_brace_init_20;
 
 struct Box {
     v : int;
+    Box() : v(0) {}
     Box(x : int) : v(x) {}
 }
 
@@ -518,7 +519,82 @@ test() : int {
     REQUIRE(jit);
     auto test_fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(test_fn);
-    CHECK(test_fn() == 12); // middle slot default-initialized to Box(0)
+    CHECK(test_fn() == 12); // middle slot default-constructed to Box()
+}
+
+TEST_CASE("Temporary brace init: omitted and trailing array slots run the default constructor", "[gen][temporary_brace_init][array][regression]") {
+    auto jit = gen_jit(R"SRC(
+module gen_temporary_brace_init_default_slots;
+
+struct Plain {
+    x : int;
+}
+
+class Marked {
+public:
+    v : int;
+    Marked() : v(7) {}
+    Marked(x : int) : v(x) {}
+}
+
+sumTemp(a : Marked[3]&) : int {
+    return a[0].v + a[1].v + a[2].v;
+}
+
+testTemporary() : int {
+    return sumTemp(Marked[]{Marked(1), , Marked(3)});
+}
+
+testVariable() : int {
+    a : Marked[3] {Marked(1), , Marked(3)};
+    b : Marked[2] {Marked(5)};
+    return a[0].v * 1000 + a[1].v * 100 + a[2].v * 10 + b[1].v;
+}
+
+testPlain() : int {
+    p : Plain[3] {Plain(), , Plain()};
+    return p[1].x;
+}
+)SRC");
+    REQUIRE(jit);
+    auto temporary_fn = jit->lookup_symbol<int(*)()>("testTemporary");
+    auto variable_fn = jit->lookup_symbol<int(*)()>("testVariable");
+    auto plain_fn = jit->lookup_symbol<int(*)()>("testPlain");
+    REQUIRE(temporary_fn);
+    REQUIRE(variable_fn);
+    REQUIRE(plain_fn);
+    CHECK(temporary_fn() == 1 + 7 + 3);
+    CHECK(variable_fn() == 1000 + 700 + 30 + 7);
+    CHECK(plain_fn() == 0);
+}
+
+TEST_CASE("Temporary brace init: omitted array slot requires a default constructor", "[gen][temporary_brace_init][array][regression]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+module gen_temporary_brace_init_no_default;
+
+struct Box {
+    v : int;
+    Box(x : int) : v(x) {}
+}
+
+test() : int {
+    a : Box[3] {Box(5), , Box(7)};
+    return a[1].v;
+}
+)SRC"));
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+module gen_temporary_brace_init_no_default_trailing;
+
+struct Box {
+    v : int;
+    Box(x : int) : v(x) {}
+}
+
+test() : int {
+    a : Box[3] {Box(5)};
+    return a[1].v;
+}
+)SRC"));
 }
 
 TEST_CASE("Temporary brace init: array temporary with constructor-style elements", "[gen][temporary_brace_init][array]") {

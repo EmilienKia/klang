@@ -41,6 +41,8 @@ When no exact match exists, the compiler considers implicit conversions:
 - **Narrowing** (accepted): e.g., `int` argument matched to `short` parameter.
 - **Varargs packing** (lowest priority): when a varargs overload is the only match.
 
+When several overloads differ only by observer kind (`T+`, `T?`, `T*`), a conversion that keeps the argument's observer kind is preferred over one that changes it; an owner argument (`T!`) prefers the link/view overload over the raw pointer one, for derived-to-base upcasts. See [Types — Static indirection upcast](../basic/types.md#133-static-indirection-upcast-aggregate-types).
+
 See [Types — Implicit conversions](../basic/types.md#7-implicit-conversions) for the full list.
 
 ### Overload priority order

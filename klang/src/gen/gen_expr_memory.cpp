@@ -34,6 +34,7 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Intrinsics.h>
+#include <set>
 #include <unordered_set>
 #include "../errors.hpp"
 namespace k::model::gen {
@@ -219,7 +220,8 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
             expr._uniform_constructor = best_ctor;
             expr.set_uniform_ctor_args(adapted_args);
             check_constructor_visibility(*best_ctor, expr);
-            check_call_contract(*best_ctor, expr.first_lexeme());
+            check_call_contract(*best_ctor, expr.first_lexeme(),
+                                dynamic_cast<const element*>(var_def.get()));
         } else if (type::is_primitive(elem_type)) {
             // Primitive: must have exactly one arg convertible to the element type
             if (expr._uniform_ctor_args.size() > 1) {
@@ -436,6 +438,8 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
                         "No matching constructor for array element {} of type '{}'",
                         {std::to_string(i), st_type->to_string()});
                 }
+                check_call_contract(*best_ctor, expr.first_lexeme(),
+                                    dynamic_cast<const element*>(var_def.get()));
                 // Store ctor info in the expression for later use by codegen
                 // For now, adapt the arguments
                 func_inv->assign_arguments(adapted_args);
@@ -450,10 +454,41 @@ void type_reference_resolver::visit_array_init_expression(array_init_expression&
                         {std::to_string(i), st_type->to_string(),
                          e->get_type() ? e->get_type()->to_string() : "?"});
                 }
+                check_call_contract(*best_ctor, expr.first_lexeme(),
+                                    dynamic_cast<const element*>(var_def.get()));
                 if (!adapted_args.empty() && adapted_args[0] != e) {
                     expr.assign_element(i, adapted_args[0]);
                 }
-             }
+            }
+        }
+        bool needs_default = init_count < arr_size;
+        for (size_t i = 0; i < init_count && !needs_default; ++i)
+            needs_default = !expr.element(i);
+        if (needs_default && struct_model) {
+            // Omitted and trailing slots are default-constructed. A type that declares
+            // constructors but no parameterless one cannot be defaulted.
+            bool declares_ctor = false;
+            bool has_default_ctor = false;
+            for (const auto& ctor : struct_model->constructors()) {
+                if (!ctor) continue;
+                if (!ctor->is_compiler_generated()) declares_ctor = true;
+                if (ctor->parameters().empty()) has_default_ctor = true;
+            }
+            if (declares_ctor && !has_default_ctor) {
+                throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_ARRAY_ELEM_NO_CTOR), expr.first_lexeme(),
+                    "Array initializer of '{}' omits elements, but '{}' has no default constructor",
+                    {var_def ? var_def->get_fq_name() : "<temporary>", struct_model->get_short_name()});
+            }
+            if (has_default_ctor) {
+                auto [default_ctor, default_args] = get_best_matching_constructor(
+                    struct_model->constructors(), std::vector<std::shared_ptr<expression>>{});
+                if (default_ctor) {
+                    check_constructor_visibility(*default_ctor, expr);
+                    check_call_contract(*default_ctor, expr.first_lexeme(),
+                                        dynamic_cast<const element*>(var_def.get()));
+                    expr._default_constructor = default_ctor;
+                }
+            }
         }
     }
 
@@ -722,6 +757,7 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
                             "No matching constructor for member '{}' of type '{}'",
                             {full_name, mem_st_type->to_string()});
                     } else {
+                        check_call_contract(*best_ctor, expr.first_lexeme(), resolved_mem.get());
                         m.resolved_constructor = best_ctor;
                         m.args = adapted_args;
                     }
@@ -767,6 +803,34 @@ void type_reference_resolver::visit_designated_struct_init_expression(designated
             }
         }
     }
+
+    // Codegen also default-constructs aggregate members omitted by a designated initializer.
+    std::set<std::string> designated_keys;
+    for (const auto& member : expr.members()) {
+        designated_keys.insert(member.qualifier.empty() ? member.member_name
+            : member.qualifier + "::" + member.member_name);
+    }
+    auto check_omitted_members = [&](const std::shared_ptr<aggregate>& owner, bool inherited) {
+        if (!owner) return;
+        for (const auto& [name, variable] : owner->variables()) {
+            auto member = std::dynamic_pointer_cast<member_variable_definition>(variable);
+            if (!member || is_synthetic(name)) continue;
+            if (designated_keys.count(name)
+                || (inherited && designated_keys.count(owner->get_short_name() + "::" + name))) continue;
+            auto member_type = std::dynamic_pointer_cast<struct_type>(member->get_type());
+            auto member_aggregate = member_type ? member_type->get_struct() : nullptr;
+            if (!member_aggregate) continue;
+            for (const auto& ctor : member_aggregate->constructors()) {
+                if (ctor && ctor->parameters().size() <= 1) {
+                    check_call_contract(*ctor, expr.first_lexeme(), member.get());
+                    break;
+                }
+            }
+        }
+    };
+    check_omitted_members(target_struct, false);
+    for (const auto& base : all_bases)
+        check_omitted_members(base.base, true);
 
     // Evaluate constant struct value if target is a struct and all members are constant
     if (target_struct && !target_struct->is_class()) {
@@ -970,6 +1034,19 @@ void implementation_generator::visit_array_init_expression(array_init_expression
                     } else {
                         _builder->CreateStore(_value, elem_ptr);
                     }
+                }
+            }
+        }
+        // Omitted and trailing slots of struct arrays run the default constructor.
+        if (auto default_ctor = expr._default_constructor) {
+            auto ctor_it = _context->_functions.find(default_ctor->shared_as<function>());
+            if (ctor_it != _context->_functions.end()) {
+                for (size_t i = 0; i < arr_size; ++i) {
+                    if (i < expr.size() && expr.element(i)) continue;
+                    llvm::Value* elem_ptr = _builder->CreateConstInBoundsGEP2_32(
+                        llvm_arr_type, data_ptr, 0, i, "arr_default_" + std::to_string(i));
+                    create_call_or_invoke(ctor_it->second->getFunctionType(), ctor_it->second,
+                                          {elem_ptr}, "");
                 }
             }
         }

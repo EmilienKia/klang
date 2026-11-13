@@ -238,6 +238,7 @@ std::string make_signature(const std::string& name,
     out << operator_display_name(name) << "(";
     for (size_t i = 0; i < params.size(); ++i) {
         if (i) out << ", ";
+        if (params[i].is_ffi_cstring) out << "@ffi::CString ";
         out << params[i].name;
         if (params[i].is_varargs)
             out << "...";
@@ -247,6 +248,20 @@ std::string make_signature(const std::string& name,
     if (ret)
         out << " : " << type_to_string(*ret);
     return out.str();
+}
+
+std::string constructor_signature(const std::string& name, const kdi_constructor& ctor) {
+    std::string result = make_signature(name, ctor.params, nullptr);
+    if (!ctor.throws_spec) return result + " [throws contract unknown]";
+    if (!ctor.throws_spec->empty()) {
+        result += " throws(";
+        for (size_t i = 0; i < ctor.throws_spec->size(); ++i) {
+            if (i) result += ", ";
+            result += type_to_string((*ctor.throws_spec)[i]);
+        }
+        result += ")";
+    }
+    return result;
 }
 
 std::string make_slug(std::string value) {
@@ -1018,7 +1033,7 @@ void write_aggregate_body(std::ostringstream& out,
 
     std::vector<kdi_method> methods = agg.methods;
     methods.erase(std::remove_if(methods.begin(), methods.end(), [](const auto& m) {
-        return m.template_origin.has_value();
+        return m.is_private || m.template_origin.has_value();
     }), methods.end());
     std::sort(methods.begin(), methods.end(), [](const auto& a, const auto& b) {
         if (a.name != b.name) return a.name < b.name;
@@ -1026,6 +1041,7 @@ void write_aggregate_body(std::ostringstream& out,
     });
 
     std::vector<kdi_constructor> constructors = agg.constructors;
+    std::erase_if(constructors, [](const auto& ctor) { return ctor.is_private; });
     std::sort(constructors.begin(), constructors.end(), [](const auto& a, const auto& b) {
         if (a.params.size() != b.params.size()) return a.params.size() < b.params.size();
         return a.mangled_name < b.mangled_name;
@@ -1058,7 +1074,7 @@ void write_aggregate_body(std::ostringstream& out,
         for (size_t i = 0; i < constructors.size(); ++i) {
             const auto& ctor = constructors[i];
             const std::string anchor = "ctor-" + std::to_string(i);
-            out << "- [" << code(make_signature(agg.name, ctor.params, nullptr)) << "](#" << anchor << ")";
+            out << "- [" << code(constructor_signature(agg.name, ctor)) << "](#" << anchor << ")";
             const std::string brief = compact_doc_brief(ctor.doc);
             if (!brief.empty())
                 out << " - " << md_escape(brief);
@@ -1137,7 +1153,7 @@ void write_aggregate_body(std::ostringstream& out,
     for (size_t i = 0; i < constructors.size(); ++i) {
         const auto& ctor = constructors[i];
         const std::string anchor = "ctor-" + std::to_string(i);
-        out << "\n### <a id=\"" << anchor << "\"></a>" << code(make_signature(agg.name, ctor.params, nullptr)) << "\n\n";
+        out << "\n### <a id=\"" << anchor << "\"></a>" << code(constructor_signature(agg.name, ctor)) << "\n\n";
         out << "- Visibility: " << code(visibility_to_string(ctor.visibility)) << "\n";
         append_doc_function(out, ctor.doc);
     }
@@ -1153,6 +1169,7 @@ void write_aggregate_body(std::ostringstream& out,
             << code(make_signature(method.name, method.params, &method.return_type)) << "\n\n";
         out << "- Visibility: " << code(visibility_to_string(method.visibility)) << "\n";
         out << "- Static: `" << (method.is_static ? "true" : "false") << "`\n";
+        if (method.is_extern) out << "- Native C symbol: " << code(method.mangled_name) << "\n";
         append_doc_function(out, method.doc);
     }
 }
@@ -1181,13 +1198,14 @@ void add_aggregate_member_refs(std::vector<symbol_ref>& refs,
     });
     std::vector<kdi_method> methods = agg.methods;
     methods.erase(std::remove_if(methods.begin(), methods.end(), [](const auto& m) {
-        return m.template_origin.has_value();
+        return m.is_private || m.template_origin.has_value();
     }), methods.end());
     std::sort(methods.begin(), methods.end(), [](const auto& a, const auto& b) {
         if (a.name != b.name) return a.name < b.name;
         return a.mangled_name < b.mangled_name;
     });
     std::vector<kdi_constructor> constructors = agg.constructors;
+    std::erase_if(constructors, [](const auto& ctor) { return ctor.is_private; });
     std::sort(constructors.begin(), constructors.end(), [](const auto& a, const auto& b) {
         if (a.params.size() != b.params.size()) return a.params.size() < b.params.size();
         return a.mangled_name < b.mangled_name;
@@ -1227,7 +1245,7 @@ void add_aggregate_member_refs(std::vector<symbol_ref>& refs,
                       "constructor",
                       agg.name,
                       fq_scope,
-                      make_signature(agg.name, constructors[i].params, nullptr),
+                      constructor_signature(agg.name, constructors[i]),
                       type_link + "#ctor-" + std::to_string(i),
                       compact_doc_brief(constructors[i].doc));
     }
@@ -1655,6 +1673,7 @@ bool write_namespace_tree(const kdi_namespace& ns,
             << code(make_signature(fn.name, fn.params, &fn.return_type)) << "\n\n";
         out << "- Visibility: " << code(visibility_to_string(fn.visibility)) << "\n";
         out << "- Static: `" << (fn.is_static ? "true" : "false") << "`\n";
+        if (fn.is_extern) out << "- Native C symbol: " << code(fn.mangled_name) << "\n";
         append_doc_function(out, fn.doc);
     }
 

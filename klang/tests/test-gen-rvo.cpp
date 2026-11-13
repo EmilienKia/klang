@@ -2080,3 +2080,64 @@ TEST_CASE("RVO-17: Converting-constructor variable init from a different-typed s
     CHECK(test() == 42);
 }
 
+TEST_CASE("RVO-18: Return of another struct inside try/finally — NRVO candidate must not alias it",
+          "[gen][rvo][rvo18][sret][regression]") {
+    // The NRVO scan used to skip try/catch/finally bodies, so `result` stayed
+    // aliased with the sret slot while `return make()` wrote into that same
+    // slot; the candidate's scope cleanup then destroyed the returned value.
+    auto jit = gen_jit(R"SRC(
+        module gen_rvo_44;
+
+        g_finally : int = 0;
+
+        struct Obj {
+            val : int;
+            Obj() : val(0) { }
+            Obj(v : int) : val(v) { }
+            ~Obj() { val = -1; }
+        }
+
+        make() : Obj {
+            value : Obj(7);
+            return value;
+        }
+
+        viaTry(flag : int) : Obj {
+            result : Obj(1);
+            if (flag == 0) {
+                return result;
+            }
+            try {
+                {
+                    return make();
+                }
+            } finally {
+                ++g_finally;
+            }
+        }
+
+        test_candidate() : int {
+            r : Obj = viaTry(0);
+            return r.val;
+        }
+
+        test_try() : int {
+            r : Obj = viaTry(1);
+            return r.val;
+        }
+
+        finallyCount() : int { return g_finally; }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test_candidate = jit->lookup_symbol<int(*)()>("test_candidate");
+    auto test_try = jit->lookup_symbol<int(*)()>("test_try");
+    auto finally_count = jit->lookup_symbol<int(*)()>("finallyCount");
+    REQUIRE(test_candidate != nullptr);
+    REQUIRE(test_try != nullptr);
+    REQUIRE(finally_count != nullptr);
+    CHECK(test_candidate() == 1);
+    CHECK(test_try() == 7);
+    CHECK(finally_count() == 1);
+}
+

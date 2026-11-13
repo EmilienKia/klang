@@ -56,6 +56,7 @@ class block;
 class parameter;
 class member_variable_definition;
 class symbol_expression;
+class annotation_holder;
 struct tpl_info;
 
 /**
@@ -113,6 +114,9 @@ public:
      */
     std::string emit_template_function(const function& fn);
 
+    /** Emit annotations preceding a raw template function declaration. */
+    std::string emit_function_annotations(const function& fn);
+
     /** Emit a private FFI dependency's declaration, preserving its native symbol. */
     std::string emit_extern_function_declaration(const function& fn,
                                                 const std::string& name = {});
@@ -151,6 +155,12 @@ private:
 
     /** Emit a function/method signature and body. */
     void emit_function(const function& fn);
+
+    /** Emit source annotations, returning whether the named FFI annotation was emitted. */
+    bool emit_annotations(const annotation_holder& holder, const std::string& ffi_name);
+
+    void emit_native_annotation(const function& fn);
+    void emit_throws(const function& fn);
 
     /** Emit a constructor signature and body. */
     void emit_constructor(const constructor& ctor);

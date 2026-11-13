@@ -19,11 +19,522 @@
 #include "resolvers_aggregate.hpp"
 #include "../model/imported.hpp"
 #include "../model/template.hpp"
+#include "../parse/ast.hpp"
 #include "../errors.hpp"
 
+#include <kdi.hpp>
+#include <algorithm>
 #include <typeinfo>
 
 namespace k::model::gen {
+
+namespace {
+
+bool source_may_name(const std::string& source, const std::string& name) {
+    const auto identifier_char = [](char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+            || (c >= '0' && c <= '9') || c == '_';
+    };
+    for (auto pos = source.find(name); pos != std::string::npos;
+         pos = source.find(name, pos + 1)) {
+        const auto end = pos + name.size();
+        if ((pos == 0 || !identifier_char(source[pos - 1]))
+            && (end == source.size() || !identifier_char(source[end])))
+            return true;
+    }
+    return false;
+}
+
+bool qualified_name_may_name(const std::string& qualified, const std::string& name) {
+    return qualified == name
+        || (qualified.size() > name.size() + 1
+            && qualified.compare(qualified.size() - name.size() - 2, 2, "::") == 0
+            && qualified.compare(qualified.size() - name.size(), name.size(), name) == 0);
+}
+
+bool imported_aggregate_may_name(const kdi::kdi_aggregate& agg, const std::string& name) {
+    if (agg.name == name) return true;
+    for (const auto& alias : agg.aliases)
+        if (alias.name == name || source_may_name(alias.source, name)) return true;
+    for (const auto& un : agg.nested_unions)
+        if (un.name == name) return true;
+    for (const auto& nested : agg.nested)
+        if (imported_aggregate_may_name(nested, name)) return true;
+    return false;
+}
+
+bool imported_namespace_may_name(const kdi::kdi_namespace& ns, const std::string& name) {
+    if (ns.name == name) return true;
+    for (const auto& agg : ns.aggregates)
+        if (imported_aggregate_may_name(agg, name)) return true;
+    for (const auto& en : ns.enums)
+        if (en.name == name) return true;
+    for (const auto& un : ns.unions)
+        if (un.name == name) return true;
+    for (const auto& alias : ns.aliases)
+        if (alias.name == name || source_may_name(alias.source, name)) return true;
+    for (const auto& def : ns.template_defs) {
+        if (def.name == name || source_may_name(def.source, name)
+            || (def.aggregate_signature && imported_aggregate_may_name(*def.aggregate_signature, name)))
+            return true;
+    }
+    for (const auto& child : ns.namespaces)
+        if (imported_namespace_may_name(child, name)) return true;
+    return false;
+}
+
+bool imported_file_may_name(const kdi::kdi_file& file, const std::string& name) {
+    if (imported_namespace_may_name(file.unit.root_ns, name)) return true;
+    for (const auto& entry : file.types.aggregates)
+        if (qualified_name_may_name(entry.fq_name, name)) return true;
+    for (const auto& entry : file.types.enums)
+        if (qualified_name_may_name(entry.fq_name, name)) return true;
+    return false;
+}
+
+bool imports_prove_name_absent(const unit& u, const std::string& name) {
+    for (const auto& [key, agg] : u.get_imported_aggregates())
+        if (key == name || (agg && agg->get_short_name() == name)) return false;
+    for (const auto& imp : u.get_imports())
+        if (!imp.kdi || imported_file_may_name(*imp.kdi, name)) return false;
+    for (const auto& kdi : u.get_transitive_kdis())
+        if (!kdi || imported_file_may_name(*kdi, name)) return false;
+    return true;
+}
+
+bool generated_namespace_using_proves_name_absent(
+    const unit& u, const element& scope, const using_directive& directive,
+    const std::string& name)
+{
+    // Imported namespaces can also contain local declarations. Check their
+    // model holders here; the loaded KDI scan below covers unmaterialised names.
+    if (&scope != u.get_root_namespace().get() || directive.ast_node
+        || !directive.is_namespace() || directive.has_alias())
+        return false;
+    auto target = std::dynamic_pointer_cast<const ns>(
+        resolve_using_target(directive.target_name, u));
+    if (!target || !target->get_using_directives().empty()
+        || target->get_aggregate(name) || target->get_enum(name)
+        || target->get_union(name) || target->get_alias(name)
+        || target->get_child_namespace(name))
+        return false;
+    return true;
+}
+
+std::shared_ptr<aggregate> local_qualified_bound(
+    const unit& u, const element& declaration, const k::name& written)
+{
+    auto root = u.get_root_namespace();
+    if (!root || written.empty()) return {};
+    auto path = written.without_root_prefix();
+    if (written.has_root_prefix()) {
+        const auto module = u.get_unit_name().without_root_prefix();
+        if (!module.empty() && path.size() > module.size() && path.start_with(module))
+            path = path.without_front(module.size());
+    }
+    if (path.empty()) return {};
+    for (const auto& part : path.parts())
+        if (part.empty() || part.find("::") != std::string::npos) return {};
+    // Imported declarations or aliases named like the leading component could
+    // change lexical lookup even when a local namespace has been materialized.
+    if (!imports_prove_name_absent(u, path.front())
+        || scope_lookup::lookup_alias(declaration.shared_as<const element>(), written))
+        return {};
+
+    auto conflicts = [](const element& scope, const std::string& part) {
+        if (auto h = dynamic_cast<const alias_holder*>(&scope); h && h->get_alias(part)) return true;
+        if (auto h = dynamic_cast<const aggregate_holder*>(&scope); h && h->get_aggregate(part)) return true;
+        if (auto h = dynamic_cast<const enum_holder*>(&scope); h && h->get_enum(part)) return true;
+        if (auto h = dynamic_cast<const union_holder*>(&scope); h && h->get_union(part)) return true;
+        if (auto h = dynamic_cast<const variable_holder*>(&scope); h && h->get_variable(part)) return true;
+        if (auto h = dynamic_cast<const function_holder*>(&scope); h && h->get_function(part)) return true;
+        return false;
+    };
+
+    std::shared_ptr<const ns> current;
+    size_t next = 0;
+    if (written.has_root_prefix()) {
+        current = root;
+    } else {
+        if (path.size() < 2) return {};
+        for (auto scope = declaration.shared_as<const element>(); scope;
+             scope = scope->parent<const element>()) {
+            if (scope_lookup::is_definition_namespace_boundary(*scope)) return {};
+            if (auto owner = std::dynamic_pointer_cast<const aggregate>(scope)) {
+                if ((scope.get() != &declaration
+                     && (owner->is_template() || owner->is_instantiation()
+                         || owner->is_imported() || !owner->get_ast_aggregate_decl()))
+                    || !owner->get_bases().empty()) return {};
+            }
+            if (auto using_scope = std::dynamic_pointer_cast<const using_holder>(scope))
+                for (const auto& directive : using_scope->get_using_directives())
+                    if (!generated_namespace_using_proves_name_absent(
+                            u, *scope, directive, path.front())) return {};
+            if (current) continue;
+            if (conflicts(*scope, path.front())) return {};
+            if (auto owner = std::dynamic_pointer_cast<const ns>(scope)) {
+                auto child = owner->get_child_namespace(path.front());
+                if (child) {
+                    if (!child->is_source_declared_namespace()) return {};
+                    current = child;
+                    next = 1;
+                }
+            }
+        }
+    }
+    if (!current) return {};
+    for (; next + 1 < path.size(); ++next) {
+        if (conflicts(*current, path[next])) return {};
+        auto child = current->get_child_namespace(path[next]);
+        if (!child || !child->is_source_declared_namespace()
+            || scope_lookup::is_definition_namespace_boundary(*child)) return {};
+        current = child;
+    }
+    const auto& last = path.back();
+    if (current->get_alias(last) || current->get_enum(last) || current->get_union(last)
+        || current->get_child_namespace(last) || current->get_variable(last)
+        || current->get_function(last)) return {};
+    auto candidate = current->get_aggregate(last);
+    if (!candidate || candidate->is_template() || candidate->is_instantiation()
+        || candidate->is_imported() || !candidate->get_ast_aggregate_decl()
+        || !candidate->get_struct_type()
+        || candidate->get_struct_type()->get_struct() != candidate) return {};
+    return candidate;
+}
+
+} // namespace
+
+std::optional<size_t> scope_lookup::same_declaration_constraint_binder(
+    const tpl_info& info, size_t index)
+{
+    if (info.is_generic || !info.binder_scope || index >= info.params.size()) return {};
+    const auto& source = info.params[index].constraint_source_type;
+    if (!source || source->has_unknown_bindings() || source->has_unmodelled_arguments())
+        return {};
+    auto written = std::dynamic_pointer_cast<unresolved_type>(source->get_type());
+    if (!written || !written->source_binder() || written->has_template_args()
+        || written->has_model_template_args()) return {};
+    const auto& binder = *written->source_binder();
+    if (binder.scope != info.binder_scope || binder.ordinal >= index
+        || !info.params[binder.ordinal].is_type_param()
+        || info.params[binder.ordinal].is_pack) return {};
+    const auto& id = written->type_id();
+    if (id.has_root_prefix() || id.size() != 1
+        || id.front() != info.params[binder.ordinal].name) return {};
+    return binder.ordinal;
+}
+
+scope_lookup::local_bound_result scope_lookup::inspect_local_constraint_bound(
+    const unit& u, const element& declaration, const tpl_info& info, size_t index,
+    const std::vector<template_argument>& args)
+{
+    local_bound_result result;
+    if (info.is_generic || info.is_imported_signature_only
+        || !info.origin_module_ns_fq.empty() || info.private_definition_scope
+        || index >= info.params.size() || is_imported_definition_context(declaration))
+        return result;
+    result.parameter_index = index;
+    const auto& param = info.params[index];
+    const auto& source = param.constraint_source_type;
+    if (param.is_pack || !param.is_type_param() || !param.constraint_type || !source
+        || source->has_unknown_bindings() || source->has_unmodelled_arguments())
+        return result;
+    if (auto binder = same_declaration_constraint_binder(info, index)) {
+        if (args.size() != info.params.size()
+            || !is_local_concrete_constraint_argument(args[*binder])) return result;
+        auto bound_type = std::dynamic_pointer_cast<struct_type>(
+            type::remove_const(args[*binder].type_arg));
+        result.bound = bound_type ? bound_type->get_struct() : nullptr;
+        if (result.bound) result.state = local_bound_state::aggregate;
+        return result;
+    }
+    auto written = std::dynamic_pointer_cast<unresolved_type>(source->get_type());
+    if (!written || written->source_binder() || written->is_template_param_placeholder()
+        || written->has_template_args() || written->has_model_template_args())
+        return result;
+    const auto& id = written->type_id();
+    if (id.empty() || id.front().empty() || id.front().find("::") != std::string::npos
+        || source->lexical_bindings().contains(id.front()))
+        return result;
+    for (const auto& other : info.params)
+        if (other.name == id.front()) return result;
+
+    if (id.has_root_prefix() || id.size() > 1) {
+        if (auto candidate = local_qualified_bound(u, declaration, id)) {
+            result.state = local_bound_state::aggregate;
+            result.name = id.to_string();
+            result.bound = std::move(candidate);
+        }
+        return result;
+    }
+
+    result.name = id.front();
+    if (auto alias = lookup_alias(declaration.shared_as<const element>(), id)) {
+        // Only a direct namespace-level soft alias to a sibling source aggregate
+        // has enough lexical evidence here; cached alias targets can be stale.
+        auto scope = std::dynamic_pointer_cast<const ns>(declaration.parent<const element>());
+        if (!dynamic_cast<const function*>(&declaration) || !scope
+            || scope->get_alias(id.front()) != alias || alias->is_imported()
+            || alias->is_template() || !alias->is_soft()
+            || scope->get_aggregate(id.front()) || scope->get_enum(id.front())
+            || scope->get_union(id.front()) || scope->get_child_namespace(id.front())
+            || scope->get_variable(id.front()) || scope->get_function(id.front())) return result;
+        auto ast = alias->get_ast_alias_decl();
+        auto target = ast
+            ? std::dynamic_pointer_cast<k::parse::ast::identified_type_specifier>(ast->type)
+            : nullptr;
+        if (!target || target->has_explicit_template_args || !target->template_args.empty())
+            return result;
+        const auto target_name = target->name.to_name();
+        if (target_name.has_root_prefix() || target_name.size() != 1
+            || target_name.front().empty()
+            || scope->get_alias(target_name.front())
+            || scope->get_enum(target_name.front())
+            || scope->get_union(target_name.front())
+            || scope->get_child_namespace(target_name.front())
+            || scope->get_variable(target_name.front())
+            || scope->get_function(target_name.front())) return result;
+        auto candidate = scope->get_aggregate(target_name.front());
+        if (!candidate || candidate->is_template() || candidate->is_instantiation()
+            || candidate->is_imported() || !candidate->get_ast_aggregate_decl()
+            || !candidate->get_struct_type()) return result;
+        result.state = local_bound_state::aggregate;
+        result.bound = candidate;
+        return result;
+    }
+    for (auto scope = declaration.shared_as<const element>(); scope;
+         scope = scope->parent<element>()) {
+        if (is_definition_namespace_boundary(*scope)) return result;
+        if (auto owner = std::dynamic_pointer_cast<const aggregate>(scope)) {
+            if (scope.get() != &declaration
+                && (owner->is_template() || owner->is_instantiation() || owner->is_imported()
+                    || !owner->get_ast_aggregate_decl() || !owner->get_bases().empty()))
+                return result;
+            if (scope.get() == &declaration && !owner->get_bases().empty()) return result;
+        }
+        if (auto holder = std::dynamic_pointer_cast<const aggregate_holder>(scope)) {
+            if (auto candidate = holder->get_aggregate(id.front())) {
+                if (!candidate->is_template() && !candidate->is_instantiation()
+                    && !candidate->is_imported() && candidate->get_ast_aggregate_decl()
+                    && candidate->get_struct_type()) {
+                    for (auto owner = candidate->ancestor<aggregate>(); owner;
+                         owner = owner->ancestor<aggregate>())
+                        if (owner->is_template() || owner->is_instantiation()
+                            || owner->is_imported()) return result;
+                    result.state = local_bound_state::aggregate;
+                    result.bound = candidate;
+                }
+                return result;
+            }
+        }
+        if (auto enums = std::dynamic_pointer_cast<const enum_holder>(scope);
+            enums && enums->get_enum(id.front())) return result;
+        if (auto unions = std::dynamic_pointer_cast<const union_holder>(scope);
+            unions && unions->get_union(id.front())) return result;
+        if (auto usings = std::dynamic_pointer_cast<const using_holder>(scope))
+            for (const auto& directive : usings->get_using_directives())
+                if (!generated_namespace_using_proves_name_absent(
+                        u, *scope, directive, id.front()))
+                    return result;
+    }
+    if (imports_prove_name_absent(u, id.front()))
+        result.state = local_bound_state::missing;
+    return result;
+}
+
+bool scope_lookup::is_local_concrete_constraint_argument(const template_argument& arg) {
+    if (!arg.is_type()) return false;
+    auto arg_st = std::dynamic_pointer_cast<struct_type>(type::remove_const(arg.type_arg));
+    auto arg_agg = arg_st ? arg_st->get_struct() : nullptr;
+    if (!arg_agg || arg_agg->is_template() || arg_agg->is_instantiation()
+        || arg_agg->is_imported() || !arg_agg->get_ast_aggregate_decl()) return false;
+    for (auto owner = arg_agg->ancestor<aggregate>(); owner; owner = owner->ancestor<aggregate>())
+        if (owner->is_template() || owner->is_instantiation() || owner->is_imported())
+            return false;
+    return true;
+}
+
+bool scope_lookup::is_proven_unrelated_with_implicit_object(
+    const unit& u, const template_argument& arg, const std::shared_ptr<aggregate>& bound)
+{
+    if (!is_local_concrete_constraint_argument(arg) || !bound || !bound->get_struct_type()
+        || bound->get_struct_type()->get_struct() != bound || bound->is_template())
+        return false;
+    const auto* imported_k = u.find_import(k::name("k"));
+    if (!imported_k || !imported_k->kdi || imported_k->kdi->header.module_name != "k")
+        return false;
+    const auto is_root_object = [&](const std::shared_ptr<aggregate>& candidate) {
+        auto imported = std::dynamic_pointer_cast<imported_aggregate>(candidate);
+        auto descriptor = imported ? imported->get_kdi_aggregate() : nullptr;
+        return descriptor && descriptor->name == "Object"
+            && (descriptor->fq_name == "k::Object" || descriptor->fq_name == "::k::Object")
+            && descriptor->kind == kdi::kdi_aggregate_kind::class_
+            && !descriptor->template_origin && descriptor->bases.empty()
+            && candidate->get_name().without_root_prefix().to_string() == "k::Object"
+            && candidate->get_bases().empty()
+            && std::any_of(imported_k->kdi->unit.root_ns.aggregates.begin(),
+                           imported_k->kdi->unit.root_ns.aggregates.end(),
+                           [&](const auto& agg) { return &agg == descriptor; });
+    };
+    auto st = std::dynamic_pointer_cast<struct_type>(type::remove_const(arg.type_arg));
+    struct visit {
+        std::shared_ptr<aggregate> agg;
+        bool leaving;
+    };
+    std::vector<visit> pending{{st->get_struct(), false}};
+    std::unordered_set<const aggregate*> active, finished;
+    bool saw_implicit_object = false;
+    while (!pending.empty()) {
+        auto item = std::move(pending.back());
+        pending.pop_back();
+        if (!item.agg) return false;
+        if (item.leaving) {
+            active.erase(item.agg.get());
+            finished.insert(item.agg.get());
+            continue;
+        }
+        if (active.contains(item.agg.get())) return false;
+        if (finished.contains(item.agg.get())) continue;
+        if (item.agg == bound || item.agg->get_struct_type() == bound->get_struct_type()
+            || (!item.agg->get_fq_name().empty()
+                && item.agg->get_fq_name() == bound->get_fq_name())
+            || (!item.agg->get_mangled_name().empty()
+                && item.agg->get_mangled_name() == bound->get_mangled_name()))
+            return false;
+        if (is_root_object(item.agg)) {
+            finished.insert(item.agg.get());
+            continue;
+        }
+        if (!item.agg->get_struct_type()
+            || item.agg->get_struct_type()->get_struct() != item.agg
+            || !is_local_concrete_constraint_argument(
+                template_argument::make_type(item.agg->get_struct_type())))
+            return false;
+        auto declaration = item.agg->get_ast_aggregate_decl();
+        const auto& bases = item.agg->get_bases();
+        const bool implicit_object = declaration->bases.empty() && bases.size() == 1
+            && item.agg->is_class() && bases[0].raw_name == "Object"
+            && is_root_object(bases[0].base);
+        if (!implicit_object && declaration->bases.size() != bases.size()) return false;
+        if (!bases.empty() && !item.agg->bases_resolved()) return false;
+        if (!implicit_object)
+            for (size_t i = 0; i < bases.size(); ++i)
+                if (bases[i].raw_name != declaration->bases[i].qualified_name) return false;
+        saw_implicit_object |= implicit_object;
+        active.insert(item.agg.get());
+        pending.push_back({item.agg, true});
+        for (const auto& base : bases) {
+            if (!base.base) return false;
+            pending.push_back({base.base, false});
+        }
+    }
+    return saw_implicit_object;
+}
+
+bool scope_lookup::has_proven_local_ctad_default(
+    const aggregate& declaration, const tpl_info& info,
+    const std::vector<template_argument>& args)
+{
+    auto ast = declaration.get_ast_aggregate_decl();
+    auto scope = std::dynamic_pointer_cast<const ns>(declaration.parent<const element>());
+    if (info.is_generic || info.is_imported_signature_only || declaration.is_imported()
+        || declaration.is_instantiation() || !info.origin_module_ns_fq.empty()
+        || info.private_definition_scope || !scope
+        || is_imported_definition_context(declaration)
+        || !ast || !ast->bases.empty() || !declaration.get_bases().empty()
+        || !declaration.get_using_directives().empty()
+        || info.params.size() != 1 || args.size() != 1
+        || ast->template_params.size() != 1 || !ast->template_params[0]
+        || !info.params[0].is_type_param() || info.params[0].is_pack
+        || !is_local_concrete_constraint_argument(args[0])) return false;
+    auto written = std::dynamic_pointer_cast<k::parse::ast::identified_type_specifier>(
+        ast->template_params[0]->default_type_spec);
+    if (!written || written->has_explicit_template_args || !written->template_args.empty())
+        return false;
+    const auto name = written->name.to_name();
+    if (name.has_root_prefix() || name.size() != 1 || name.front().empty()
+        || name.front() == info.params[0].name) return false;
+    const auto& id = name.front();
+    if (declaration.get_aggregate(id) || declaration.get_alias(id)
+        || declaration.get_enum(id) || declaration.get_union(id)
+        || declaration.get_variable(id) || declaration.get_function(id)
+        || scope->get_alias(id) || scope->get_enum(id) || scope->get_union(id)
+        || scope->get_child_namespace(id) || scope->get_variable(id)
+        || scope->get_function(id)) return false;
+    auto expected = scope->get_aggregate(id);
+    auto actual = std::dynamic_pointer_cast<struct_type>(type::remove_const(args[0].type_arg));
+    return expected && expected->get_ast_aggregate_decl() && !expected->is_imported()
+        && !expected->is_template() && !expected->is_instantiation()
+        && actual && actual->get_struct() == expected;
+}
+
+scope_lookup::local_bound_result scope_lookup::analyze_local_aggregate_constraint(
+    const unit& u, const aggregate& declaration, const tpl_info& info,
+    const std::vector<template_argument>& args, const element& use_site)
+{
+    local_bound_result deferred;
+    if (!declaration.get_ast_aggregate_decl() || declaration.is_imported()
+        || declaration.is_instantiation() || args.size() != info.params.size()
+        || std::any_of(info.params.begin(), info.params.end(),
+                       [](const auto& param) { return param.is_pack; }))
+        return deferred;
+    bool has_source_function = false;
+    for (auto scope = use_site.shared_as<const element>(); scope;
+         scope = scope->parent<const element>()) {
+        if (auto fn = std::dynamic_pointer_cast<const function>(scope)) {
+            if (fn->is_template() || fn->is_instantiation() || !fn->get_ast_function_decl())
+                return deferred;
+            has_source_function = true;
+        }
+        if (auto owner = std::dynamic_pointer_cast<const aggregate>(scope);
+            owner && (owner->is_template() || owner->is_instantiation()
+                      || owner->is_imported() || !owner->get_ast_aggregate_decl()))
+            return deferred;
+    }
+    if (!has_source_function) return deferred;
+
+    local_bound_result result;
+    bool has_deferred_bound = false;
+    for (size_t i = 0; i < info.params.size(); ++i) {
+        const auto& param = info.params[i];
+        if (!param.is_type_param() || (!param.constraint_type && !param.constraint_source_type))
+            continue;
+        if (!is_local_concrete_constraint_argument(args[i])) {
+            has_deferred_bound = true;
+            continue;
+        }
+        auto bound = inspect_local_constraint_bound(u, declaration, info, i, args);
+        if (bound.state == local_bound_state::missing) return bound;
+        if (bound.state != local_bound_state::aggregate) {
+            has_deferred_bound = true;
+            continue;
+        }
+        tpl_info one;
+        one.binder_scope = info.binder_scope;
+        one.params.push_back(param);
+        one.params.front().constraint_type = bound.bound->get_struct_type();
+        one.params.front().constraint_source_type =
+            generic_source_type::capture(bound.bound->get_struct_type(), {});
+        auto evidence = analyze_template_arg_constraints(
+            one, {args[i]}, {generic_source_type::capture(args[i].type_arg, {})});
+        if (evidence.state == constraint_analysis_state::verified) {
+            result.verified_indices.push_back(i);
+        } else if (evidence.checks.size() == 1
+                   && ((evidence.state == constraint_analysis_state::invalid
+                        && evidence.checks.front().reason == constraint_analysis_reason::constraint)
+                       || (evidence.state == constraint_analysis_state::deferred
+                           && evidence.checks.front().reason == constraint_analysis_reason::incomplete_hierarchy
+                           && is_proven_unrelated_with_implicit_object(u, args[i], bound.bound)))) {
+            bound.state = local_bound_state::violated;
+            return bound;
+        } else {
+            has_deferred_bound = true;
+        }
+    }
+    if (!result.verified_indices.empty() && !has_deferred_bound)
+        result.state = local_bound_state::verified;
+    return result;
+}
 
 std::shared_ptr<aggregate> scope_lookup::lookup_imported_lexical_aggregate(
     unit& u, const std::shared_ptr<context>& ctx,
@@ -441,6 +952,11 @@ bool scope_lookup::same_signature_type(const std::shared_ptr<type>& a, const std
         }
         return true;
     }
+    auto generic_a = std::dynamic_pointer_cast<unresolved_type>(ta);
+    auto generic_b = std::dynamic_pointer_cast<unresolved_type>(tb);
+    if ((generic_a && generic_a->has_model_only_template_args())
+        || (generic_b && generic_b->has_model_only_template_args()))
+        return type::are_equal(ta, tb);
     if (type::are_equal(ta, tb)) return true;
     if (ta->get_subtype() && tb->get_subtype() && typeid(*ta) == typeid(*tb)) {
         if (auto array = std::dynamic_pointer_cast<sized_array_type>(ta)) {
@@ -597,17 +1113,33 @@ std::vector<std::string> split_qualified_name(const std::string& name) {
 std::shared_ptr<aggregate>
 scope_lookup::lookup_structure_or_import(unit& u, const std::shared_ptr<context>& ctx,
                                           std::shared_ptr<element> elem, const std::string& name) {
+    // A leading "::" roots the name: the scope chain is not searched.
+    const bool rooted = name.rfind("::", 0) == 0;
+    const std::string body = rooted ? name.substr(2) : name;
+    if (body.empty()) return {};
+    k::name qname{false, split_qualified_name(body)};
+
     // Simple (unqualified) name: standard scope-chain lookup among locally
     // declared aggregates first.
-    if (name.find("::") == std::string::npos) {
-        if (auto agg = lookup_structure(elem, name)) return agg;
+    if (!rooted && body.find("::") == std::string::npos) {
+        if (auto agg = lookup_structure(elem, body)) return agg;
     } else {
         // Namespace-qualified name (e.g. "k::Object"): descend namespaces from
         // the compilation unit's root, matching locally-declared aggregates.
+        // A rooted name may repeat the current module name as its first part.
         if (auto root_ns_ptr = root_namespace(*elem)) {
-            k::name qname{false, split_qualified_name(name)};
             if (auto res = aggregate_type_resolver::resolve_struct_from(*root_ns_ptr, qname)) {
                 return res;
+            }
+            if (rooted) {
+                const auto unit_name = u.get_unit_name().without_root_prefix();
+                if (!unit_name.empty() && qname.size() > unit_name.size()
+                    && qname.start_with(unit_name)) {
+                    if (auto res = aggregate_type_resolver::resolve_struct_from(
+                            *root_ns_ptr, qname.without_front(unit_name.size()))) {
+                        return res;
+                    }
+                }
             }
         }
     }
@@ -617,7 +1149,6 @@ scope_lookup::lookup_structure_or_import(unit& u, const std::shared_ptr<context>
     // not part of the locally-declared aggregate tree at all. This handles both
     // simple and qualified forms uniformly (find_imported_type searches across
     // all imported modules by whatever name form is given).
-    k::name qname{false, split_qualified_name(name)};
     if (auto imp_agg = u.get_or_create_imported_aggregate(qname, ctx)) {
         return std::dynamic_pointer_cast<aggregate>(imp_agg);
     }
@@ -819,14 +1350,119 @@ scope_lookup::lookup_alias(std::shared_ptr<const element> elem, const k::name& n
     return {};
 }
 
+std::optional<scope_lookup::qualified_using_target>
+scope_lookup::lookup_qualified_using(std::shared_ptr<const element> elem, const k::name& name) {
+    if (!elem || name.size() < 2) return {};
+    auto root = root_namespace(*elem);
+    if (!root) return {};
+    auto path = name.without_root_prefix();
+    if (name.has_root_prefix()) {
+        const auto module = root->get_name().without_root_prefix();
+        if (!module.empty() && path.size() > module.size() && path.start_with(module))
+            path = path.without_front(module.size());
+    }
+    if (path.size() < 2) return {};
+    if (!name.has_root_prefix()) {
+        if (is_enclosing_template_param_name(*elem, path.front())) return {};
+        for (auto scope = elem; scope; scope = scope->parent<const element>()) {
+            if (auto owner = std::dynamic_pointer_cast<const aggregate>(scope)) {
+                auto definition = owner->get_tpl_definition();
+                auto info = definition ? definition->get_tpl_info() : nullptr;
+                if (info && std::any_of(info->params.begin(), info->params.end(),
+                    [&](const auto& param) { return param.name == path.front(); })) return {};
+            }
+            if (auto fn = std::dynamic_pointer_cast<const function>(scope);
+                fn && fn->has_tpl_instantiation_subst()
+                && fn->get_tpl_instantiation_subst().contains(path.front())) return {};
+        }
+    }
+
+    auto competing_using = [](const using_holder& holder, const std::string& part) {
+        for (const auto& dir : holder.get_using_directives()) {
+            if (dir.is_namespace() && !dir.has_alias()) {
+                if (dir.ast_node) return true;
+            } else if (dir.has_alias() ? *dir.alias_name == part
+                                      : !dir.target_name.empty() && dir.target_name.back() == part) {
+                return true;
+            }
+        }
+        return false;
+    };
+    auto find_in = [&](const std::shared_ptr<const ns>& first)
+        -> std::optional<qualified_using_target> {
+        auto current = first;
+        for (size_t i = 1; i + 1 < path.size(); ++i) {
+            if (current->get_aggregate(path[i]) || current->get_alias(path[i])
+                || current->get_enum(path[i]) || current->get_union(path[i])
+                || competing_using(*current, path[i])) return {};
+            current = current->get_child_namespace(path[i]);
+            if (!current) return {};
+        }
+        const auto& last = path.back();
+        if (current->get_aggregate(last) || current->get_alias(last)
+            || current->get_enum(last) || current->get_union(last)
+            || current->get_child_namespace(last) || current->get_variable(last)
+            || current->get_function(last)) return {};
+        const using_directive* match = nullptr;
+        for (const auto& dir : current->get_using_directives()) {
+            if (dir.is_namespace()) {
+                if (!dir.has_alias() && dir.ast_node) return {};
+                if (dir.has_alias() && *dir.alias_name == last) return {};
+                continue;
+            }
+            if (dir.target_name.empty()) continue;
+            const auto& exposed = dir.has_alias() ? *dir.alias_name : dir.target_name.back();
+            if (exposed != last) continue;
+            if (match) return {};
+            match = &dir;
+        }
+        if (!match) return {};
+        return qualified_using_target{current, match->target_name};
+    };
+
+    if (name.has_root_prefix()) {
+        std::shared_ptr<const ns> root_scope = root;
+        if (root_scope->get_aggregate(path.front()) || root_scope->get_alias(path.front())
+            || root_scope->get_enum(path.front()) || root_scope->get_union(path.front())
+            || competing_using(*root_scope, path.front())) return {};
+        auto first = root_scope->get_child_namespace(path.front());
+        return first ? find_in(first) : std::nullopt;
+    }
+    for (auto scope = elem; scope; scope = scope->parent<const element>()) {
+        if (auto owner = std::dynamic_pointer_cast<const aggregate>(scope);
+            owner && !owner->get_bases().empty()) return {};
+        if (auto holder = std::dynamic_pointer_cast<const aggregate_holder>(scope);
+            holder && holder->get_aggregate(path.front())) return {};
+        if (auto holder = std::dynamic_pointer_cast<const alias_holder>(scope);
+            holder && holder->get_alias(path.front())) return {};
+        if (auto holder = std::dynamic_pointer_cast<const enum_holder>(scope);
+            holder && holder->get_enum(path.front())) return {};
+        if (auto holder = std::dynamic_pointer_cast<const union_holder>(scope);
+            holder && holder->get_union(path.front())) return {};
+        if (auto holder = std::dynamic_pointer_cast<const using_holder>(scope);
+            holder && competing_using(*holder, path.front())) return {};
+        if (auto current = std::dynamic_pointer_cast<const ns>(scope)) {
+            if (auto first = current->get_child_namespace(path.front()))
+                return find_in(first);
+        }
+        if (is_definition_namespace_boundary(*scope)) break;
+    }
+    return {};
+}
+
 std::shared_ptr<type>
 scope_lookup::materialize_alias_type(const std::shared_ptr<alias_definition>& alias,
                                      const std::shared_ptr<context>& ctx,
                                      const std::function<std::shared_ptr<type>(const k::name&, const element&)>& resolve_by_name,
                                      bool& cycle,
-                                     const std::function<std::shared_ptr<type>(const std::shared_ptr<type>&, const element&)>& resolve_chain) {
+                                     const std::function<std::shared_ptr<type>(const std::shared_ptr<type>&, const element&)>& resolve_chain,
+                                     bool allow_unlaid_out_aggregate) {
     cycle = false;
     if (!alias) return {};
+    const auto usable_target = [allow_unlaid_out_aggregate](const std::shared_ptr<type>& t) {
+        return type::is_resolved(t)
+            || (allow_unlaid_out_aggregate && std::dynamic_pointer_cast<struct_type>(t));
+    };
 
     // A parameterised alias denotes no type by itself: 'Vec' alone is not a
     // type, only 'Vec<int>' is. Resolution happens at the use site, through
@@ -852,7 +1488,7 @@ scope_lookup::materialize_alias_type(const std::shared_ptr<alias_definition>& al
         alias->_resolving = true;
         target = resolve_by_name(alias->get_target_name(), *scope);
         alias->_resolving = false;
-        if (!target || !type::is_resolved(target)) {
+        if (!usable_target(target)) {
             // Not a type — the alias targets a function or a variable, resolved elsewhere.
             return {};
         }
@@ -870,27 +1506,27 @@ scope_lookup::materialize_alias_type(const std::shared_ptr<alias_definition>& al
     // A composite target — most notably a callable prototype `(int):bool` —
     // is resolved through the caller's own type-resolution chain: its
     // components are types, not a name.
-    if (!type::is_resolved(target) && scope && resolve_chain) {
+    if (!usable_target(target) && scope && resolve_chain) {
         if (auto resolved = resolve_chain(target, *scope)) {
-            if (type::is_resolved(resolved)) target = resolved;
+            if (usable_target(resolved)) target = resolved;
         }
     }
-    if (!type::is_resolved(target) && ctx) {
+    if (!usable_target(target) && ctx) {
         if (auto resolved = ctx->resolve_type(target)) {
-            if (type::is_resolved(resolved)) target = resolved;
+            if (usable_target(resolved)) target = resolved;
         }
     }
-    if (!type::is_resolved(target) && scope && resolve_by_name) {
+    if (!usable_target(target) && scope && resolve_by_name) {
         if (auto unres = std::dynamic_pointer_cast<unresolved_type>(target)) {
             if (auto resolved = resolve_by_name(unres->type_id(), *scope)) {
-                if (type::is_resolved(resolved)) target = resolved;
+                if (usable_target(resolved)) target = resolved;
             }
         }
     }
 
     alias->_resolving = false;
 
-    if (!type::is_resolved(target)) {
+    if (!usable_target(target)) {
         return {};
     }
 
@@ -919,9 +1555,10 @@ bool contains_template_parameter(const std::shared_ptr<type>& t,
         }
         const auto& model_args = unres->get_model_template_args();
         const auto& ast_args = unres->get_ast_template_args();
-        for (std::size_t i = 0; i < ast_args.size(); ++i) {
+        const auto count = unres->has_model_only_template_args() ? model_args.size() : ast_args.size();
+        for (std::size_t i = 0; i < count; ++i) {
             auto arg = i < model_args.size() ? model_args[i] : nullptr;
-            if (!arg && ast_args[i] && ast_args[i]->is_type() && ast_args[i]->type_arg) {
+            if (!arg && i < ast_args.size() && ast_args[i] && ast_args[i]->is_type() && ast_args[i]->type_arg) {
                 arg = ctx->from_type_specifier(*ast_args[i]->type_arg);
             }
             if (contains_template_parameter(arg, scope, ctx)) return true;
@@ -983,7 +1620,7 @@ std::shared_ptr<type> scope_lookup::resolve_alias_template(
     // arguments; they take precedence over the AST arguments, which still name
     // the enclosing alias's own parameters.
     const auto& model_args = unres->get_model_template_args();
-    const bool use_model_args = unres->has_model_template_args();
+    const bool use_model_args = unres->has_model_only_template_args() || unres->has_model_template_args();
 
     const auto& ast_args = unres->get_ast_template_args();
     const std::size_t given = use_model_args ? model_args.size() : ast_args.size();
@@ -1005,6 +1642,12 @@ std::shared_ptr<type> scope_lookup::resolve_alias_template(
 
         if (use_model_args) {
             if (i < model_args.size()) arg_type = model_args[i];
+            if (!arg_type && i < model_args.size() && unres->has_model_only_template_args()) {
+                report_error(static_cast<unsigned int>(::k::diag::alias_diag::ERR_ALIAS_TEMPLATE_ARG_MISMATCH),
+                             "Template argument for parameter '{}' of parameterised {} '{}' could not be resolved",
+                             {param.name, kind, alias->get_short_name()});
+                return {};
+            }
             // A substituted argument list carries a null slot for every argument
             // that names no template parameter ('bool' in 'Fn<T,bool>'): the AST
             // argument at the same index still describes it exactly.

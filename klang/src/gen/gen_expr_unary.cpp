@@ -18,6 +18,7 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "../common/llvm_scope_exit.hpp"
 #include "../model/expressions.hpp"
 #include "../model/statements.hpp"
 #include "../model/operators.hpp"
@@ -33,10 +34,90 @@
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/GlobalVariable.h>
 #include <llvm/IR/Intrinsics.h>
+#include <type_traits>
 #include <unordered_set>
 #include "../errors.hpp"
 namespace k::model::gen {
 // unary/binary base + address_of, drain, load_value, dereference
+
+implementation_generator::value_result implementation_generator::load_place(
+    place_result place, llvm::Type* type, const llvm::Twine& name) {
+    return {_builder->CreateLoad(type, place.address, name)};
+}
+
+implementation_generator::value_result implementation_generator::address_of_place(place_result place) {
+    return {place.address};
+}
+
+implementation_generator::place_result implementation_generator::dereference_address(value_result address) {
+    return {address.value};
+}
+
+implementation_generator::expression_result implementation_generator::evaluate_expression(expression& expr) {
+    expression_result_frame frame{&expr, std::nullopt};
+    auto* previous = _expression_result_frame;
+    _expression_result_frame = &frame;
+    auto restore = k::make_scope_exit([&] { _expression_result_frame = previous; });
+    _value = nullptr;
+    expr.accept(*this);
+    if (frame.result) return std::move(*frame.result);
+    return legacy_result{_value};
+}
+
+void implementation_generator::publish_expression_result(expression& expr, expression_result result) {
+    if (_expression_result_frame && _expression_result_frame->target == &expr) {
+        _expression_result_frame->result = std::move(result);
+        _value = nullptr;
+    } else {
+        _value = checked_legacy_result(result);
+    }
+}
+
+llvm::Value* implementation_generator::checked_legacy_result(const expression_result& result) {
+    return std::visit([&](const auto& item) -> llvm::Value* {
+        using result_type = std::decay_t<decltype(item)>;
+        if constexpr (std::is_same_v<result_type, place_result>) {
+            if (item.address && !item.address->getType()->isPointerTy()) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F023), {},
+                    "Internal error: a place cannot be passed to legacy codegen without an address");
+            }
+            return item.address;
+        } else if constexpr (std::is_same_v<result_type, value_result> ||
+                             std::is_same_v<result_type, legacy_result>) {
+            return item.value;
+        } else {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F023), {},
+                "Internal error: expression result cannot be passed to legacy codegen");
+        }
+    }, result);
+}
+
+implementation_generator::place_result implementation_generator::require_place(
+    const expression_result& result, expression& source) {
+    if (auto* place = std::get_if<place_result>(&result)) return *place;
+    if (auto* legacy = std::get_if<legacy_result>(&result)) {
+        auto source_type = source.get_type();
+        if ((type::is_reference(source_type) || type::is_drain(source_type))
+            && (!legacy->value || legacy->value->getType()->isPointerTy())) {
+            return {legacy->value};
+        }
+    }
+    throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F023), source.first_lexeme(),
+        "Internal error: expression did not produce an addressable place");
+}
+
+implementation_generator::value_result implementation_generator::require_value(
+    const expression_result& result, expression& source) {
+    if (auto* value = std::get_if<value_result>(&result)) return *value;
+    if (auto* legacy = std::get_if<legacy_result>(&result)) {
+        auto source_type = source.get_type();
+        if (!type::is_reference(source_type) && !type::is_drain(source_type)) {
+            return {legacy->value};
+        }
+    }
+    throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F023), source.first_lexeme(),
+        "Internal error: expression did not produce a value");
+}
 
 void symbol_resolver::visit_unary_expression(unary_expression& expr)
 {
@@ -173,16 +254,14 @@ void type_reference_resolver::visit_address_of_expression(address_of_expression&
 
 void implementation_generator::visit_address_of_expression(address_of_expression& expr) {
     set_debug_location(expr.first_lexeme());
-    _value = nullptr;
-    expr.sub_expr()->accept(*this);
-
-    if(!_value) {
+    auto operand_result = evaluate_expression(*expr.sub_expr());
+    auto operand = require_place(operand_result, *expr.sub_expr());
+    if(!operand.address) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F023), expr.first_lexeme(),
             "Internal error: the sub-expression of an address-of ('&') operator produced no LLVM value; "
             "this indicates a code-generation bug");
     }
-    // The value returned by the sub expression is the desired value
-    // _value = _value;
+    publish_expression_result(expr, address_of_place(operand));
 }
 
 //
@@ -272,14 +351,16 @@ void implementation_generator::visit_load_value_expression(load_value_expression
     if (expr.is_constant()) {
         auto t = type::remove_const(expr.get_type());
         if (t && (type::is_primitive(t) || type::is_enum(t) || type::is_null(t))) {
-            _value = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
-            if (_value) return;
+            auto* constant = _context->get_llvm_constant_from_constant_value(expr.get_constant_value(), expr.get_type());
+            if (constant) {
+                publish_expression_result(expr, value_result{constant});
+                return;
+            }
         }
     }
 
     auto* construction_destination = _sret_destination;
-    _value = nullptr;
-    expr.sub_expr()->accept(*this);
+    auto operand = evaluate_expression(*expr.sub_expr());
     // Use the expression's own type if set; fall back to the sub-expression's referenced type.
     auto load_type = expr.get_type();
     if (!load_type) {
@@ -293,17 +374,19 @@ void implementation_generator::visit_load_value_expression(load_value_expression
         }
     }
     if (load_type) {
-        llvm::Value* src_ptr = _value;
+        auto sub_type = expr.sub_expr()->get_type();
+        auto source = type::is_reference(sub_type) || type::is_drain(sub_type)
+            ? require_place(operand, *expr.sub_expr())
+            : dereference_address(require_value(operand, *expr.sub_expr()));
+        llvm::Value* src_ptr = source.address;
 
-        // ── Lvalue struct copy (Site 3): if the source is a non-temporary lvalue
-        //    of a non-trivially copyable struct type with a copy constructor, call
-        //    the copy constructor into a staging alloca so the callee receives a
-        //    proper copy (not a bitwise alias of the original object).
+        // Construct a value from an lvalue or drain in staging storage. A drain
+        // constructor may transfer resources; a copy constructor must not alias them.
         auto st_type_nc = std::dynamic_pointer_cast<struct_type>(
             type::remove_const(type::canonical(load_type)));
         if (st_type_nc) {
             auto sub_type = expr.sub_expr()->get_type();
-            bool src_is_lvalue_ref = type::is_reference(sub_type);
+            bool src_is_lvalue_ref = type::is_reference(sub_type) || type::is_drain(sub_type);
             // A prvalue constructed directly into its destination is deliberately
             // untracked: the destination owns it, and copying it would strand the
             // original object's resources when that same destination is overwritten.
@@ -312,26 +395,54 @@ void implementation_generator::visit_load_value_expression(load_value_expression
                                            || (construction_destination && src_ptr == construction_destination));
             if (src_is_lvalue_ref && !src_is_prvalue_temp) {
                 auto agg = st_type_nc->get_struct();
-                if (agg && agg->get_copy_constructor()) {
+                if (!agg) {
+                    if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), st_type_nc)) {
+                        auto* fn = _builder->GetInsertBlock()->getParent();
+                        llvm::IRBuilder<> entry(&fn->getEntryBlock(), fn->getEntryBlock().begin());
+                        auto* llvm_type = _context->get_llvm_type(st_type_nc);
+                        auto* staging = entry.CreateAlloca(llvm_type, nullptr, "union_value_copy");
+                        const bool source_const = sub_type->get_subtype()
+                            && type::is_const(sub_type->get_subtype());
+                        emit_union_copy(staging, src_ptr, *un, *un, false, source_const);
+                        publish_expression_result(expr, value_result{
+                            _builder->CreateLoad(llvm_type, staging, "union_copy_value")});
+                        return;
+                    }
+                }
+                if (agg && (expr.get_value_constructor() || agg->get_copy_constructor()
+                            || scalar_union_wrapper(agg, _unit.get_root_namespace()))) {
                     // Call copy constructor: dest = new staging alloca, src = lvalue ptr
                     llvm::Type* llvm_st = _context->get_llvm_type(st_type_nc);
                     llvm::Function* cur_fn = _builder->GetInsertBlock()->getParent();
                     llvm::IRBuilder<> entry_bld(&cur_fn->getEntryBlock(),
                                                 cur_fn->getEntryBlock().begin());
                     auto* staging = entry_bld.CreateAlloca(llvm_st, nullptr, "lval_copy");
-                    emit_value_copy_or_move(staging, src_ptr, st_type_nc,
-                        /*destroy_dest_first=*/false, expr.first_lexeme(), "by-value copy");
+                    if (auto ctor = expr.get_value_constructor()) {
+                        auto it = _context->_functions.find(ctor->shared_as<k::model::function>());
+                        if (it == _context->_functions.end()) {
+                            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F031),
+                                expr.first_lexeme(), "LLVM declaration not found for selected copy constructor of type '{}'",
+                                {st_type_nc->to_string()});
+                        }
+                        create_call_or_invoke(it->second->getFunctionType(), it->second, {staging, src_ptr});
+                    } else {
+                        emit_value_copy_or_move(staging, src_ptr, st_type_nc,
+                            /*destroy_dest_first=*/false, expr.first_lexeme(), "by-value copy",
+                            false, true, nullptr,
+                            sub_type->get_subtype() && type::is_const(sub_type->get_subtype()));
+                    }
                     // Load the struct value from staging so it can be passed by value.
                     // A call's argument cleanup scope owns successful copies until
                     // entry into the callee. A failed constructor never registers
                     // this staging storage as a live argument.
-                    _value = _builder->CreateLoad(llvm_st, staging, "lval_copy_load");
+                    publish_expression_result(expr, value_result{
+                        _builder->CreateLoad(llvm_st, staging, "lval_copy_load")});
                     return;
                 }
             }
         }
 
-        _value = _builder->CreateLoad(_context->get_llvm_type(load_type), src_ptr);
+        auto result = load_place(source, _context->get_llvm_type(load_type));
         // Value semantics: when a whole struct aggregate is loaded by value directly out
         // of a materialised prvalue temporary (e.g. `return Res();` or `consume(Res())`,
         // both lowered to a load of a temporary_construction_expression), the loaded
@@ -348,8 +459,11 @@ void implementation_generator::visit_load_value_expression(load_value_expression
             && type::is_struct(load_type) && is_expression_temporary(src_ptr)) {
             cancel_temporary_cleanup(src_ptr);
         }
+        publish_expression_result(expr, result);
+    } else {
+        // The unresolved fallback historically passed the operand through unchanged.
+        publish_expression_result(expr, legacy_result{checked_legacy_result(operand)});
     }
-    // else: leave _value as the alloca ptr (should not happen in correct IR)
 }
 
 
@@ -430,8 +544,7 @@ void type_reference_resolver::visit_dereference_expression(dereference_expressio
 
 void implementation_generator::visit_dereference_expression(dereference_expression& expr) {
     set_debug_location(expr.first_lexeme());
-    _value = nullptr;
-    expr.sub_expr()->accept(*this);
+    auto operand = evaluate_expression(*expr.sub_expr());
 
     auto sub_type = expr.sub_expr()->get_type();
 
@@ -447,8 +560,9 @@ void implementation_generator::visit_dereference_expression(dereference_expressi
                 if (udef->is_polymorphic()) {
                     auto base_agg = udef->get_polymorphic_base();
                     if (base_agg) {
-                        _value = emit_polymorphic_union_to_base_ptr(
-                            _builder.get(), _context.get(), *udef, base_agg.get(), _value);
+                        auto* base = emit_polymorphic_union_to_base_ptr(
+                            _builder.get(), _context.get(), *udef, base_agg.get(), checked_legacy_result(operand));
+                        publish_expression_result(expr, place_result{base});
                         return;
                     }
                 }
@@ -456,14 +570,16 @@ void implementation_generator::visit_dereference_expression(dereference_expressi
         }
     }
 
-    // If sub is ref<indirection>, load the stored address from the alloca
+    // If sub is ref<indirection>, load the stored address from the place.
+    value_result address{nullptr};
     std::shared_ptr<k::model::type> inner_type;
     if(auto ref_type = std::dynamic_pointer_cast<reference_type>(sub_type)) {
         inner_type = ref_type->get_subtype();
         llvm::Type* llvm_inner = _context->get_llvm_type(inner_type);
-        _value = _builder->CreateLoad(llvm_inner, _value, "deref_load");
+        address = load_place(require_place(operand, *expr.sub_expr()), llvm_inner, "deref_load");
     } else {
         inner_type = sub_type;
+        address = require_value(operand, *expr.sub_expr());
     }
 
     // For nullable indirections, emit a null-check before use
@@ -471,9 +587,9 @@ void implementation_generator::visit_dereference_expression(dereference_expressi
         std::dynamic_pointer_cast<view_type>(inner_type) ||
         std::dynamic_pointer_cast<owner_type>(inner_type)) {
         auto* fatal = get_or_declare_fatal_null_function("__k_fatal_null_dereference");
-        emit_null_check(_value, fatal, "deref");
+        emit_null_check(address.value, fatal, "deref");
     }
-    // _value now holds the raw pointer — acts as a reference to the pointed object
+    publish_expression_result(expr, dereference_address(address));
 }
 
 //

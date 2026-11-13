@@ -102,6 +102,15 @@ protected:
      */
     std::unordered_map<const variable_definition*, tpl_info::generic_usage_descriptor> _generic_usage_by_site;
 
+    /** Generic bindings of a qualifier template (`Host<int>::f`), keyed by the call/symbol using it. */
+    std::unordered_map<const element*, tpl_info::generic_usage_descriptor> _generic_qualifier_usages;
+
+    struct generic_constructor_usage {
+        std::shared_ptr<aggregate> definition;
+        tpl_info::generic_usage_descriptor bindings;
+    };
+    std::unordered_map<const element*, generic_constructor_usage> _generic_constructor_usages;
+
     /**
      * Guard set of instantiated aggregates already processed by
      * resolve_instantiated_aggregate(), to keep that pass idempotent and to
@@ -167,6 +176,12 @@ protected:
      * All resolution logic stays in the resolver, not in the model.
      */
     std::shared_ptr<type> resolve_type_by_name(const k::name& type_name, const element& context_elem);
+
+    bool validate_function_template_constraints(
+        const function& declaration, const std::vector<template_argument>& args,
+        size_t& error_index, std::string& error_kind,
+        bool* proven_bound_violation = nullptr, bool legacy_generic_rules = true,
+        std::shared_ptr<type>* proven_bound = nullptr);
 
     /** Resolve a struct type from a given element, without climbing to parents. */
     static std::shared_ptr<aggregate> resolve_struct_from(const element& elem, const k::name& qualified_name);
@@ -300,6 +315,20 @@ protected:
                              const std::shared_ptr<function>& facade);
 
     /**
+     * Inside an erased generic body, a call to a native function whose @ffi::CString
+     * parameter has an erased element type cannot be validated: remember the source-level
+     * type of the argument on the enclosing function so that each facade can check it.
+     * Arguments whose source type is not traceable are rejected.
+     */
+    void record_generic_cstring_obligations(const std::shared_ptr<function>& called,
+                                            const std::vector<std::shared_ptr<expression>>& args,
+                                            const lex::opt_any_lexeme& lexeme);
+
+    /** Validate the obligations of @p synthesis against the concrete arguments of @p facade. */
+    void replay_generic_cstring_obligations(const function& tpl_func, const function& facade,
+                                            const function& synthesis);
+
+    /**
      * Build (once) and resolve the single type-erased synthesis of the generic function or
      * method @p tpl_func; returns it (also when it already existed).
      */
@@ -361,15 +390,54 @@ protected:
     void check_generic_call_arguments(const function& called_func,
                                       const std::shared_ptr<expression>& receiver_expr,
                                       const std::vector<std::shared_ptr<expression>>& args,
-                                      const lex::opt_any_lexeme& lexeme);
+                                      const lex::opt_any_lexeme& lexeme,
+                                      const tpl_info::generic_usage_descriptor* usage_override = nullptr);
 
     /**
-     * Compute a concrete return type for generic member calls using receiver bindings.
+     * Compute a concrete return type for generic member calls using receiver bindings
+     * (or @p usage_override, e.g. the bindings of a `Host<int>::f()` qualifier).
      * Falls back to nullptr when no generic mapping can be inferred.
      */
     std::shared_ptr<type> resolve_generic_call_return_type(
         const function& called_func,
-        const std::shared_ptr<expression>& receiver_expr);
+        const std::shared_ptr<expression>& receiver_expr,
+        const tpl_info::generic_usage_descriptor* usage_override = nullptr);
+
+    /** Generic bindings recorded for the qualifier (`Host<int>::`) of a call or symbol, if any. */
+    const tpl_info::generic_usage_descriptor* find_generic_qualifier_usage(const element* site) const;
+
+    /** Declared (unspecialised) parameter types of a generic member, from its source or KDI signature. */
+    std::vector<std::shared_ptr<type>> declared_generic_param_types(const function& called_func);
+
+    /**
+     * Reject a use of @p called_func whose erased body moves a value through an addresser of a
+     * type parameter (see function::get_generic_pointee_value_params) when @p usage binds that
+     * parameter to a type that is not pointer-like.
+     */
+    void check_generic_pointee_access(const function& called_func,
+                                      const tpl_info::generic_usage_descriptor& usage,
+                                      const lex::opt_any_lexeme& lexeme);
+
+    /** Substitute @p usage into the declared parameter types; false when any stays unresolved. */
+    bool concrete_generic_param_types(const function& called_func,
+                                      const tpl_info::generic_usage_descriptor& usage,
+                                      std::vector<std::shared_ptr<type>>& params);
+
+    /**
+     * Validate the @ffi::CString parameters of a generic host's extern member against the
+     * concrete type arguments of @p usage (the erased synthesis only carries a placeholder).
+     */
+    void validate_generic_cstring_contract(const function& called_func,
+                                           const tpl_info::generic_usage_descriptor& usage);
+
+    /**
+     * Substitute @p usage into the declared signature of @p called_func. Returns false (leaving
+     * the outputs untouched) when any type stays unresolved, so callers keep the erased signature.
+     */
+    bool concrete_generic_signature(const function& called_func,
+                                    const tpl_info::generic_usage_descriptor& usage,
+                                    std::vector<std::shared_ptr<type>>& params,
+                                    std::shared_ptr<type>& return_type);
 
     /**
      * Strip the spurious reference(array(T)) → array(T) layer that resolve_type
@@ -473,17 +541,33 @@ protected:
      */
     void check_throw_contract(const std::shared_ptr<type>& thrown_type, const lex::opt_any_lexeme& lexeme);
 
+    std::vector<std::shared_ptr<type>> resolve_raw_function_throws(
+        const function& fn, const lex::opt_any_lexeme& lexeme);
+
     /**
      * Validate that all exception types declared by a called function are handled
      * (either caught by enclosing try-catch or declared in the caller's throws clause).
      * Emits ERR_UNCAUGHT_EXCEPTION for each unhandled type.
      */
-    void check_call_contract(const function& called_func, const lex::opt_any_lexeme& lexeme);
+    void check_call_contract(const function& called_func, const lex::opt_any_lexeme& lexeme,
+                             const element* use_site = nullptr);
+    bool check_imported_generic_constructor_contract(const function& called_func,
+                                                     const lex::opt_any_lexeme& lexeme,
+                                                     const element* use_site);
+    void check_call_exception_types(const function& called_func,
+                                    const std::vector<std::shared_ptr<type>>& exceptions,
+                                    const lex::opt_any_lexeme& lexeme);
+    void check_union_lifecycle_constructor_contract(
+        const constructor& ctor, const lex::opt_any_lexeme& lexeme);
+    void check_union_payload_copy_contract(
+        const std::shared_ptr<type>& payload, bool source_const,
+        const lex::opt_any_lexeme& lexeme);
 
     void visit_unit(unit&) override;
 
     void visit_namespace(ns& ) override;
     void visit_aggregate(aggregate&) override;
+    void visit_enumeration(enumeration&) override;
     void visit_klass(klass&) override;
     void visit_interface(interface&) override;
     void visit_annotation_type(annotation_type&) override;
@@ -699,10 +783,16 @@ protected:
      * If multiple candidates share the same (lowest) score, emits an ambiguity error.
      * @param constructors  List of constructor candidates.
      * @param args          Argument expressions.
+     * @param throw_on_deleted  Throw when the selected constructor is deleted,
+     *                          even if other resolution failures return null.
      * @return {best_constructor, adapted_args} or {nullptr, {}} on failure.
      */
     std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::shared_ptr<expression>>/*adapted_args*/>
-    get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args);
+    get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors,
+                                  const std::vector<std::shared_ptr<expression>>& args,
+                                  bool throw_on_failure = false,
+                                  const lex::opt_any_lexeme& failure_location = {},
+                                  bool throw_on_deleted = false);
 
 
     /**
@@ -728,6 +818,8 @@ protected:
      * @param direct_args    Optional full args for Mode B (free/static direct call). If null, uses args.
      *                       Pass full args (including obj) here to enable direct matching of free functions
      *                       alongside member/unified matching in the same scorer invocation.
+     * @param static_usage   Optional generic bindings of a qualifier (`Host<int>::f(...)`): the parameter
+     *                       types of the candidates are then matched with the type arguments substituted.
      * @return FunctionCandidate with the best match, or {nullptr,...} on failure.
      */
     FunctionCandidate
@@ -737,7 +829,8 @@ protected:
                                const std::vector<std::shared_ptr<expression>>* direct_args = nullptr,
                                const std::string& callee_name = "",
                                const lex::opt_any_lexeme& call_lexeme = std::nullopt,
-                               const std::vector<std::pair<std::shared_ptr<function>, std::string>>& rejected_tpl_candidates = {});
+                               const std::vector<std::pair<std::shared_ptr<function>, std::string>>& rejected_tpl_candidates = {},
+                               const tpl_info::generic_usage_descriptor* static_usage = nullptr);
 
     /**
      * Check all groups of same-named functions in a function_holder for identical supplied-prefix
@@ -759,6 +852,11 @@ protected:
      * @return The given arg if already not a reference or the newly loaded-value expr if is a reference.
      */
     std::shared_ptr<expression> adapt_reference_load_value(const std::shared_ptr<expression>& expr);
+    std::shared_ptr<expression> adapt_union_value_copy(
+        const std::shared_ptr<expression>& source,
+        const std::shared_ptr<type>& target, bool const_source);
+    void check_union_owner_extraction(
+        const std::shared_ptr<expression>& source, const union_alternative& alternative);
 
     /**
      * Adapt an expression to ensure it maps to a given type, by casting it.
@@ -848,7 +946,8 @@ protected:
         const std::vector<std::shared_ptr<function>>& candidates,
         const std::shared_ptr<callable_type>& tgt,
         const std::string& what,
-        const lex::opt_any_lexeme& where);
+        const lex::opt_any_lexeme& where,
+        const tpl_info::generic_usage_descriptor* generic_usage = nullptr);
 
     /**
      * Enforce the callable co/contravariance rules between two *declared* callable

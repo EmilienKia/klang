@@ -91,6 +91,7 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
     // as the first explicit parameter (position 0, after the implicit 'this').
     // Type is Outer& (reference), consistent with 'this' parameter semantics.
     auto st = ctor.get_owner();
+    if (st && st->is_template()) return;
     if (st && st->is_inner()) {
         auto outer_st = st->get_enclosing_structure();
         auto outer_ref_type = outer_st->get_struct_type()->get_reference();
@@ -99,6 +100,9 @@ void symbol_resolver::visit_constructor(constructor& ctor) {
             ctor.insert_parameter("__parent__", outer_ref_type, 0);
         }
     }
+
+    // Keep template recipes free of injected statements until specialization.
+    if (ctor.is_template()) return;
 
     // ── Mark base-class member_inits and detect copy constructor ──────────────
     if (st) {
@@ -337,6 +341,7 @@ void signature_resolver::visit_constructor(constructor& ctor) {
  *   4. Visit the constructor body block.
  */
 void type_reference_resolver::visit_constructor(constructor& ctor) {
+    if (ctor.is_template()) return;
     // On-demand instantiations are also reached by the later namespace walk.
     // Their synthesized fallback initializers belong to the first body visit only.
     if (_resolved_functions.contains(&ctor) || _resolving_functions.contains(&ctor)) return;

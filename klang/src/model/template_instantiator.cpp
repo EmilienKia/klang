@@ -1033,6 +1033,96 @@ void template_instantiator::retarget_init_expr(
 // Statement cloning with type substitution
 // ═══════════════════════════════════════════════════════════════════════════
 
+namespace {
+
+std::vector<const tpl_info*> generic_source_scopes(const element& source) {
+    std::vector<const tpl_info*> scopes;
+    bool has_generic = false;
+    for (auto current = source.shared_as<element>(); current;
+         current = current->parent<element>()) {
+        const tpl_info* info = nullptr;
+        if (auto fn = std::dynamic_pointer_cast<const function>(current))
+            info = fn->get_tpl_info();
+        else if (auto agg = std::dynamic_pointer_cast<const aggregate>(current))
+            info = agg->get_tpl_info();
+        if (info) {
+            scopes.push_back(info);
+            has_generic |= info->is_generic;
+        }
+    }
+    return has_generic ? scopes : std::vector<const tpl_info*>{};
+}
+
+source_type_substitution_map source_bindings_for(
+    const tpl_info& info, const type_substitution_map& subst,
+    const pack_substitution_map& pack_subst = {}) {
+    // subst belongs to this declaration; the resulting keys, not names,
+    // decide which occurrences in retained source metadata are rewritten.
+    source_type_substitution_map result;
+    for (size_t i = 0; i < info.params.size(); ++i) {
+        const auto& param = info.params[i];
+        if (!param.is_type_param()) continue;
+        if (param.is_pack) {
+            if (pack_subst.contains(param.name))
+                result.emplace(template_binder_id{info.binder_scope, i}, nullptr);
+            continue;
+        }
+        auto it = subst.find(param.name);
+        if (it == subst.end()) continue;
+        result.emplace(template_binder_id{info.binder_scope, i}, it->second);
+    }
+    return result;
+}
+
+void specialize_constraint_sources(std::vector<template_param_descriptor>& params,
+                                   const source_type_substitution_map& bindings) {
+    for (auto& param : params) {
+        if (!param.constraint_source_type && param.constraint_type) {
+            param.constraint_source_type = generic_source_type::capture_unknown(param.constraint_type);
+        } else if (param.constraint_source_type && !bindings.empty()) {
+            param.constraint_source_type = param.constraint_source_type->substitute(bindings);
+        }
+    }
+}
+
+std::unique_ptr<tpl_info> clone_template_info(
+    const tpl_info& source, const type_substitution_map& subst,
+    const source_type_substitution_map& source_subst) {
+    auto result = std::make_unique<tpl_info>(source);
+    result->instantiations.clear();
+    result->generic_usages.clear();
+    specialize_constraint_sources(result->params, source_subst);
+    auto visible_subst = subst;
+    for (auto& param : result->params) {
+        if (param.constraint_type)
+            param.constraint_type = substitute_type(param.constraint_type, visible_subst);
+        if (param.value_type)
+            param.value_type = substitute_type(param.value_type, visible_subst);
+        if (param.default_type)
+            param.default_type = substitute_type(param.default_type, visible_subst);
+        visible_subst.erase(param.name);
+    }
+    return result;
+}
+
+void hide_template_parameters(const tpl_info* info, type_substitution_map& subst,
+                              value_substitution_map& val_subst) {
+    if (!info) return;
+    for (const auto& param : info->params) {
+        subst.erase(param.name);
+        val_subst.erase(param.name);
+    }
+}
+
+} // namespace
+
+source_type_substitution_map template_instantiator::function_source_bindings(
+    const function& src, const type_substitution_map& subst,
+    const pack_substitution_map& pack_subst) {
+    auto info = src.get_tpl_info();
+    return info ? source_bindings_for(*info, subst, pack_subst) : source_type_substitution_map{};
+}
+
 std::shared_ptr<statement> template_instantiator::clone_statement(
     const statement& src,
     std::shared_ptr<statement> parent_stmt,
@@ -1129,6 +1219,8 @@ std::shared_ptr<statement> template_instantiator::clone_statement(
         new_vs->_ast_node = vs->get_ast_node();
         new_vs->_documentation = vs->get_documentation();
         new_vs->set_type(substitute_type(std::const_pointer_cast<type>(vs->get_type()), subst));
+        if (auto declared = vs->get_declared_template_type())
+            new_vs->_declared_template_type = substitute_type(declared, subst);
         new_vs->set_const(vs->is_const());
         if (vs->get_init_expr()) {
             // variable_definition::set_init_expr(shared_ptr<expression>) is the base version
@@ -1295,7 +1387,8 @@ void template_instantiator::clone_member_variable(
     const member_variable_definition& src,
     std::shared_ptr<aggregate> target,
     const type_substitution_map& subst,
-    const value_substitution_map& val_subst)
+    const value_substitution_map& val_subst,
+    const source_type_substitution_map& source_subst)
 {
     // Skip the synthetic __parent__ field
     if (src.get_short_name() == "__parent__") return;
@@ -1313,7 +1406,17 @@ void template_instantiator::clone_member_variable(
 
     // Substitute type
     auto src_type = std::const_pointer_cast<type>(src.get_type());
+    new_var->_generic_source_type = src._generic_source_type;
+    if (!new_var->_generic_source_type) {
+        auto scopes = generic_source_scopes(src);
+        if (!scopes.empty())
+            new_var->_generic_source_type = generic_source_type::capture(src_type, scopes);
+    }
+    if (new_var->_generic_source_type && !source_subst.empty())
+        new_var->_generic_source_type = new_var->_generic_source_type->substitute(source_subst);
     new_var->set_type(substitute_type(src_type, subst));
+    if (auto declared = src.get_declared_template_type())
+        new_var->_declared_template_type = substitute_type(declared, subst);
     new_var->set_const(src.is_const());
 
     // Clone init expression and retarget to new variable
@@ -1498,7 +1601,8 @@ void template_instantiator::populate_function_from_template(
     const type_substitution_map& subst,
     const value_substitution_map& val_subst,
     const pack_substitution_map& pack_subst,
-    bool signature_only)
+    bool signature_only,
+    const source_type_substitution_map& source_subst)
 {
     auto definition_scope = src.get_template_definition_scope();
     if (auto ti = src.get_tpl_info(); ti && ti->private_definition_scope) {
@@ -1517,6 +1621,15 @@ void template_instantiator::populate_function_from_template(
     // Set return type
     dst->set_has_explicit_return_type(src.has_explicit_return_type());
     dst->set_lambda(src.is_lambda());
+    auto source_scopes = generic_source_scopes(src);
+    dst->_generic_pointee_value_params = src._generic_pointee_value_params;
+    dst->_generic_source_return_type = src._generic_source_return_type;
+    if (!dst->_generic_source_return_type && !source_scopes.empty())
+        dst->_generic_source_return_type = generic_source_type::capture(
+            std::const_pointer_cast<type>(src.get_return_type()), source_scopes);
+    if (dst->_generic_source_return_type && !source_subst.empty())
+        dst->_generic_source_return_type =
+            dst->_generic_source_return_type->substitute(source_subst);
     if (src.has_return_type()) {
         dst->set_return_type(substitute_type(
             std::const_pointer_cast<type>(src.get_return_type()), subst));
@@ -1537,7 +1650,16 @@ void template_instantiator::populate_function_from_template(
                 for (size_t i = 0; i < pack_types.size(); ++i) {
                     std::string concrete_name = param->get_short_name() + "_" + std::to_string(i);
                     auto new_param = dst->append_parameter(concrete_name, pack_types[i]);
+                    new_param->_generic_source_type = param->_generic_source_type;
+                    if (!new_param->_generic_source_type && !source_scopes.empty())
+                        new_param->_generic_source_type =
+                            generic_source_type::capture(param->get_type(), source_scopes);
+                    if (new_param->_generic_source_type && !source_subst.empty())
+                        new_param->_generic_source_type =
+                            new_param->_generic_source_type->substitute(source_subst);
                     new_param->set_const(param->is_const());
+                    new_param->set_ffi_cstring(param->is_ffi_cstring());
+                    for (const auto& ann : param->get_annotations()) new_param->add_annotation(ann);
                     new_param->_ast_node = param->get_ast_node();
                     new_param->_documentation = param->get_documentation();
                     generated_names.push_back(concrete_name);
@@ -1549,7 +1671,16 @@ void template_instantiator::populate_function_from_template(
                 auto param_type = substitute_type(
                     std::const_pointer_cast<type>(param->get_type()), subst);
                 auto new_param = dst->append_parameter(param->get_short_name(), param_type);
+                new_param->_generic_source_type = param->_generic_source_type;
+                if (!new_param->_generic_source_type && !source_scopes.empty())
+                    new_param->_generic_source_type =
+                        generic_source_type::capture(param->get_type(), source_scopes);
+                if (new_param->_generic_source_type && !source_subst.empty())
+                    new_param->_generic_source_type =
+                        new_param->_generic_source_type->substitute(source_subst);
                 new_param->set_const(param->is_const());
+                new_param->set_ffi_cstring(param->is_ffi_cstring());
+                for (const auto& ann : param->get_annotations()) new_param->add_annotation(ann);
                 new_param->set_pack_expansion(true);
                 new_param->set_pack_param_name(param->pack_param_name());
                 new_param->_ast_node = param->get_ast_node();
@@ -1559,7 +1690,16 @@ void template_instantiator::populate_function_from_template(
             auto param_type = substitute_type(
                 std::const_pointer_cast<type>(param->get_type()), subst);
             auto new_param = dst->append_parameter(param->get_short_name(), param_type);
+            new_param->_generic_source_type = param->_generic_source_type;
+            if (!new_param->_generic_source_type && !source_scopes.empty())
+                new_param->_generic_source_type =
+                    generic_source_type::capture(param->get_type(), source_scopes);
+            if (new_param->_generic_source_type && !source_subst.empty())
+                new_param->_generic_source_type =
+                    new_param->_generic_source_type->substitute(source_subst);
             new_param->set_const(param->is_const());
+            new_param->set_ffi_cstring(param->is_ffi_cstring());
+            for (const auto& ann : param->get_annotations()) new_param->add_annotation(ann);
             new_param->set_varargs(param->is_varargs());
             new_param->_ast_node = param->get_ast_node(); // diagnostics
             new_param->_documentation = param->get_documentation();
@@ -1594,8 +1734,18 @@ void template_instantiator::populate_function_from_template(
 
     // Copy throws spec (raw names — will be resolved by the resolution passes)
     for (auto& raw : src.get_throws_spec_raw()) {
-        dst->add_throws_spec_raw(raw);
+        auto it = subst.find(raw);
+        std::shared_ptr<struct_type> concrete;
+        if (it != subst.end())
+            concrete = std::dynamic_pointer_cast<struct_type>(type::canonical(it->second));
+        auto aggregate = concrete ? concrete->get_struct() : nullptr;
+        dst->add_throws_spec_raw(aggregate ? aggregate->get_fq_name() : raw);
     }
+    if (src.get_throws_spec_raw().empty()) {
+        for (const auto& thrown : src.get_throws_spec())
+            dst->add_throws_type(substitute_type(thrown, subst));
+    }
+    dst->set_throws_spec_unknown(src.is_throws_spec_unknown());
 
     // Copy AST node (optional, for diagnostics)
     dst->_ast_node = src.get_ast_node();
@@ -1604,6 +1754,10 @@ void template_instantiator::populate_function_from_template(
     // Copy annotations (preserves @Intrinsic and other compile-time annotations)
     for (auto& ann : src.get_annotations()) {
         dst->add_annotation(ann);
+    }
+    if (src.is_extern()) {
+        dst->set_extern_c_symbol(src.get_extern_c_symbol().value_or(src.get_short_name()));
+        dst->update_mangled_name();
     }
 }
 
@@ -1615,7 +1769,8 @@ void template_instantiator::clone_method(
     const function& src,
     std::shared_ptr<aggregate> target,
     const type_substitution_map& subst,
-    const value_substitution_map& val_subst)
+    const value_substitution_map& val_subst,
+    const source_type_substitution_map& source_subst)
 {
     auto new_func = target->define_function(src.get_short_name(), src.is_static());
     if (!new_func) return;
@@ -1637,29 +1792,16 @@ void template_instantiator::clone_method(
     // parameters remain unresolved — they will be instantiated when the member
     // template is invoked with explicit template arguments.
     if (src.get_tpl_info()) {
-        auto* src_ti = src.get_tpl_info();
-        auto new_ti = std::make_unique<tpl_info>();
-        new_ti->params = src_ti->params;
-        for (auto& param : new_ti->params) {
-            if (param.constraint_type) {
-                param.constraint_type = substitute_type(param.constraint_type, subst);
-            }
-            if (param.value_type) {
-                param.value_type = substitute_type(param.value_type, subst);
-            }
-            if (param.default_type) {
-                param.default_type = substitute_type(param.default_type, subst);
-            }
-        }
-        new_ti->is_generic = src_ti->is_generic;
-        new_ti->source_text = src_ti->source_text;
-        new_func->set_tpl_info(std::move(new_ti));
+        new_func->set_tpl_info(clone_template_info(*src.get_tpl_info(), subst, source_subst));
         // For member templates, apply outer-struct type substitution to the
         // return type and body, but do NOT expand the method's own template params.
         // We still need to populate the function signature/body with the outer subst applied.
     }
 
-    populate_function_from_template(new_func, src, subst, val_subst);
+    auto body_subst = subst;
+    auto body_val_subst = val_subst;
+    hide_template_parameters(src.get_tpl_info(), body_subst, body_val_subst);
+    populate_function_from_template(new_func, src, body_subst, body_val_subst, {}, false, source_subst);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1670,7 +1812,8 @@ void template_instantiator::clone_constructor(
     const constructor& src,
     std::shared_ptr<aggregate> target,
     const type_substitution_map& subst,
-    const value_substitution_map& val_subst)
+    const value_substitution_map& val_subst,
+    const source_type_substitution_map& source_subst)
 {
     // define_function with the aggregate name creates a constructor
     auto new_func = target->define_function(target->get_short_name(), false);
@@ -1683,36 +1826,23 @@ void template_instantiator::clone_constructor(
     new_ctor->set_compiler_generated(src.is_compiler_generated());
     new_ctor->set_copy_constructor(src.is_copy_constructor());
 
-    if (src.get_tpl_info()) {
-        auto* src_ti = src.get_tpl_info();
-        auto new_ti = std::make_unique<tpl_info>();
-        new_ti->params = src_ti->params;
-        for (auto& param : new_ti->params) {
-            if (param.constraint_type) {
-                param.constraint_type = substitute_type(param.constraint_type, subst);
-            }
-            if (param.value_type) {
-                param.value_type = substitute_type(param.value_type, subst);
-            }
-            if (param.default_type) {
-                param.default_type = substitute_type(param.default_type, subst);
-            }
-        }
-        new_ti->is_generic = src_ti->is_generic;
-        new_ti->source_text = src_ti->source_text;
-        new_ctor->set_tpl_info(std::move(new_ti));
-    }
+    if (src.get_tpl_info())
+        new_ctor->set_tpl_info(clone_template_info(*src.get_tpl_info(), subst, source_subst));
+
+    auto body_subst = subst;
+    auto body_val_subst = val_subst;
+    hide_template_parameters(src.get_tpl_info(), body_subst, body_val_subst);
 
     // Clone member inits
     for (auto& mi : src.member_inits()) {
         std::vector<std::shared_ptr<expression>> new_args;
         for (auto& arg : mi.args) {
-            new_args.push_back(clone_and_substitute_expr(arg, subst, val_subst));
+            new_args.push_back(clone_and_substitute_expr(arg, body_subst, body_val_subst));
         }
         new_ctor->add_member_init(mi.member_name, std::move(new_args), mi.is_base_init);
     }
 
-    populate_function_from_template(new_ctor, src, subst, val_subst);
+    populate_function_from_template(new_ctor, src, body_subst, body_val_subst, {}, false, source_subst);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1723,7 +1853,8 @@ void template_instantiator::clone_destructor(
     const destructor& src,
     std::shared_ptr<aggregate> target,
     const type_substitution_map& subst,
-    const value_substitution_map& val_subst)
+    const value_substitution_map& val_subst,
+    const source_type_substitution_map& source_subst)
 {
     // define_function with "~" + aggregate name creates a destructor
     auto new_func = target->define_function("~" + target->get_short_name(), false);
@@ -1731,28 +1862,80 @@ void template_instantiator::clone_destructor(
     if (!new_dtor) return;
 
     new_dtor->set_visibility(src.get_visibility());
-    populate_function_from_template(new_dtor, src, subst, val_subst);
+    populate_function_from_template(new_dtor, src, subst, val_subst, {}, false, source_subst);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Clone nested aggregate
 // ═══════════════════════════════════════════════════════════════════════════
 
+void template_instantiator::prepare_inner_aggregates(const std::shared_ptr<aggregate>& concrete) {
+    if (!concrete || concrete->is_template() || concrete->is_imported()) return;
+
+    if (concrete->is_inner()) {
+        auto outer = concrete->get_enclosing_structure();
+        auto outer_type = outer ? outer->get_struct_type() : nullptr;
+        if (outer_type) {
+            auto outer_ref = outer_type->get_reference();
+            auto field = concrete->get_parent_field();
+            if (!field) {
+                auto existing = concrete->_vars.find("__parent__");
+                if (existing != concrete->_vars.end()) {
+                    field = std::dynamic_pointer_cast<member_variable_definition>(existing->second);
+                }
+                if (!field) {
+                    field = member_variable_definition::make_shared(concrete, "__parent__");
+                    concrete->_vars["__parent__"] = field;
+                    concrete->_children.insert(concrete->_children.begin(), field);
+                }
+                concrete->_parent_field = field;
+            }
+            field->set_type(outer_ref);
+            for (const auto& ctor : concrete->constructors()) {
+                if (!ctor) continue;
+                if (auto param = ctor->get_parameter("__parent__")) {
+                    std::const_pointer_cast<parameter>(param)->set_type(outer_ref);
+                } else {
+                    ctor->insert_parameter("__parent__", outer_ref, 0);
+                }
+            }
+        }
+    }
+
+    const auto children = concrete->get_children();
+    for (const auto& child : children) {
+        if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
+            prepare_inner_aggregates(nested);
+        }
+    }
+}
+
 void template_instantiator::clone_nested_aggregate(
     const aggregate& src,
     std::shared_ptr<aggregate> target,
     const type_substitution_map& subst,
     const value_substitution_map& val_subst,
-    std::shared_ptr<context> ctx)
+    std::shared_ptr<context> ctx,
+    const source_type_substitution_map& source_subst)
 {
     // Create the nested aggregate inside target (not in the parent namespace).
     std::shared_ptr<aggregate> nested;
-    if (src.is_class()) {
+    if (std::dynamic_pointer_cast<const interface>(src.shared_as<element>())) {
+        nested = target->define_interface(src.get_short_name());
+    } else if (src.is_annotation()) {
+        nested = target->define_annotation(src.get_short_name());
+    } else if (src.is_class()) {
         nested = target->define_class(src.get_short_name());
     } else {
         nested = target->define_structure(src.get_short_name());
     }
     if (!nested) return;
+    if (target->get_fq_name().empty()) {
+        if (auto owner = target->ancestor<named_element>())
+            target->assign_name(owner->get_name().with_back(target->get_short_name()));
+    }
+    if (!target->get_fq_name().empty())
+        nested->assign_name(target->get_name().with_back(nested->get_short_name()));
 
     // Copy aggregate flags
     nested->set_final(src.is_final());
@@ -1762,15 +1945,27 @@ void template_instantiator::clone_nested_aggregate(
     nested->set_visibility(src.get_visibility());
     nested->_ast_node = src.get_ast_node();
     nested->_documentation = src.get_documentation();
-    // Nested aggregate of an instantiation is itself part of the instantiation.
-    nested->mark_instantiation();
+    if (auto info = src.get_tpl_info()) {
+        auto cloned_info = clone_template_info(*info, subst, source_subst);
+        if (!cloned_info->private_definition_scope) {
+            if (auto definition = target->get_tpl_definition(); definition && definition->get_tpl_info())
+                cloned_info->private_definition_scope = definition->get_tpl_info()->private_definition_scope;
+        }
+        nested->set_tpl_info(std::move(cloned_info));
+    } else {
+        nested->mark_instantiation();
+    }
+
+    auto body_subst = subst;
+    auto body_val_subst = val_subst;
+    hide_template_parameters(src.get_tpl_info(), body_subst, body_val_subst);
 
     // Give the nested aggregate a struct_type named after the enclosing instantiation.
     // The later resolution passes would otherwise create it from the bare short name, so
     // Outer<int>::Inner and Outer<long>::Inner would both be called "Inner" and rely on
     // LLVM's compilation-order-dependent ".N" auto-uniquification — which then leaks into
     // the exported KDI and makes cross-module type identity non-deterministic.
-    if (ctx && !nested->get_struct_type()) {
+    if (ctx && !nested->is_template() && !nested->get_struct_type()) {
         std::shared_ptr<struct_type> nested_st{
             new struct_type(nested_type_name(*target, src.get_short_name()),
                             nested->shared_as<aggregate>())};
@@ -1781,7 +1976,7 @@ void template_instantiator::clone_nested_aggregate(
     // Copy base class specs (raw names — resolved later by resolution passes)
     // Substitute template type parameters in base names (e.g. "Collection<T>" → "Collection<int>")
     for (auto& bs : src.get_bases()) {
-        nested->add_base(substitute_base_name(bs.raw_name, subst), bs.vis);
+        nested->add_base(substitute_base_name(bs.raw_name, body_subst), bs.vis);
         if (bs.is_virtual) {
             nested->get_bases_mutable().back().is_virtual = true;
         }
@@ -1790,30 +1985,31 @@ void template_instantiator::clone_nested_aggregate(
     // Clone all children with type substitution
     for (auto& child : src.get_children()) {
         if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(child)) {
-            clone_member_variable(*mv, nested, subst, val_subst);
+            clone_member_variable(*mv, nested, body_subst, body_val_subst, source_subst);
         } else if (auto ctor = std::dynamic_pointer_cast<constructor>(child)) {
-            clone_constructor(*ctor, nested, subst, val_subst);
+            clone_constructor(*ctor, nested, body_subst, body_val_subst, source_subst);
         } else if (auto dtor = std::dynamic_pointer_cast<destructor>(child)) {
-            clone_destructor(*dtor, nested, subst, val_subst);
+            clone_destructor(*dtor, nested, body_subst, body_val_subst, source_subst);
         } else if (auto fn = std::dynamic_pointer_cast<function>(child)) {
-            clone_method(*fn, nested, subst, val_subst);
+            clone_method(*fn, nested, body_subst, body_val_subst, source_subst);
         } else if (auto inner = std::dynamic_pointer_cast<aggregate>(child)) {
             // Recursively clone deeper nested aggregates
-            clone_nested_aggregate(*inner, nested, subst, val_subst, ctx);
+            clone_nested_aggregate(*inner, nested, body_subst, body_val_subst, ctx, source_subst);
         } else if (auto inner_un = std::dynamic_pointer_cast<union_type_def>(child)) {
             // Clone nested union types (e.g. an inner union inside a nested struct)
-            clone_nested_union(*inner_un, nested, subst, ctx);
+            clone_nested_union(*inner_un, nested, body_subst, ctx);
         }
     }
 
     // Generate a default constructor when no explicit constructor was cloned
-    if (nested->constructors().empty()) {
+    if (!nested->is_template() && nested->constructors().empty()) {
         auto default_ctor = constructor::make_shared(nested->shared_as<aggregate>());
         default_ctor->set_compiler_generated(true);
         nested->_constructors.push_back(default_ctor);
         nested->_children.push_back(default_ctor);
     }
 
+    prepare_inner_aggregates(nested);
     nested->update_mangled_name();
 }
 
@@ -1965,6 +2161,7 @@ std::vector<std::shared_ptr<function>> template_instantiator::hydrate_imported_a
     imported->_tpl_definition = tpl_def.shared_as<aggregate>();
     auto subst = build_substitution_map(*ti, args);
     auto val_subst = build_value_substitution_map(*ti, args);
+    auto source_subst = source_bindings_for(*ti, subst, build_pack_substitution_map(*ti, args));
     std::vector<struct_type::field> fields(st->fields_begin(), st->fields_end());
     for (size_t i = 0; i < recipe_fields.size(); ++i) {
         const auto& source = recipe_fields[i];
@@ -1994,7 +2191,7 @@ std::vector<std::shared_ptr<function>> template_instantiator::hydrate_imported_a
         }
         auto member = imported->get_variable(source->get_short_name());
         if (!member) {
-            clone_member_variable(*source, imported, subst, val_subst);
+            clone_member_variable(*source, imported, subst, val_subst, source_subst);
             member = imported->get_variable(source->get_short_name());
         }
         if (!member) fail("a recipe field could not be materialized");
@@ -2039,9 +2236,9 @@ std::vector<std::shared_ptr<function>> template_instantiator::hydrate_imported_a
             || (!source->is_template() && source->get_visibility() != PRIVATE)) continue;
         const auto before = imported->get_children().size();
         if (auto ctor = std::dynamic_pointer_cast<constructor>(source)) {
-            clone_constructor(*ctor, imported, subst, val_subst);
+            clone_constructor(*ctor, imported, subst, val_subst, source_subst);
         } else {
-            clone_method(*source, imported, subst, val_subst);
+            clone_method(*source, imported, subst, val_subst, source_subst);
         }
         if (imported->get_children().size() == before) fail("a recipe callable could not be materialized");
         auto concrete = std::dynamic_pointer_cast<function>(imported->get_children().back());
@@ -2094,7 +2291,8 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     // An exported concrete specialization owns its ABI, including library-side
     // virtual-base promotion. Replacing its model with a recipe clone would
     // rebuild its LLVM layout while still calling the library's symbols.
-    if (!ti->origin_module_ns_fq.empty()) {
+    auto enclosing_aggregate = tpl_def.parent<aggregate>();
+    if (!enclosing_aggregate && !ti->origin_module_ns_fq.empty()) {
         auto imported_name = unit::make_origin_absolute_name(
             ti->origin_module_ns_fq, inst_name).without_root_prefix();
         auto imported = unit.get_or_create_imported_aggregate(imported_name, ctx);
@@ -2107,22 +2305,34 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     // Build type substitution map
     auto subst = build_substitution_map(*ti, args);
     auto val_subst = build_value_substitution_map(*ti, args);
+    auto source_subst = source_bindings_for(*ti, subst, build_pack_substitution_map(*ti, args));
 
-    // 1. Create a new concrete aggregate in the parent namespace
+    // Keep nested specializations under their enclosing aggregate. An imported host is
+    // not part of the compilation tree walked by the resolution and code generation
+    // passes, so its consumer-owned specializations live in the definition namespace
+    // under a host-qualified name while keeping the host-nested canonical symbol name.
+    const bool imported_host = enclosing_aggregate && enclosing_aggregate->is_imported() && parent_ns;
+    aggregate_holder* holder = enclosing_aggregate && !imported_host
+        ? static_cast<aggregate_holder*>(enclosing_aggregate.get())
+        : static_cast<aggregate_holder*>(parent_ns.get());
+    const std::string defined_name = imported_host
+        ? enclosing_aggregate->get_short_name() + "__" + inst_name : inst_name;
     std::shared_ptr<aggregate> concrete;
     if (std::dynamic_pointer_cast<model::interface>(tpl_def.shared_as<element>())) {
-        concrete = parent_ns->define_interface(inst_name);
+        concrete = holder->define_interface(defined_name);
     } else if (tpl_def.is_class()) {
-        concrete = parent_ns->define_class(inst_name);
+        concrete = holder->define_class(defined_name);
     } else if (tpl_def.is_annotation()) {
-        concrete = parent_ns->define_annotation(inst_name);
+        concrete = holder->define_annotation(defined_name);
     } else {
-        concrete = parent_ns->define_structure(inst_name);
+        concrete = holder->define_structure(defined_name);
     }
     if (!concrete) return nullptr;
 
     concrete->_tpl_definition = tpl_def.shared_as<aggregate>();
-    if (!ti->origin_module_ns_fq.empty()) {
+    if (enclosing_aggregate && !enclosing_aggregate->get_fq_name().empty()) {
+        concrete->assign_name(enclosing_aggregate->get_name().with_back(inst_name));
+    } else if (!enclosing_aggregate && !ti->origin_module_ns_fq.empty()) {
         concrete->assign_name(unit::make_origin_absolute_name(
             ti->origin_module_ns_fq, inst_name));
     }
@@ -2276,13 +2486,13 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
     // 2. Clone children from the template aggregate
     for (auto& child : tpl_def.get_children()) {
         if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(child)) {
-            clone_member_variable(*mv, concrete, subst, val_subst);
+            clone_member_variable(*mv, concrete, subst, val_subst, source_subst);
         } else if (auto ctor = std::dynamic_pointer_cast<constructor>(child)) {
-            clone_constructor(*ctor, concrete, subst, val_subst);
+            clone_constructor(*ctor, concrete, subst, val_subst, source_subst);
         } else if (auto dtor = std::dynamic_pointer_cast<destructor>(child)) {
-            clone_destructor(*dtor, concrete, subst, val_subst);
+            clone_destructor(*dtor, concrete, subst, val_subst, source_subst);
         } else if (auto fn = std::dynamic_pointer_cast<function>(child)) {
-            clone_method(*fn, concrete, subst, val_subst);
+            clone_method(*fn, concrete, subst, val_subst, source_subst);
         } else if (auto gv = std::dynamic_pointer_cast<global_variable_definition>(child)) {
             // Static or threadlocal member variable — clone similarly to member variable
             auto new_var = concrete->append_variable(gv->get_short_name(), /*is_static=*/!gv->is_thread_local(), /*is_thread_local=*/gv->is_thread_local());
@@ -2303,7 +2513,7 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
             }
         } else if (auto inner = std::dynamic_pointer_cast<aggregate>(child)) {
             // Clone nested aggregate types (structs/classes defined inside the template)
-            clone_nested_aggregate(*inner, concrete, subst, val_subst, ctx);
+            clone_nested_aggregate(*inner, concrete, subst, val_subst, ctx, source_subst);
         } else if (auto inner_un = std::dynamic_pointer_cast<union_type_def>(child)) {
             // Clone nested union types (e.g. Expected<R,E>::Storage)
             clone_nested_union(*inner_un, concrete, subst, ctx);
@@ -2322,6 +2532,8 @@ std::shared_ptr<aggregate> template_instantiator::instantiate_aggregate(
         concrete->_constructors.push_back(default_ctor);
         concrete->_children.push_back(default_ctor);
     }
+
+    prepare_inner_aggregates(concrete);
 
     // 3b. Set up 'this' parameters for all member functions and constructors
     //     (requires struct_type to be set — callers must ensure this after creating the struct_type)
@@ -2387,20 +2599,26 @@ std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
     auto subst = build_generic_substitution_map(*ti, ctx);
     value_substitution_map val_subst;
 
+    auto enclosing_aggregate = tpl_def.parent<aggregate>();
+    aggregate_holder* holder = enclosing_aggregate
+        ? static_cast<aggregate_holder*>(enclosing_aggregate.get())
+        : static_cast<aggregate_holder*>(parent_ns.get());
     std::shared_ptr<aggregate> concrete;
     if (std::dynamic_pointer_cast<model::interface>(tpl_def.shared_as<element>())) {
-        concrete = parent_ns->define_interface(base_name);
+        concrete = holder->define_interface(base_name);
     } else if (tpl_def.is_class()) {
-        concrete = parent_ns->define_class(base_name);
+        concrete = holder->define_class(base_name);
     } else if (tpl_def.is_annotation()) {
-        concrete = parent_ns->define_annotation(base_name);
+        concrete = holder->define_annotation(base_name);
     } else {
-        concrete = parent_ns->define_structure(base_name);
+        concrete = holder->define_structure(base_name);
     }
     if (!concrete) return nullptr;
 
     concrete->_tpl_definition = tpl_def.shared_as<aggregate>();
-    if (!ti->origin_module_ns_fq.empty()) {
+    if (enclosing_aggregate && !enclosing_aggregate->get_fq_name().empty()) {
+        concrete->assign_name(enclosing_aggregate->get_name().with_back(base_name));
+    } else if (!enclosing_aggregate && !ti->origin_module_ns_fq.empty()) {
         concrete->assign_name(unit::make_origin_absolute_name(
             ti->origin_module_ns_fq, base_name));
     }
@@ -2468,6 +2686,7 @@ std::shared_ptr<aggregate> template_instantiator::synthesize_generic_aggregate(
         concrete->_children.push_back(default_ctor);
     }
 
+    prepare_inner_aggregates(concrete);
     concrete->update_mangled_name();
     ti->instantiations[generic_synthesis_key] = concrete;
     return concrete;
@@ -2522,7 +2741,8 @@ std::shared_ptr<function> template_instantiator::instantiate_function(
     concrete->set_compiler_generated(tpl_def.is_compiler_generated());
 
     // 2. Populate from template (params, return type, body)
-    populate_function_from_template(concrete, tpl_def, subst, val_subst, pack_subst, signature_only);
+    populate_function_from_template(concrete, tpl_def, subst, val_subst, pack_subst, signature_only,
+                                    source_bindings_for(*ti, subst, pack_subst));
 
     // Store template instantiation info for mangling (I…E encoding)
     concrete->set_tpl_instantiation_info(base_name, args);
@@ -3129,6 +3349,7 @@ void template_instantiator::inject_constructor_member_inits(std::shared_ptr<aggr
 
     auto inject_for_aggregate = [&base_init_simple_name, &base_init_aggregate_name](
         std::shared_ptr<aggregate> agg) {
+        if (!agg || agg->is_template()) return;
         for (auto& ctor : agg->constructors()) {
             // Note: compiler-generated constructors (default or copy) still need base
             // constructor calls injected below — symbol_resolver::visit_constructor
@@ -3136,7 +3357,7 @@ void template_instantiator::inject_constructor_member_inits(std::shared_ptr<aggr
             // Only deleted constructors (no meaningful body) and the compiler-generated
             // COPY constructor (handled entirely at IR level, see
             // type_reference_resolver::visit_constructor) must be skipped.
-            if (!ctor || ctor->is_deleted()) continue;
+            if (!ctor || ctor->is_template() || ctor->is_deleted()) continue;
             if (ctor->is_copy_constructor() && ctor->is_compiler_generated()) continue;
             // Resolved non-template bases already received their initializers
             // from symbol_resolver; do not mutate their bodies during instantiation.

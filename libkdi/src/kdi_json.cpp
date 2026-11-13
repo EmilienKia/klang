@@ -342,6 +342,7 @@ static kdi_type from_json_type(const json& j) {
 static json to_json(const kdi_param& p) {
     json j = {{"name", p.name}, {"type", to_json(p.type)}};
     if (p.is_varargs) j["is_varargs"] = true;
+    if (p.is_ffi_cstring) j["is_ffi_cstring"] = true;
     if (p.default_source) j["default_source"] = *p.default_source;
     return j;
 }
@@ -350,6 +351,7 @@ static kdi_param from_json_param(const json& j) {
     p.name = j.at("name");
     p.type = from_json_type(j.at("type"));
     if (j.contains("is_varargs")) p.is_varargs = j["is_varargs"].get<bool>();
+    if (j.contains("is_ffi_cstring")) p.is_ffi_cstring = j.at("is_ffi_cstring").get<bool>();
     if (j.contains("default_source")) p.default_source = j.at("default_source").get<std::string>();
     return p;
 }
@@ -484,6 +486,7 @@ static json to_json(const kdi_function& f) {
         {"fq_name",      f.fq_name},
         {"visibility",   vis_to_str(f.visibility)},
         {"is_static",    f.is_static},
+        {"is_extern",    f.is_extern},
         {"return_type",  to_json(f.return_type)},
         {"params",       params_to_json(f.params)},
         {"mangled_name", f.mangled_name},
@@ -505,6 +508,7 @@ static kdi_function from_json_function(const json& j) {
     f.fq_name      = j.at("fq_name");
     f.visibility   = vis_from_str(j.value("visibility", "public"));
     f.is_static    = j.value("is_static", false);
+    f.is_extern    = j.value("is_extern", false);
     f.is_operator  = j.value("is_operator", false);
     f.return_type  = from_json_type(j.at("return_type"));
     f.params       = params_from_json(j.value("params", json::array()));
@@ -524,6 +528,7 @@ static json to_json(const kdi_method& m) {
         {"fq_name",         m.fq_name},
         {"visibility",      vis_to_str(m.visibility)},
         {"is_static",       m.is_static},
+        {"is_extern",       m.is_extern},
         {"is_const_member", m.is_const_member},
         {"is_virtual",      m.is_virtual},
         {"is_abstract",     m.is_abstract},
@@ -535,6 +540,8 @@ static json to_json(const kdi_method& m) {
         {"llvm_def",        m.llvm_def},
     };
     if (m.is_operator) j["is_operator"] = true;
+    if (m.is_deleted) j["is_deleted"] = true;
+    if (m.is_private) j["is_private"] = true;
     if (m.template_origin) j["template_origin"] = to_json(*m.template_origin);
     if (!m.throws_spec.empty()) {
         json ts = json::array();
@@ -550,11 +557,14 @@ static kdi_method from_json_method(const json& j) {
     m.fq_name         = j.at("fq_name");
     m.visibility      = vis_from_str(j.value("visibility", "public"));
     m.is_static       = j.value("is_static", false);
+    m.is_extern       = j.value("is_extern", false);
     m.is_const_member = j.value("is_const_member", false);
     m.is_virtual      = j.value("is_virtual", false);
     m.is_abstract     = j.value("is_abstract", false);
     m.is_final        = j.value("is_final", false);
     m.is_operator     = j.value("is_operator", false);
+    m.is_deleted      = j.value("is_deleted", false);
+    m.is_private      = j.value("is_private", false);
     m.vtable_slot     = j.value("vtable_slot", -1);
     m.return_type     = from_json_type(j.at("return_type"));
     m.params          = params_from_json(j.value("params", json::array()));
@@ -583,6 +593,12 @@ static json to_json(const kdi_constructor& c) {
         {"mangled_name_c2",     c.mangled_name_c2},
         {"llvm_def",            c.llvm_def},
     };
+    if (c.is_private) j["is_private"] = true;
+    if (c.throws_spec) {
+        json ts = json::array();
+        for (const auto& t : *c.throws_spec) ts.push_back(to_json(t));
+        j["throws_spec"] = ts;
+    }
     if (c.doc) j["doc"] = to_json(*c.doc);
     return j;
 }
@@ -592,10 +608,17 @@ static kdi_constructor from_json_constructor(const json& j) {
     c.is_copy_constructor = j.value("is_copy_constructor", false);
     c.is_defaulted        = j.value("is_defaulted", false);
     c.is_deleted          = j.value("is_deleted", false);
+    c.is_private          = j.value("is_private", false);
     c.params              = params_from_json(j.value("params", json::array()));
     c.mangled_name        = j.value("mangled_name", "");
     c.mangled_name_c2     = j.value("mangled_name_c2", "");
     c.llvm_def            = j.at("llvm_def");
+    if (j.contains("throws_spec")) {
+        if (!j.at("throws_spec").is_array())
+            throw kdi_json_error("constructor throws_spec must be an array");
+        c.throws_spec.emplace();
+        for (const auto& t : j.at("throws_spec")) c.throws_spec->push_back(from_json_type(t));
+    }
     if (j.contains("doc")) c.doc = from_json_doc_function(j.at("doc"));
     return c;
 }
@@ -874,6 +897,7 @@ static json to_json(const kdi_aggregate& a) {
         {"is_const_struct",a.is_const_struct},
         {"is_static_nested",a.is_static_nested},
         {"bases",         bases},
+        {"bases_complete", a.bases_complete},
         {"layout",        layout},
         {"constructors",  ctors},
         {"methods",       methods},
@@ -924,6 +948,7 @@ static kdi_aggregate from_json_aggregate(const json& j) {
         kb.byte_offset      = b.value("byte_offset", uint64_t{0});
         a.bases.push_back(kb);
     }
+    a.bases_complete = j.value("bases_complete", false);
     for (auto& lf : j.value("layout", json::array()))
         a.layout.push_back(from_json_layout_field(lf));
     for (auto& c : j.value("constructors", json::array()))
@@ -1020,6 +1045,8 @@ static json to_json(const kdi_enum& e) {
         obj["object_type"] = to_json(*e.object_type);
     if (e.object_table_symbol.has_value())
         obj["object_table_symbol"] = *e.object_table_symbol;
+    if (e.object_table_kind.has_value())
+        obj["object_table_kind"] = *e.object_table_kind;
     if (e.base_fq_name.has_value())
         obj["base_fq_name"] = *e.base_fq_name;
     if (e.doc) obj["doc"] = to_json(*e.doc);
@@ -1036,6 +1063,8 @@ static kdi_enum from_json_enum(const json& j) {
         e.object_type = from_json_type(j.at("object_type"));
     if (j.contains("object_table_symbol"))
         e.object_table_symbol = j.at("object_table_symbol").get<std::string>();
+    if (j.contains("object_table_kind"))
+        e.object_table_kind = j.at("object_table_kind").get<std::string>();
     if (j.contains("base_fq_name"))
         e.base_fq_name = j.at("base_fq_name").get<std::string>();
     if (j.contains("doc"))

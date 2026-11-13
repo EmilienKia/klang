@@ -26,6 +26,9 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/Type.h>
 
+#include <functional>
+#include <unordered_set>
+
 namespace k::model {
 
 //
@@ -61,6 +64,32 @@ bool type::contains_unresolved(const std::shared_ptr<type>& t) {
         return !uc->is_resolved() || contains_unresolved(uc->get_resolved());
     }
     return contains_unresolved(t->get_subtype());
+}
+
+bool type::contains_template_placeholder(const std::shared_ptr<type>& t) {
+    if (!t) return false;
+    if (auto u = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        if (u->is_template_param_placeholder()) return true;
+        if (u->has_model_only_template_args())
+            for (const auto& arg : u->get_model_template_args())
+                if (contains_template_placeholder(arg)) return true;
+        return false;
+    }
+    if (auto callable = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        if (contains_template_placeholder(callable->get_return_type())) return true;
+        for (const auto& arg : callable->parameter_types())
+            if (contains_template_placeholder(arg)) return true;
+        for (const auto& thrown : callable->get_throws())
+            if (contains_template_placeholder(thrown)) return true;
+    }
+    if (auto callable = std::dynamic_pointer_cast<callable_type>(t)) {
+        if (contains_template_placeholder(callable->get_return_type())) return true;
+        for (const auto& arg : callable->get_parameter_types())
+            if (contains_template_placeholder(arg)) return true;
+        for (const auto& thrown : callable->get_throws())
+            if (contains_template_placeholder(thrown)) return true;
+    }
+    return contains_template_placeholder(t->get_subtype());
 }
 
 std::shared_ptr<type> type::canonical(const std::shared_ptr<type>& t) {
@@ -320,8 +349,48 @@ lex::opt_any_lexeme type::get_interest_lexeme() const {
 // Unresolved type
 //
 
+std::shared_ptr<unresolved_type> unresolved_type::make_model_template(
+    const name& type_id, std::vector<std::shared_ptr<type>> args)
+{
+    auto result = std::shared_ptr<unresolved_type>(new unresolved_type(type_id));
+    result->set_model_only_template_args(std::move(args));
+    return result;
+}
+
+std::shared_ptr<unresolved_type> unresolved_type::make_source_binder(
+    const name& type_id, template_binder_id binder)
+{
+    auto result = std::shared_ptr<unresolved_type>(new unresolved_type(type_id));
+    result->_is_template_param_placeholder = true;
+    result->_source_binder = std::move(binder);
+    return result;
+}
+
+std::shared_ptr<unresolved_type> unresolved_type::clone_with_model_args(
+    std::vector<std::shared_ptr<type>> args) const
+{
+    auto result = std::shared_ptr<unresolved_type>(new unresolved_type(_type_id));
+    result->_definition_namespace = _definition_namespace;
+    result->_ast_template_args = _ast_template_args;
+    result->_has_explicit_template_args = _has_explicit_template_args;
+    result->_is_template_param_placeholder = _is_template_param_placeholder;
+    result->_source_binder = _source_binder;
+    result->_model_template_args = std::move(args);
+    result->_model_only_template_args = _model_only_template_args;
+    return result;
+}
+
 std::string unresolved_type::to_string() const {
-    return "<<unresolved:" + _type_id.to_string() + ">>";
+    std::string result = "<<unresolved:" + _type_id.to_string();
+    if (_model_only_template_args) {
+        result += "<";
+        for (size_t i = 0; i < _model_template_args.size(); ++i) {
+            if (i) result += ", ";
+            result += _model_template_args[i] ? _model_template_args[i]->to_string() : "<unknown>";
+        }
+        result += ">";
+    }
+    return result + ">>";
 }
 
 lex::opt_any_lexeme unresolved_type::get_first_lexeme() const {
@@ -410,19 +479,24 @@ std::shared_ptr<type> unresolved_type::substitute_ast_type_spec(
 std::shared_ptr<unresolved_type> unresolved_type::clone_with_substituted_model_args(
     const std::unordered_map<std::string, std::shared_ptr<type>>& subst) const
 {
-    if (_ast_template_args.empty() || subst.empty()) return nullptr;
+    if ((!_model_only_template_args && _ast_template_args.empty()) || subst.empty()) return nullptr;
 
     std::vector<std::shared_ptr<type>> model_args;
-    model_args.reserve(_ast_template_args.size());
+    const auto count = _model_only_template_args ? _model_template_args.size() : _ast_template_args.size();
+    model_args.reserve(count);
     bool any_substituted = false;
 
-    for (size_t i = 0; i < _ast_template_args.size(); ++i) {
+    for (size_t i = 0; i < count; ++i) {
         // A later member-template substitution must compose with the enclosing
         // specialization, not reconstruct its already-bound arguments from AST.
         if (i < _model_template_args.size() && _model_template_args[i]) {
             auto sub = substitute_type(_model_template_args[i], subst);
             any_substituted |= sub != _model_template_args[i];
             model_args.push_back(sub);
+            continue;
+        }
+        if (_model_only_template_args) {
+            model_args.push_back(nullptr);
             continue;
         }
         const auto& ast_arg = _ast_template_args[i];
@@ -448,6 +522,7 @@ std::shared_ptr<unresolved_type> unresolved_type::clone_with_substituted_model_a
     new_ut->_ast_template_args = _ast_template_args;
     new_ut->_has_explicit_template_args = _has_explicit_template_args;
     new_ut->_model_template_args = std::move(model_args);
+    new_ut->_model_only_template_args = _model_only_template_args;
     return new_ut;
 }
 
@@ -1325,6 +1400,8 @@ void set_type_definition_namespace(const std::shared_ptr<type>& t, const std::sh
     if (!t || !scope) return;
     if (auto ut = std::dynamic_pointer_cast<unresolved_type>(t)) {
         if (!ut->get_definition_namespace()) ut->set_definition_namespace(scope);
+        if (ut->has_model_only_template_args())
+            for (const auto& arg : ut->get_model_template_args()) set_type_definition_namespace(arg, scope);
         return;
     }
     if (auto ct = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
@@ -1350,6 +1427,10 @@ std::shared_ptr<type> substitute_type(
     if (auto ut = std::dynamic_pointer_cast<unresolved_type>(t)) {
         const auto& tid = ut->type_id();
 
+        if (ut->has_model_only_template_args()) {
+            if (auto substituted = ut->clone_with_substituted_model_args(subst)) return substituted;
+            return t;
+        }
         auto it = subst.find(tid.to_string());
         if (it != subst.end()) return it->second;
 
@@ -1469,5 +1550,266 @@ std::shared_ptr<type> substitute_type(
     return t;
 }
 
+namespace {
+
+bool source_binding_known(const std::shared_ptr<type>& t,
+                          std::unordered_set<const type*>& seen)
+{
+    if (!t) return false;
+    if (!seen.insert(t.get()).second) return false;
+    struct erase_on_exit {
+        std::unordered_set<const type*>& seen;
+        const type* value;
+        ~erase_on_exit() { seen.erase(value); }
+    } guard{seen, t.get()};
+    if (std::dynamic_pointer_cast<erased_param_type>(t)) return false;
+    if (auto unresolved = std::dynamic_pointer_cast<unresolved_type>(t))
+        return unresolved->source_binder() && unresolved->source_binder()->scope;
+    if (auto callable = std::dynamic_pointer_cast<callable_type>(t)) {
+        if (!source_binding_known(callable->get_return_type(), seen)) return false;
+        for (const auto& p : callable->get_parameter_types())
+            if (!source_binding_known(p, seen)) return false;
+        for (const auto& th : callable->get_throws())
+            if (!source_binding_known(th, seen)) return false;
+    }
+    if (auto callable = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        if (!source_binding_known(callable->get_return_type(), seen)) return false;
+        for (const auto& p : callable->parameter_types())
+            if (!source_binding_known(p, seen)) return false;
+        for (const auto& th : callable->get_throws())
+            if (!source_binding_known(th, seen)) return false;
+    }
+    if (auto alias = std::dynamic_pointer_cast<alias_type>(t))
+        if (!source_binding_known(alias->get_underlying(), seen)) return false;
+    auto inner = t->get_subtype();
+    if (inner) return source_binding_known(inner, seen);
+    return !type::is_pointer(t) && !type::is_reference(t) && !type::is_link(t)
+        && !type::is_view(t) && !type::is_owner(t) && !type::is_drain(t)
+        && !type::is_const(t) && !type::is_array(t);
+}
+
+std::shared_ptr<type> rewrite_generic_source_type(
+    const std::shared_ptr<type>& t,
+    const type_substitution_map& lexical,
+    const source_type_substitution_map& bindings,
+    bool bind_names,
+    bool* unknown_binding = nullptr)
+{
+    if (!t) return nullptr;
+    if (auto ut = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        if (ut->source_binder()) {
+            auto it = bindings.find(*ut->source_binder());
+            if (it == bindings.end()) return t;
+            std::unordered_set<const type*> seen;
+            if (!source_binding_known(it->second, seen)) {
+                if (unknown_binding) *unknown_binding = true;
+                return t;
+            }
+            return it->second;
+        }
+        if (!ut->has_template_args()) {
+            const auto& id = ut->type_id();
+            if (bind_names && ut->is_template_param_placeholder()
+                && !id.has_root_prefix() && id.size() == 1) {
+                auto it = lexical.find(id.front());
+                if (it != lexical.end()) return it->second;
+                if (unknown_binding) *unknown_binding = true;
+            }
+            return bind_names ? ut->clone_with_model_args(ut->get_model_template_args()) : t;
+        }
+
+        const auto& old_args = ut->get_model_template_args();
+        const auto& ast_args = ut->get_ast_template_args();
+        const size_t count = ut->has_model_only_template_args() ? old_args.size() : ast_args.size();
+        std::vector<std::shared_ptr<type>> args;
+        args.reserve(count);
+        bool changed = false;
+        for (size_t i = 0; i < count; ++i) {
+            std::shared_ptr<type> arg;
+            if (i < old_args.size() && old_args[i]) {
+                arg = rewrite_generic_source_type(old_args[i], lexical, bindings, bind_names,
+                                                  unknown_binding);
+                changed |= arg != old_args[i];
+            } else if (bind_names && !ut->has_model_only_template_args() && ast_args[i]
+                       && ast_args[i]->is_type() && ast_args[i]->type_arg) {
+                arg = unresolved_type::substitute_ast_type_spec(
+                    ast_args[i]->type_arg.get(), lexical, ut->get_definition_namespace());
+                changed |= static_cast<bool>(arg);
+            }
+            args.push_back(std::move(arg));
+        }
+        return (changed || bind_names) ? ut->clone_with_model_args(std::move(args)) : t;
+    }
+
+    if (auto ct = std::dynamic_pointer_cast<callable_type>(t)) {
+        auto ret = rewrite_generic_source_type(ct->get_return_type(), lexical, bindings, bind_names,
+                                               unknown_binding);
+        std::vector<std::shared_ptr<type>> params, throws;
+        for (const auto& p : ct->get_parameter_types())
+            params.push_back(rewrite_generic_source_type(p, lexical, bindings, bind_names, unknown_binding));
+        for (const auto& th : ct->get_throws())
+            throws.push_back(rewrite_generic_source_type(th, lexical, bindings, bind_names, unknown_binding));
+        return callable_type::make_like(*ct, ret, params, throws);
+    }
+    if (auto ct = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        auto ret = rewrite_generic_source_type(ct->get_return_type(), lexical, bindings, bind_names,
+                                               unknown_binding);
+        std::vector<std::shared_ptr<type>> params, throws;
+        for (const auto& p : ct->parameter_types())
+            params.push_back(rewrite_generic_source_type(p, lexical, bindings, bind_names, unknown_binding));
+        for (const auto& th : ct->get_throws())
+            throws.push_back(rewrite_generic_source_type(th, lexical, bindings, bind_names, unknown_binding));
+        return unresolved_callable_type::make_shared(
+            ct->owner_name(), ct->get_addresser(), params, ret, throws);
+    }
+    // The marker is a pointer subclass, but is not a source-written byte pointer.
+    if (std::dynamic_pointer_cast<erased_param_type>(t)) {
+        if (bind_names && unknown_binding) *unknown_binding = true;
+        return t;
+    }
+    if (auto inner = t->get_subtype()) {
+        auto rewritten = rewrite_generic_source_type(inner, lexical, bindings, bind_names, unknown_binding);
+        if (auto wrapper = type::make_pinned_wrapper(t, rewritten)) return wrapper;
+    }
+    return t;
+}
+
+void collect_source_type_anchors(const std::shared_ptr<type>& t,
+                                 std::vector<std::shared_ptr<type>>& anchors,
+                                 std::unordered_set<const type*>& seen)
+{
+    if (!t || !seen.insert(t.get()).second) return;
+    anchors.push_back(t);
+    if (auto ut = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        for (const auto& arg : ut->get_model_template_args())
+            collect_source_type_anchors(arg, anchors, seen);
+        collect_source_type_anchors(ut->get_resolved(), anchors, seen);
+    }
+    if (auto ct = std::dynamic_pointer_cast<callable_type>(t)) {
+        collect_source_type_anchors(ct->get_return_type(), anchors, seen);
+        for (const auto& p : ct->get_parameter_types()) collect_source_type_anchors(p, anchors, seen);
+        for (const auto& th : ct->get_throws()) collect_source_type_anchors(th, anchors, seen);
+    }
+    if (auto ct = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        collect_source_type_anchors(ct->get_return_type(), anchors, seen);
+        for (const auto& p : ct->parameter_types()) collect_source_type_anchors(p, anchors, seen);
+        for (const auto& th : ct->get_throws()) collect_source_type_anchors(th, anchors, seen);
+    }
+    if (auto alias = std::dynamic_pointer_cast<alias_type>(t))
+        collect_source_type_anchors(alias->get_underlying(), anchors, seen);
+    collect_source_type_anchors(t->get_subtype(), anchors, seen);
+}
+
+bool has_unmodelled_source_args(const std::shared_ptr<type>& t,
+                                std::unordered_set<const type*>& seen)
+{
+    if (!t || !seen.insert(t.get()).second) return false;
+    if (auto ut = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        const auto& model_args = ut->get_model_template_args();
+        if (ut->has_model_only_template_args()) {
+            for (const auto& arg : model_args)
+                if (!arg || has_unmodelled_source_args(arg, seen)) return true;
+        } else if (ut->has_template_args()) {
+            const auto& ast_args = ut->get_ast_template_args();
+            for (size_t i = 0; i < ast_args.size(); ++i)
+                if (i >= model_args.size() || !model_args[i]
+                    || has_unmodelled_source_args(model_args[i], seen)) return true;
+        }
+    }
+    if (auto ct = std::dynamic_pointer_cast<callable_type>(t)) {
+        if (has_unmodelled_source_args(ct->get_return_type(), seen)) return true;
+        for (const auto& p : ct->get_parameter_types())
+            if (has_unmodelled_source_args(p, seen)) return true;
+        for (const auto& th : ct->get_throws())
+            if (has_unmodelled_source_args(th, seen)) return true;
+    }
+    if (auto ct = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        if (has_unmodelled_source_args(ct->get_return_type(), seen)) return true;
+        for (const auto& p : ct->parameter_types())
+            if (has_unmodelled_source_args(p, seen)) return true;
+        for (const auto& th : ct->get_throws())
+            if (has_unmodelled_source_args(th, seen)) return true;
+    }
+    if (auto alias = std::dynamic_pointer_cast<alias_type>(t))
+        if (has_unmodelled_source_args(alias->get_underlying(), seen)) return true;
+    return has_unmodelled_source_args(t->get_subtype(), seen);
+}
+
+} // namespace
+
+std::shared_ptr<generic_source_type> generic_source_type::capture(
+    const std::shared_ptr<type>& source, const std::vector<const tpl_info*>& scopes)
+{
+    if (!source) return nullptr;
+    auto result = std::make_shared<generic_source_type>();
+    for (const auto* scope : scopes) {
+        if (!scope) continue;
+        for (size_t i = 0; i < scope->params.size(); ++i) {
+            const auto& param = scope->params[i];
+            if (!param.is_type_param() || param.name.empty()
+                || result->_lexical_bindings.contains(param.name)) continue;
+            result->_lexical_bindings.emplace(param.name,
+                unresolved_type::make_source_binder(
+                    name(false, {param.name}), {scope->binder_scope, i}));
+        }
+    }
+    result->_type = rewrite_generic_source_type(
+        source, result->_lexical_bindings, {}, true, &result->_has_unknown_bindings);
+    std::unordered_set<const type*> seen;
+    collect_source_type_anchors(result->_type, result->_anchors, seen);
+    for (const auto& [name, t] : result->_lexical_bindings)
+        collect_source_type_anchors(t, result->_anchors, seen);
+    return result;
+}
+
+std::shared_ptr<generic_source_type> generic_source_type::capture_enclosing(
+    const std::shared_ptr<type>& source, const element& declaration)
+{
+    std::vector<const tpl_info*> scopes;
+    for (auto current = declaration.parent<element>(); current;
+         current = current->parent<element>()) {
+        const tpl_info* info = nullptr;
+        if (auto fn = std::dynamic_pointer_cast<const function>(current))
+            info = fn->get_tpl_info();
+        else if (auto agg = std::dynamic_pointer_cast<const aggregate>(current))
+            info = agg->get_tpl_info();
+        else if (auto un = std::dynamic_pointer_cast<const union_type_def>(current))
+            info = un->get_tpl_info();
+        else if (auto alias = std::dynamic_pointer_cast<const alias_definition>(current))
+            info = alias->get_tpl_info();
+        if (info) scopes.push_back(info);
+    }
+    return capture(source, scopes);
+}
+
+std::shared_ptr<generic_source_type> generic_source_type::capture_unknown(
+    const std::shared_ptr<type>& source)
+{
+    auto result = capture(source, {});
+    if (result) result->_has_unknown_bindings = true;
+    return result;
+}
+
+std::shared_ptr<generic_source_type> generic_source_type::substitute(
+    const source_type_substitution_map& bindings) const
+{
+    auto result = std::make_shared<generic_source_type>();
+    result->_has_unknown_bindings = _has_unknown_bindings;
+    result->_lexical_bindings = _lexical_bindings;
+    for (auto& [name, value] : result->_lexical_bindings)
+        value = rewrite_generic_source_type(value, {}, bindings, false);
+    result->_type = rewrite_generic_source_type(_type, result->_lexical_bindings, bindings, false,
+                                                &result->_has_unknown_bindings);
+    std::unordered_set<const type*> seen;
+    collect_source_type_anchors(result->_type, result->_anchors, seen);
+    for (const auto& [name, t] : result->_lexical_bindings)
+        collect_source_type_anchors(t, result->_anchors, seen);
+    return result;
+}
+
+bool generic_source_type::has_unmodelled_arguments() const {
+    std::unordered_set<const type*> seen;
+    return has_unmodelled_source_args(_type, seen);
+}
 
 } // k::model

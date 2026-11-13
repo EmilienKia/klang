@@ -121,6 +121,9 @@ public:
         std::shared_ptr<context> ctx,
         k::log::logger& logger);
 
+    /** Complete enclosing-instance fields and constructor parameters on concrete clones. */
+    static void prepare_inner_aggregates(const std::shared_ptr<aggregate>& concrete);
+
     /**
      * Find the exported single erased synthesis of an imported (signature-only) generic
      * aggregate: the regular KDI aggregate carrying the generic's origin namespace and
@@ -274,7 +277,8 @@ public:
         const value_substitution_map& val_subst,
         const pack_substitution_map& pack_subst = {},
         bool signature_only = false) {
-        populate_function_from_template(dst, src, subst, val_subst, pack_subst, signature_only);
+        populate_function_from_template(dst, src, subst, val_subst, pack_subst, signature_only,
+                                        function_source_bindings(src, subst, pack_subst));
     }
 
     static void populate_constructor_from_template_public(
@@ -284,7 +288,8 @@ public:
         const value_substitution_map& val_subst,
         const pack_substitution_map& pack_subst = {},
         bool signature_only = false) {
-        populate_function_from_template(dst, src, subst, val_subst, pack_subst, signature_only);
+        populate_function_from_template(dst, src, subst, val_subst, pack_subst, signature_only,
+                                        function_source_bindings(src, subst, pack_subst));
         for (const auto& init : src.member_inits()) {
             std::vector<std::shared_ptr<expression>> args;
             for (const auto& arg : init.args) {
@@ -315,6 +320,9 @@ public:
         bool& created);
 
 private:
+    static source_type_substitution_map function_source_bindings(
+        const function& src, const type_substitution_map& subst,
+        const pack_substitution_map& pack_subst);
     /**
      * Resolve a (possibly generic) base-class type name — as produced by
      * substitute_base_name(), e.g. "int", "Pair<int,int>",
@@ -377,7 +385,8 @@ private:
         const member_variable_definition& src,
         std::shared_ptr<aggregate> target,
         const type_substitution_map& subst,
-        const value_substitution_map& val_subst);
+        const value_substitution_map& val_subst,
+        const source_type_substitution_map& source_subst = {});
 
     /**
      * Clone a function (method) from a template aggregate into a concrete aggregate,
@@ -387,7 +396,8 @@ private:
         const function& src,
         std::shared_ptr<aggregate> target,
         const type_substitution_map& subst,
-        const value_substitution_map& val_subst);
+        const value_substitution_map& val_subst,
+        const source_type_substitution_map& source_subst = {});
 
     /**
      * Clone a constructor from a template aggregate into a concrete aggregate.
@@ -396,7 +406,8 @@ private:
         const constructor& src,
         std::shared_ptr<aggregate> target,
         const type_substitution_map& subst,
-        const value_substitution_map& val_subst);
+        const value_substitution_map& val_subst,
+        const source_type_substitution_map& source_subst = {});
 
     /**
      * Clone a destructor from a template aggregate into a concrete aggregate.
@@ -405,7 +416,8 @@ private:
         const destructor& src,
         std::shared_ptr<aggregate> target,
         const type_substitution_map& subst,
-        const value_substitution_map& val_subst);
+        const value_substitution_map& val_subst,
+        const source_type_substitution_map& source_subst = {});
 
     /**
      * Populate a function's parameters and body from a template source.
@@ -416,7 +428,8 @@ private:
         const type_substitution_map& subst,
         const value_substitution_map& val_subst,
         const pack_substitution_map& pack_subst = {},
-        bool signature_only = false);
+        bool signature_only = false,
+        const source_type_substitution_map& source_subst = {});
 
     /**
      * Clone the contents of a block (statements) from source to destination,
@@ -488,7 +501,8 @@ private:
         std::shared_ptr<aggregate> target,
         const type_substitution_map& subst,
         const value_substitution_map& val_subst,
-        std::shared_ptr<context> ctx = nullptr);
+        std::shared_ptr<context> ctx = nullptr,
+        const source_type_substitution_map& source_subst = {});
 
     /**
      * Clone a nested union_type_def from a template aggregate into a concrete

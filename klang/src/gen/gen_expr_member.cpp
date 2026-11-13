@@ -635,38 +635,44 @@ void type_reference_resolver::visit_member_of_object_expression(member_of_object
  *   4. Handle nested struct-in-struct member chains.
  */
 void implementation_generator::visit_member_of_object_expression(member_of_object_expression& expr) {
-    _value = nullptr;
-    expr.sub_expr()->accept(*this);
+    auto operand = evaluate_expression(*expr.sub_expr());
 
     auto type = expr.sub_expr()->get_type(); // Is a reference or (for vbptr path) a pointer
 
     // Step 1: Visit sub-expression to get the object value
     // Handle vbptr path: sub_expr was cast to pointer<VirtualBase> by the type resolver
     if (type::is_pointer(type)) {
+        auto object = dereference_address(require_value(operand, *expr.sub_expr()));
         auto ptr_type = std::dynamic_pointer_cast<pointer_type>(type);
         auto bare_subtype = type::canonical(type::remove_const(ptr_type->get_pointed_type()));
         if (auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
             const auto& member_name = expr.symbol();
             if (auto field = struct_subtype->get_member(member_name.get_name()); field) {
-                _value = _builder->CreateStructGEP(bare_subtype->get_llvm_type(), _value, field->index);
+                object.address = _builder->CreateStructGEP(bare_subtype->get_llvm_type(), object.address, field->index);
+                publish_expression_result(expr, object);
+                return;
             }
-            // For method calls: leave _value as the A* pointer (treated as A ref at LLVM level)
+            // For method calls the receiver remains a legacy ABI address.
         }
+        publish_expression_result(expr, legacy_result{checked_legacy_result(object)});
         return;
     }
 
     // ── Bare struct rvalue (e.g. function return materialized into alloca) ──
-    // _value is already a pointer (alloca) from struct return materialization.
+    // The legacy ABI supplies an alloca address for the materialized rvalue.
     if (type::is_struct(type)) {
+        auto* object = checked_legacy_result(operand);
         auto bare_subtype = type::canonical(type::remove_const(type));
         if (auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
             const auto& member_name = expr.symbol();
             const k::name& sym_name = member_name.get_name();
             std::string simple_name = sym_name.size() > 1 ? sym_name.back() : sym_name.to_string();
             if (auto field = struct_subtype->get_member(simple_name); field) {
-                _value = _builder->CreateStructGEP(bare_subtype->get_llvm_type(), _value, field->index);
+                auto* field_ptr = _builder->CreateStructGEP(bare_subtype->get_llvm_type(), object, field->index);
+                publish_expression_result(expr, place_result{field_ptr});
+                return;
             } else if (auto method = struct_subtype->get_struct()->get_function(simple_name)) {
-                // Leave _value as the struct alloca pointer (will be used as 'this')
+                // Leave the struct alloca address for the legacy call path.
             } else {
                 throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), expr.first_lexeme(),
                     "Internal error: struct '{}' has no member named '{}' during code generation; "
@@ -674,8 +680,13 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
                     {struct_subtype->name(), simple_name});
             }
         }
+        publish_expression_result(expr, legacy_result{object});
         return;
     }
+
+    auto object = type::is_reference(type) || type::is_drain(type)
+        ? require_place(operand, *expr.sub_expr())
+        : dereference_address(require_value(operand, *expr.sub_expr()));
 
     // Strip const from the subtype to get the bare struct_type for GEP/method lookup.
     auto bare_subtype = type::canonical(type::remove_const(type->get_subtype()));
@@ -684,8 +695,8 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
     // Load the owned object pointer from the owner slot, then continue as if we
     // were operating on T directly.
     if (auto owner_subtype = std::dynamic_pointer_cast<owner_type>(bare_subtype)) {
-        _value = _builder->CreateLoad(
-            llvm::PointerType::get(_builder->getContext(), 0), _value, "owner_obj_load");
+        object = dereference_address(load_place(object,
+            llvm::PointerType::get(_builder->getContext(), 0), "owner_obj_load"));
         bare_subtype = type::remove_const(owner_subtype->get_subtype());
     }
 
@@ -708,14 +719,13 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
         if (name_str == "size") {
             // For unsized array fields (double-reference), load the inner pointer first.
             if (arr_needs_inner_ref_load) {
-                _value = _builder->CreateLoad(
-                    llvm::PointerType::get(_builder->getContext(), 0), _value, "arr_inner_ref_load");
+                object = dereference_address(load_place(object,
+                    llvm::PointerType::get(_builder->getContext(), 0), "arr_inner_ref_load"));
             }
-            // _value is a pointer to the array struct { i32, [N x T] }.
-            // GEP into field 0 (size), then load.
             auto* struct_ty = arr_subtype->get_llvm_struct_type();
-            auto* size_ptr = _builder->CreateStructGEP(struct_ty, _value, array_type::FIELD_SIZE, "arr_size_ptr");
-            _value = _builder->CreateLoad(llvm::Type::getInt32Ty(_builder->getContext()), size_ptr, "arr_size");
+            auto* size_ptr = _builder->CreateStructGEP(struct_ty, object.address, array_type::FIELD_SIZE, "arr_size_ptr");
+            publish_expression_result(expr,
+                load_place(place_result{size_ptr}, llvm::Type::getInt32Ty(_builder->getContext()), "arr_size"));
             return;
         }
     }
@@ -735,8 +745,8 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
     // Step 3: GEP to the member field using the recorded field index
     if(auto struct_subtype = std::dynamic_pointer_cast<struct_type>(bare_subtype)) {
         if (struct_needs_inner_ref_load) {
-            _value = _builder->CreateLoad(
-                llvm::PointerType::get(_builder->getContext(), 0), _value, "obj_inner_ref_load");
+            object = dereference_address(load_place(object,
+                llvm::PointerType::get(_builder->getContext(), 0), "obj_inner_ref_load"));
         }
         const auto& member_name = expr.symbol();
         // For qualified names like A::v, use only the last part (the field name)
@@ -766,13 +776,13 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
                     {union_def->get_short_name(), simple_name});
                 return;
             }
-            // _value is a pointer to the union struct { i32, [N x i8] }
+            // The object is a pointer to the union struct { i32, [N x i8] }.
             auto* union_llvm_type = struct_subtype->get_llvm_type();
             // ── Runtime discriminant check (read-only accesses) ──
             // Skip the check when this access is the LHS of an assignment (we're about
             // to switch the active alternative — the discriminant will be updated after).
             if (!_skip_union_disc_check) {
-                auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, _value, 0, "union_rd_disc_ptr");
+                auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, object.address, 0, "union_rd_disc_ptr");
                 auto* disc_val = _builder->CreateLoad(llvm::Type::getInt32Ty(_builder->getContext()), disc_ptr, "union_rd_disc");
                 auto* expected = llvm::ConstantInt::get(llvm::Type::getInt32Ty(_builder->getContext()), alt->index);
                 auto* cmp = _builder->CreateICmpNE(disc_val, expected, "union_disc_cmp");
@@ -795,18 +805,30 @@ void implementation_generator::visit_member_of_object_expression(member_of_objec
                 _builder->SetInsertPoint(ok_bb);
             }
             // GEP to the storage field (index 1)
-            auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, _value, 1, "union_storage");
+            auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, object.address, 1, "union_storage");
+            // Fields of a default first alternative can be written through the
+            // result, so later cleanup and copies must see it as live. A direct
+            // alternative assignment performs its own transition instead.
+            if (!_skip_union_disc_check && alt->index == 0 && !alt->is_const) {
+                auto object_type = expr.sub_expr()->get_type();
+                if (type::is_reference(object_type)) object_type = object_type->get_subtype();
+                if (!type::is_const(object_type)
+                    && union_first_alternative_tracks_default(*union_def, _unit.get_root_namespace())) {
+                    activate_default_union_alternative(object.address, *union_def);
+                }
+            }
             // The storage pointer is i8*; cast it to a pointer to the alternative's type
             // In LLVM opaque pointers mode, no bitcast needed — just use the pointer directly
-            _value = storage_ptr;
+            publish_expression_result(expr, place_result{storage_ptr});
             return;
         }
 
         // Step 4: Handle nested struct-in-struct member chains
         if(auto field = struct_subtype->get_member(simple_name); field) {
-            _value = _builder->CreateStructGEP(bare_subtype->get_llvm_type(), _value, field->index);
+            object.address = _builder->CreateStructGEP(bare_subtype->get_llvm_type(), object.address, field->index);
+            publish_expression_result(expr, object);
         } else if(auto method = struct_subtype->get_struct()->get_function(simple_name)) {
-            // Note return the already-assigned address of the struct onto which the function is applied to
+            publish_expression_result(expr, legacy_result{checked_legacy_result(object)});
         } else {
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), expr.first_lexeme(),
                 "Internal error: struct '{}' has no member named '{}' during code generation; "
@@ -1014,11 +1036,10 @@ void type_reference_resolver::visit_member_of_pointer_expression(member_of_point
  */
 void implementation_generator::visit_member_of_pointer_expression(member_of_pointer_expression& expr) {
     if (auto access = expr.get_object_member_access()) {
-        access->accept(*this);
+        publish_expression_result(expr, evaluate_expression(*access));
         return;
     }
-    _value = nullptr;
-    expr.sub_expr()->accept(*this);
+    auto operand = evaluate_expression(*expr.sub_expr());
 
     auto sub_type = expr.sub_expr()->get_type();
 
@@ -1034,14 +1055,17 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
                 if (udef->is_polymorphic()) {
                     auto base_agg = udef->get_polymorphic_base();
                     if (base_agg) {
-                        _value = emit_polymorphic_union_to_base_ptr(
-                            _builder.get(), _context.get(), *udef, base_agg.get(), _value);
+                        auto* base = emit_polymorphic_union_to_base_ptr(
+                            _builder.get(), _context.get(), *udef, base_agg.get(), checked_legacy_result(operand));
                         auto base_st = base_agg->get_struct_type();
                         const auto& member_name = expr.symbol();
                         if (auto field = base_st->get_member(member_name.get_name())) {
-                            _value = _builder->CreateStructGEP(
-                                _context->get_llvm_type(base_st), _value,
+                            auto* field_ptr = _builder->CreateStructGEP(
+                                _context->get_llvm_type(base_st), base,
                                 (unsigned)field->index, member_name.get_name().to_string() + "_ptr");
+                            publish_expression_result(expr, place_result{field_ptr});
+                        } else {
+                            publish_expression_result(expr, legacy_result{base});
                         }
                         return;
                     }
@@ -1051,11 +1075,13 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
     }
 
     std::shared_ptr<k::model::type> inner_type;
+    value_result pointer{nullptr};
     if (auto ref_type = std::dynamic_pointer_cast<reference_type>(sub_type)) {
         inner_type = ref_type->get_subtype();
-        _value = _builder->CreateLoad(_context->get_llvm_type(inner_type), _value, "arrow_load");
+        pointer = load_place(require_place(operand, *expr.sub_expr()), _context->get_llvm_type(inner_type), "arrow_load");
     } else {
         inner_type = sub_type;
+        pointer = require_value(operand, *expr.sub_expr());
     }
 
     // Null-check for nullable indirections (pointer, pin, owner)
@@ -1064,7 +1090,7 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
         std::dynamic_pointer_cast<owner_type>(inner_type)) {
         set_debug_location(expr.first_lexeme());
         auto* fatal = get_or_declare_fatal_null_function("__k_fatal_null_dereference");
-        emit_null_check(_value, fatal, "arrow");
+        emit_null_check(pointer.value, fatal, "arrow");
     }
 
     // Step 1: Visit sub-expression to get the pointer/link/view value
@@ -1073,7 +1099,12 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
     else if (auto lnk_t = std::dynamic_pointer_cast<link_type>(inner_type)) pointed_type = lnk_t->get_linked_type();
     else if (auto view_t = std::dynamic_pointer_cast<view_type>(inner_type)) pointed_type = view_t->get_viewed_type();
     else if (auto own_t = std::dynamic_pointer_cast<owner_type>(inner_type)) pointed_type = own_t->get_owned_type();
-    if (!pointed_type) return;
+    if (!pointed_type) {
+        publish_expression_result(expr, legacy_result{checked_legacy_result(pointer)});
+        return;
+    }
+
+    auto object = dereference_address(pointer);
 
     // Step 2: Load the pointer value (dereference indirection)
     // ── Virtual member: array->size ─────────────────────────────────────────
@@ -1092,12 +1123,13 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
         if (name_str == "size") {
             if (arr_needs_ref_load) {
                 // Extra load: dereference the reference to get the actual array struct pointer
-                _value = _builder->CreateLoad(
-                    llvm::PointerType::get(_builder->getContext(), 0), _value, "arr_ref_load");
+                object = dereference_address(load_place(object,
+                    llvm::PointerType::get(_builder->getContext(), 0), "arr_ref_load"));
             }
             auto* struct_ty = arr_subtype->get_llvm_struct_type();
-            auto* size_ptr = _builder->CreateStructGEP(struct_ty, _value, array_type::FIELD_SIZE, "arr_size_ptr");
-            _value = _builder->CreateLoad(llvm::Type::getInt32Ty(_builder->getContext()), size_ptr, "arr_size");
+            auto* size_ptr = _builder->CreateStructGEP(struct_ty, object.address, array_type::FIELD_SIZE, "arr_size_ptr");
+            publish_expression_result(expr,
+                load_place(place_result{size_ptr}, llvm::Type::getInt32Ty(_builder->getContext()), "arr_size"));
             return;
         }
     }
@@ -1105,14 +1137,20 @@ void implementation_generator::visit_member_of_pointer_expression(member_of_poin
     // Step 3: GEP to the member field
     auto pointed_nc = type::remove_const(pointed_type);
     auto struct_subtype = std::dynamic_pointer_cast<struct_type>(pointed_nc);
-    if (!struct_subtype) return;
+    if (!struct_subtype) {
+        publish_expression_result(expr, legacy_result{checked_legacy_result(pointer)});
+        return;
+    }
     const auto& member_name = expr.symbol();
     if (auto field = struct_subtype->get_member(member_name.get_name())) {
-        _value = _builder->CreateStructGEP(
-            _context->get_llvm_type(pointed_nc), _value,
+        object.address = _builder->CreateStructGEP(
+            _context->get_llvm_type(pointed_nc), object.address,
             (unsigned)field->index, member_name.get_name().to_string() + "_ptr");
+        publish_expression_result(expr, object);
+    } else {
+        // Method receivers are consumed by the legacy call path.
+        publish_expression_result(expr, legacy_result{checked_legacy_result(object)});
     }
-    // For method: _value is already the struct ptr (this)
 }
 
 //

@@ -642,6 +642,7 @@ TEST_CASE("kdi_aggregate: defaults", "[dto][aggregate]") {
     REQUIRE(agg.is_static_nested == false);
     REQUIRE(agg.enclosing_fq_name.empty());
     REQUIRE(agg.bases.empty());
+    REQUIRE_FALSE(agg.bases_complete);
     REQUIRE(agg.layout.empty());
     REQUIRE(agg.constructors.empty());
     REQUIRE(!agg.destructor.has_value());

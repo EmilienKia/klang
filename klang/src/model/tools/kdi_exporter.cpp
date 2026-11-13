@@ -20,6 +20,7 @@
 #include "../tools/k_source_emitter.hpp"
 
 #include "../model.hpp"
+#include "../imported.hpp"
 #include "../type.hpp"
 #include "../aggregate_value.hpp"
 
@@ -30,6 +31,7 @@
 #include "../context.hpp"
 #include "../../gen/resolvers_scope_lookup.hpp"
 #include "../../gen/resolvers_symbol.hpp"
+#include "../../gen/resolvers_aggregate.hpp"
 
 #include "../../compiler.hpp"
 
@@ -81,11 +83,51 @@ public:
     }
 };
 
+class signature_diagnostics : public log::logger {
+public:
+    void report(const log::diagnostic& diagnostic) override {
+        if (diagnostic.level >= log::diagnostic::severity::error)
+            throw log::compiler_error(diagnostic);
+    }
+};
+
 class definition_symbol_lookup : public gen::symbol_resolver {
 public:
     using gen::symbol_resolver::symbol_resolver;
     using gen::symbol_resolver::resolve_symbol;
+
+    void resolve_signature_annotations(function& fn) {
+        for (const auto& param : fn.parameters()) {
+            if (param->get_annotations().empty()) continue;
+            lex::opt_any_lexeme where;
+            if (auto ast = param->get_ast_parameter_spec(); ast && ast->name)
+                where = lex::any_lexeme{*ast->name};
+            resolve_and_validate_annotations(*param, *param, param->get_short_name(),
+                                             where, "PARAMETER");
+        }
+        resolve_function_annotations(fn);
+        for (const auto& param : fn.parameters()) {
+            for (const auto& annotation : param->get_annotations()) {
+                if (!annotation.resolved_type) continue;
+                const auto name = annotation.resolved_type->get_fq_name();
+                if (name == "::k::ffi::CString" || name == "k::ffi::CString")
+                    param->set_ffi_cstring(true);
+            }
+        }
+    }
 };
+
+void resolve_template_signature_annotations(function& fn) {
+    bool annotated = !fn.get_annotations().empty();
+    for (const auto& param : fn.parameters())
+        annotated = annotated || !param->get_annotations().empty();
+    if (!annotated) return;
+    auto owner = fn.ancestor<unit>();
+    if (!owner) throw std::runtime_error("template signature has no owning unit");
+    signature_diagnostics diagnostics;
+    definition_symbol_lookup resolver(diagnostics, fn.get_context(), *owner);
+    resolver.resolve_signature_annotations(fn);
+}
 
 // Template bodies have not necessarily passed symbol resolution. Walk their
 // model expressions without mutating them, using the normal lexical resolver.
@@ -94,6 +136,7 @@ class private_dependency_collector : public default_model_visitor {
     definition_symbol_lookup _lookup;
     std::unordered_set<const element*> _visited;
     std::unordered_set<const function*> _seen_functions;
+    bool _include_finally;
 
     void walk(const std::shared_ptr<element>& node) {
         if (node && _visited.insert(node.get()).second) node->accept(*this);
@@ -128,9 +171,11 @@ public:
     std::vector<std::shared_ptr<function>> functions;
     std::vector<std::pair<expression*, std::shared_ptr<function>>> references;
 
-    explicit private_dependency_collector(element& entity, const std::string& template_name)
+    explicit private_dependency_collector(element& entity, const std::string& template_name,
+                                          bool include_finally)
         : _diagnostics(template_name),
-          _lookup(_diagnostics, entity.get_context(), *entity.ancestor<unit>()) {
+          _lookup(_diagnostics, entity.get_context(), *entity.ancestor<unit>()),
+          _include_finally(include_finally) {
         walk(entity.shared_as<element>());
     }
 
@@ -172,6 +217,7 @@ public:
     void visit_try_catch_statement(try_catch_statement& stmt) override {
         walk(stmt.get_try_body());
         for (const auto& clause : stmt.get_catch_clauses()) walk(clause);
+        if (_include_finally) walk(stmt.get_finally_body());
     }
     void visit_catch_clause(catch_clause& clause) override { walk(clause.get_body()); }
     void visit_symbol_expression(symbol_expression& symbol) override {
@@ -530,6 +576,11 @@ bool kdi_builder::is_exported_aggregate(const aggregate& agg) {
 bool kdi_builder::is_exported_type(const std::shared_ptr<type>& t) {
     auto canonical = type::canonical(t);
     if (!canonical) return true;
+    if (auto unresolved = std::dynamic_pointer_cast<unresolved_type>(canonical);
+        unresolved && unresolved->has_model_only_template_args()) {
+        for (const auto& arg : unresolved->get_model_template_args())
+            if (!is_exported_type(arg)) return false;
+    }
     if (auto st = std::dynamic_pointer_cast<struct_type>(canonical)) {
         if (auto agg = st->get_struct()) return is_exported_aggregate(*agg);
     }
@@ -582,7 +633,21 @@ kdi::kdi_callable_type kdi_builder::to_kdi_callable(
     return k;
 }
 
-kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {    if (!t) return kdi::kdi_type::make_void();
+kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {
+    if (!t) return kdi::kdi_type::make_void();
+
+    if (auto unresolved = std::dynamic_pointer_cast<unresolved_type>(t)) {
+        if (unresolved->is_resolved()) return to_kdi_type(unresolved->get_resolved());
+        if (unresolved->is_template_param_placeholder())
+            return kdi::kdi_type::make_template_param(unresolved->type_id().to_string());
+        if (unresolved->has_model_only_template_args()) {
+            kdi::kdi_generic_ref_type ref;
+            ref.name = unresolved->type_id().to_string();
+            for (const auto& arg : unresolved->get_model_template_args())
+                ref.args.push_back(std::make_shared<kdi::kdi_type>(to_kdi_type(arg)));
+            return kdi::kdi_type{std::move(ref)};
+        }
+    }
 
     if (auto ct = std::dynamic_pointer_cast<const_type>(t)) {
         kdi::kdi_const_type kct;
@@ -637,6 +702,17 @@ kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {  
         return kdi::kdi_type{to_kdi_callable(
             *frt, [this](const std::shared_ptr<type>& sub) { return to_kdi_type(sub); })};
     }
+    if (auto frt = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+        kdi::kdi_callable_type k;
+        k.addresser = to_kdi_addresser(frt->get_addresser());
+        k.ret = std::make_shared<kdi::kdi_type>(to_kdi_type(frt->get_return_type()));
+        for (const auto& parameter : frt->parameter_types())
+            k.params.push_back(std::make_shared<kdi::kdi_type>(to_kdi_type(parameter)));
+        for (const auto& thrown : frt->get_throws())
+            k.throws.push_back(std::make_shared<kdi::kdi_type>(to_kdi_type(thrown)));
+        if (!frt->owner_name().empty()) k.member_of = frt->owner_name().to_string();
+        return kdi::kdi_type{std::move(k)};
+    }
     if (auto st = std::dynamic_pointer_cast<struct_type>(t)) {
         // Use the fully-qualified name so importing compilers can unambiguously
         // resolve the aggregate type.  aggregate::get_fq_name() returns "::ns::Type"
@@ -659,7 +735,11 @@ kdi::kdi_type kdi_builder::to_kdi_type(const std::shared_ptr<type>& t) const {  
         // reaches this point: it resolves directly to the renamed type.
         std::string fq = at->get_fq_name();
         if (auto ad = at->get_alias()) {
-            if (!ad->get_fq_name().empty()) fq = ad->get_fq_name();
+            if (!ad->get_fq_name().empty()) {
+                fq = ad->get_fq_name();
+            } else if (auto scope = ad->parent<named_element>(); scope && !scope->get_fq_name().empty()) {
+                fq = scope->get_fq_name() + "::" + ad->get_short_name();
+            }
         }
         if (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':') fq = fq.substr(2);
         if (!fq.empty()) return kdi::kdi_type::make_alias(std::move(fq));
@@ -687,7 +767,7 @@ kdi::kdi_type kdi_builder::to_kdi_signature_type(const std::shared_ptr<type>& t,
     if (auto ut = std::dynamic_pointer_cast<unresolved_type>(t)) {
         const std::string id = ut->type_id().to_string();
         for (const auto& param : ti.params) {
-            if (param.name == id) {
+            if (!ut->has_template_args() && param.name == id) {
                 return kdi::kdi_type::make_template_param(id);
             }
         }
@@ -702,15 +782,20 @@ kdi::kdi_type kdi_builder::to_kdi_signature_type(const std::shared_ptr<type>& t,
         if (!ut->is_resolved()) {
             kdi::kdi_generic_ref_type gref;
             gref.name = id;
-            for (const auto& arg : ut->get_ast_template_args()) {
-                if (arg && arg->is_type() && arg->type_arg) {
-                    auto arg_type = _ctx.from_type_specifier(*arg->type_arg);
+            if (ut->has_model_only_template_args()) {
+                for (const auto& arg : ut->get_model_template_args())
                     gref.args.push_back(std::make_shared<kdi::kdi_type>(
-                        to_kdi_signature_type(arg_type, ti)));
-                } else {
-                    // Value (non-type) template argument: not structurally
-                    // representable in kdi_generic_ref_type (see kdi_types.hpp).
-                    gref.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_void()));
+                        arg ? to_kdi_signature_type(arg, ti) : kdi::kdi_type::make_void()));
+            } else {
+                for (const auto& arg : ut->get_ast_template_args()) {
+                    if (arg && arg->is_type() && arg->type_arg) {
+                        auto arg_type = _ctx.from_type_specifier(*arg->type_arg);
+                        gref.args.push_back(std::make_shared<kdi::kdi_type>(
+                            to_kdi_signature_type(arg_type, ti)));
+                    } else {
+                        // Value arguments are not represented in schema 0.1.
+                        gref.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_void()));
+                    }
                 }
             }
             return kdi::kdi_type{std::move(gref)};
@@ -749,14 +834,14 @@ kdi::kdi_type kdi_builder::to_kdi_signature_type(const std::shared_ptr<type>& t,
         kdi::kdi_drain_type k; k.inner = std::make_shared<kdi::kdi_type>(to_kdi_signature_type(dt->get_subtype(), ti));
         return kdi::kdi_type{std::move(k)};
     }
-    if (auto at = std::dynamic_pointer_cast<array_type>(t)) {
-        kdi::kdi_array_type k; k.elem = std::make_shared<kdi::kdi_type>(to_kdi_signature_type(at->get_subtype(), ti));
-        return kdi::kdi_type{std::move(k)};
-    }
     if (auto sat = std::dynamic_pointer_cast<sized_array_type>(t)) {
         kdi::kdi_sized_array_type k;
         k.elem = std::make_shared<kdi::kdi_type>(to_kdi_signature_type(sat->get_subtype(), ti));
         k.size = sat->get_size();
+        return kdi::kdi_type{std::move(k)};
+    }
+    if (auto at = std::dynamic_pointer_cast<array_type>(t)) {
+        kdi::kdi_array_type k; k.elem = std::make_shared<kdi::kdi_type>(to_kdi_signature_type(at->get_subtype(), ti));
         return kdi::kdi_type{std::move(k)};
     }
     if (auto frt = std::dynamic_pointer_cast<callable_type>(t)) {
@@ -793,6 +878,7 @@ std::vector<kdi::kdi_param> kdi_builder::to_kdi_params(const function& fn) const
         kp.name = p->get_short_name();
         kp.type = to_kdi_type(p->get_type());
         kp.is_varargs = p->is_varargs();
+        kp.is_ffi_cstring = p->is_ffi_cstring();
         if (p->has_default_expr()) {
             k_source_emitter emitter;
             kp.default_source = emitter.emit_parameter_default(*p);
@@ -811,6 +897,7 @@ std::vector<kdi::kdi_param> kdi_builder::to_kdi_signature_params(const function&
         kp.name = p->get_short_name();
         kp.type = to_kdi_signature_type(p->get_type(), ti);
         kp.is_varargs = p->is_varargs();
+        kp.is_ffi_cstring = p->is_ffi_cstring();
         if (p->has_default_expr()) {
             k_source_emitter emitter;
             kp.default_source = emitter.emit_parameter_default(*p);
@@ -820,9 +907,83 @@ std::vector<kdi::kdi_param> kdi_builder::to_kdi_signature_params(const function&
     return result;
 }
 
+static bool supported_signature_throw(const kdi::kdi_type& t) {
+    if (std::holds_alternative<kdi::kdi_aggregate_ref>(t.value)
+        || std::holds_alternative<kdi::kdi_alias_ref>(t.value)
+        || std::holds_alternative<kdi::kdi_template_param_ref>(t.value)) return true;
+    if (const auto* generic = std::get_if<kdi::kdi_generic_ref_type>(&t.value))
+        return !generic->name.empty();
+    if (const auto* ref = std::get_if<kdi::kdi_ref_type>(&t.value))
+        return ref->inner && supported_signature_throw(*ref->inner);
+    if (const auto* cnst = std::get_if<kdi::kdi_const_type>(&t.value))
+        return cnst->inner && supported_signature_throw(*cnst->inner);
+    return false;
+}
+
+std::vector<kdi::kdi_type> kdi_builder::to_kdi_signature_throws(
+    const function& fn, const tpl_info& ti, const std::string& fq_name) {
+    std::vector<kdi::kdi_type> result;
+    auto append = [&](const std::shared_ptr<type>& thrown) {
+        if (ti.is_generic && !is_exported_type(thrown))
+            throw std::runtime_error("Cannot export generic throws type in '" + fq_name + "'");
+        auto encoded = to_kdi_signature_type(thrown, ti);
+        if (ti.is_generic && !supported_signature_throw(encoded))
+            throw std::runtime_error("Cannot encode generic throws type in '" + fq_name + "'");
+        if (ti.is_generic) {
+            std::function<void(const std::shared_ptr<type>&)> register_types = [&](const auto& value) {
+                auto current = type::canonical(value);
+                if (!current) return;
+                if (auto st = std::dynamic_pointer_cast<struct_type>(current)) {
+                    if (auto definition = st->get_struct()) register_aggregate_type(*definition);
+                } else if (auto unresolved = std::dynamic_pointer_cast<unresolved_type>(current);
+                           unresolved && unresolved->has_model_only_template_args()) {
+                    for (const auto& arg : unresolved->get_model_template_args()) register_types(arg);
+                } else if (auto callable = std::dynamic_pointer_cast<unresolved_callable_type>(current)) {
+                    register_types(callable->get_return_type());
+                    for (const auto& arg : callable->parameter_types()) register_types(arg);
+                    for (const auto& exception : callable->get_throws()) register_types(exception);
+                } else if (auto callable = std::dynamic_pointer_cast<callable_type>(current)) {
+                    register_types(callable->get_return_type());
+                    for (const auto& arg : callable->get_parameter_types()) register_types(arg);
+                    for (const auto& exception : callable->get_throws()) register_types(exception);
+                } else {
+                    register_types(current->get_subtype());
+                }
+            };
+            register_types(thrown);
+        }
+        result.push_back(std::move(encoded));
+    };
+    if (!fn.get_throws_spec().empty()) {
+        for (const auto& thrown : fn.get_throws_spec()) append(thrown);
+    } else {
+        for (const auto& raw : fn.get_throws_spec_raw()) {
+            const auto param = std::find_if(ti.params.begin(), ti.params.end(),
+                [&](const auto& p) { return p.name == raw; });
+            if (param != ti.params.end()) {
+                result.push_back(kdi::kdi_type::make_template_param(raw));
+                continue;
+            }
+            auto owner = std::const_pointer_cast<unit>(fn.ancestor<unit>());
+            auto context = owner ? owner->get_context() : nullptr;
+            std::shared_ptr<type> resolved;
+            if (owner && context) {
+                signature_diagnostics diagnostics;
+                gen::aggregate_type_resolver resolver(diagnostics, context, *owner);
+                resolved = resolver.resolve_type_by_name(k::name(raw), fn);
+            }
+            if (!resolved)
+                throw std::runtime_error("Cannot export generic throws type '" + raw +
+                                         "' in '" + fq_name + "'");
+            append(resolved);
+        }
+    }
+    return result;
+}
+
 kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const aggregate& agg,
                                                                              const tpl_info& ti,
-                                                                             const std::string& fq_name) const {
+                                                                             const std::string& fq_name) {
     kdi::kdi_aggregate sig;
     if (agg.is_annotation()) sig.kind = kdi::kdi_aggregate_kind::annotation_;
     else if (dynamic_cast<const interface*>(&agg) != nullptr) sig.kind = kdi::kdi_aggregate_kind::interface_;
@@ -872,13 +1033,20 @@ kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const
     }
 
     for (auto& ctor : agg.constructors()) {
-        if (!ctor || !is_exported(ctor->get_visibility())) continue;
+        if (!ctor || (!is_exported(ctor->get_visibility()) && !ctor->is_deleted())) continue;
         kdi::kdi_constructor kc;
-        kc.visibility = to_kdi_vis(ctor->get_visibility());
-        kc.is_copy_constructor = ctor->is_copy_constructor();
+        kc.visibility = ctor->get_visibility() == PRIVATE ? kdi::kdi_visibility::protected_
+                                                          : to_kdi_vis(ctor->get_visibility());
+        kc.is_copy_constructor = agg.is_copy_constructor(*ctor);
         kc.is_defaulted = ctor->is_defaulted();
         kc.is_deleted = ctor->is_deleted();
+        kc.is_private = ctor->get_visibility() == PRIVATE;
         kc.params = to_kdi_signature_params(*ctor, ti);
+        if (!ctor->is_throws_spec_unknown()
+            && (ti.is_generic || ctor->get_throws_spec_raw().empty()
+                || !ctor->get_throws_spec().empty())) {
+            kc.throws_spec = to_kdi_signature_throws(*ctor, ti, fq_name);
+        }
         kc.doc = to_kdi_doc_function(*ctor);
         sig.constructors.push_back(std::move(kc));
     }
@@ -888,20 +1056,29 @@ kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const
          if (!fn || std::dynamic_pointer_cast<constructor>(fn) || std::dynamic_pointer_cast<destructor>(fn)) {
              continue;
          }
-         if (!is_exported(fn->get_visibility())) continue;
+         if (!is_exported(fn->get_visibility()) &&
+             !(fn->is_deleted() && fn->is_operator() && fn->get_short_name() == "__operator_aS_")) continue;
+         if (ti.is_generic) resolve_template_signature_annotations(*fn);
          kdi::kdi_method km;
          km.name = fn->get_short_name();
         km.fq_name = fn->get_fq_name();
-        km.visibility = to_kdi_vis(fn->get_visibility());
+        km.visibility = fn->get_visibility() == PRIVATE ? kdi::kdi_visibility::protected_
+                                                        : to_kdi_vis(fn->get_visibility());
         km.is_static = fn->is_static();
+        km.is_extern = fn->is_extern();
+        if (km.is_extern) km.mangled_name = fn->get_extern_c_symbol().value_or(fn->get_short_name());
         km.is_const_member = fn->is_const_member();
         km.is_virtual = fn->is_virtual();
         km.is_abstract = fn->is_abstract_func();
         km.is_final = fn->is_final_func();
         km.is_operator = fn->is_operator();
+        km.is_deleted = fn->is_deleted();
+        km.is_private = fn->get_visibility() == PRIVATE;
         km.vtable_slot = fn->get_vtable_slot();
         km.return_type = to_kdi_signature_type(std::const_pointer_cast<type>(fn->get_return_type()), ti);
         km.params = to_kdi_signature_params(*fn, ti);
+        if (ti.is_generic || fn->get_throws_spec_raw().empty() || !fn->get_throws_spec().empty())
+            km.throws_spec = to_kdi_signature_throws(*fn, ti, fq_name);
         km.doc = to_kdi_doc_function(*fn);
         sig.methods.push_back(std::move(km));
     }
@@ -911,15 +1088,20 @@ kdi::kdi_aggregate kdi_builder::build_generic_template_aggregate_signature(const
 
 kdi::kdi_function kdi_builder::build_generic_template_function_signature(const function& fn,
                                                                           const tpl_info& ti,
-                                                                          const std::string& fq_name) const {
+                                                                          const std::string& fq_name) {
     kdi::kdi_function sig;
+    if (ti.is_generic) resolve_template_signature_annotations(const_cast<function&>(fn));
     sig.name = fn.get_short_name();
     sig.fq_name = fq_name;
     sig.visibility = to_kdi_vis(fn.get_visibility());
     sig.is_static = fn.is_static();
+    sig.is_extern = fn.is_extern();
+    if (sig.is_extern) sig.mangled_name = fn.get_extern_c_symbol().value_or(fn.get_short_name());
     sig.is_operator = fn.is_operator();
     sig.return_type = to_kdi_signature_type(std::const_pointer_cast<type>(fn.get_return_type()), ti);
     sig.params = to_kdi_signature_params(fn, ti);
+    if (ti.is_generic || fn.get_throws_spec_raw().empty() || !fn.get_throws_spec().empty())
+        sig.throws_spec = to_kdi_signature_throws(fn, ti, fq_name);
     sig.doc = to_kdi_doc_function(fn);
     return sig;
 }
@@ -1204,8 +1386,13 @@ kdi::kdi_aggregate kdi_builder::begin_aggregate(const aggregate& agg) {
 
     // ── Bases ────────────────────────────────────────────────────────────
     const llvm::DataLayout& dl = _ctx.module().getDataLayout();
+    kagg.bases_complete = true;
     for (auto& bs : agg.get_bases()) {
-        if (!bs.base) continue;
+        if (!bs.base) {
+            // An unresolved base cannot be listed: record that the list is partial.
+            kagg.bases_complete = false;
+            continue;
+        }
         kdi::kdi_base kb;
         kb.fq_name          = bs.base->get_fq_name();
         kb.visibility       = to_kdi_vis(bs.vis);
@@ -1399,6 +1586,8 @@ void kdi_builder::visit_structure(structure& s) {
             _ns_stack.back()->template_defs.push_back(
                 build_template_def(s.get_short_name(), fq, "struct",
                                    s.get_visibility(), *s.get_tpl_info(), &s));
+        } else {
+            export_member_template_aggregate(s, "struct");
         }
         return;
     }
@@ -1442,6 +1631,8 @@ void kdi_builder::visit_klass(klass& k) {
             _ns_stack.back()->template_defs.push_back(
                 build_template_def(k.get_short_name(), fq, "class",
                                    k.get_visibility(), *k.get_tpl_info(), &k));
+        } else {
+            export_member_template_aggregate(k, "class");
         }
         return;
     }
@@ -1483,6 +1674,8 @@ void kdi_builder::visit_interface(interface& i) {
             _ns_stack.back()->template_defs.push_back(
                 build_template_def(i.get_short_name(), fq, "interface",
                                    i.get_visibility(), *i.get_tpl_info(), &i));
+        } else {
+            export_member_template_aggregate(i, "interface");
         }
         return;
     }
@@ -1538,6 +1731,7 @@ void kdi_builder::visit_enumeration(enumeration& en) {
         ke.underlying_type = to_kdi_type(en.get_underlying_type());
     }
     if (en.is_object_backed()) {
+        if (en.has_runtime_table()) ke.object_table_kind = "runtime";
         if (auto obj_type = en.get_object_type()) {
             ke.object_type = to_kdi_type(obj_type);
         }
@@ -1719,7 +1913,9 @@ void kdi_builder::visit_union(union_type_def& un) {
 void kdi_builder::visit_function(function& fn) {
     // Skip compiler-generated and internal functions
     if (fn.is_compiler_generated()) return;
-    if (!is_exported(fn.get_visibility())) return;
+    if (!is_exported(fn.get_visibility()) &&
+        !(in_aggregate() && fn.is_deleted() && fn.is_operator()
+          && fn.get_short_name() == "__operator_aS_")) return;
     // Generic-function facades have no symbol of their own (see the erased synthesis).
     if (fn.get_erased_target()) return;
 
@@ -1812,13 +2008,17 @@ void kdi_builder::visit_function(function& fn) {
         kdi::kdi_method km;
         km.name            = fn.get_short_name();
         km.fq_name         = fn.get_fq_name();
-        km.visibility      = to_kdi_vis(fn.get_visibility());
+        km.visibility      = fn.get_visibility() == PRIVATE ? kdi::kdi_visibility::protected_
+                                                            : to_kdi_vis(fn.get_visibility());
         km.is_static       = fn.is_static();
+        km.is_extern       = fn.is_extern();
         km.is_const_member = fn.is_const_member();
         km.is_virtual      = fn.is_virtual();
         km.is_abstract     = fn.is_abstract_func();
         km.is_final        = fn.is_final_func();
         km.is_operator     = fn.is_operator();
+        km.is_deleted      = fn.is_deleted();
+        km.is_private      = fn.get_visibility() == PRIVATE;
         km.vtable_slot     = fn.get_vtable_slot();
         km.return_type     = to_kdi_type(std::const_pointer_cast<type>(fn.get_return_type()));
         km.params          = to_kdi_params(fn);
@@ -1842,6 +2042,7 @@ void kdi_builder::visit_function(function& fn) {
         kf.fq_name      = fn.get_fq_name();
         kf.visibility   = to_kdi_vis(fn.get_visibility());
         kf.is_static    = fn.is_static();
+        kf.is_extern    = fn.is_extern();
         kf.is_operator  = fn.is_operator();
         kf.return_type  = to_kdi_type(std::const_pointer_cast<type>(fn.get_return_type()));
         kf.params       = to_kdi_params(fn);
@@ -1862,19 +2063,26 @@ void kdi_builder::visit_function(function& fn) {
 
 void kdi_builder::visit_constructor(constructor& ctor) {
     if (!in_aggregate()) return;
-    if (!is_exported(ctor.get_visibility())) return;
+    if (!is_exported(ctor.get_visibility()) && !ctor.is_deleted()) return;
     // Member-template recipes belong to the primary aggregate template, not
     // concrete ABI constructor records with unresolved template parameters.
     if (ctor.is_template()) return;
     for (const auto& parameter : ctor.parameters()) {
         if (!is_exported_type(std::const_pointer_cast<type>(parameter->get_type()))) return;
     }
+    const bool exported_throws = std::all_of(
+        ctor.get_throws_spec().begin(), ctor.get_throws_spec().end(),
+        [](const auto& thrown) {
+            return is_exported_type(std::const_pointer_cast<type>(thrown));
+        });
 
     kdi::kdi_constructor kc;
-    kc.visibility          = to_kdi_vis(ctor.get_visibility());
-    kc.is_copy_constructor = ctor.is_copy_constructor();
+    kc.visibility          = ctor.get_visibility() == PRIVATE ? kdi::kdi_visibility::protected_
+                                                              : to_kdi_vis(ctor.get_visibility());
+    kc.is_copy_constructor = ctor.get_owner() && ctor.get_owner()->is_copy_constructor(ctor);
     kc.is_defaulted        = ctor.is_defaulted();
     kc.is_deleted          = ctor.is_deleted();
+    kc.is_private          = ctor.get_visibility() == PRIVATE;
     kc.params              = to_kdi_params(ctor);
     kc.mangled_name        = ctor.get_mangled_name();
     if (auto ctx = ctor.get_context())
@@ -1884,6 +2092,23 @@ void kdi_builder::visit_constructor(constructor& ctor) {
     {
         auto* llvm_fn = _ctx.module().getFunction(kc.mangled_name);
         kc.llvm_def = llvm_fn_prototype(llvm_fn);
+    }
+    if (auto imported = dynamic_cast<const imported_constructor*>(&ctor);
+        imported && imported->get_kdi_constructor()) {
+        kc.throws_spec = imported->get_kdi_constructor()->throws_spec;
+    } else if (exported_throws && !ctor.is_throws_spec_unknown()
+               && (ctor.get_throws_spec_raw().empty() || !ctor.get_throws_spec().empty())) {
+        kc.throws_spec.emplace();
+        for (const auto& t : ctor.get_throws_spec())
+            kc.throws_spec->push_back(to_kdi_type(std::const_pointer_cast<type>(t)));
+    }
+    if (kc.throws_spec) {
+        for (const auto& t : ctor.get_throws_spec()) {
+            auto st = std::dynamic_pointer_cast<struct_type>(type::canonical(t));
+            if (st) {
+                if (auto definition = st->get_struct()) register_aggregate_type(*definition);
+            }
+        }
     }
     kc.doc = to_kdi_doc_function(ctor);
 
@@ -2144,13 +2369,98 @@ build_using_alias_map(const element* entity) {
     return map;
 }
 
+static bool source_mentions_identifier(std::string_view source, std::string_view name) {
+    const auto is_word = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
+    for (auto pos = source.find(name); pos != std::string_view::npos; pos = source.find(name, pos + 1)) {
+        const bool left = pos == 0 || !is_word(source[pos - 1]);
+        const bool right = pos + name.size() == source.size() || !is_word(source[pos + name.size()]);
+        if (left && right) return true;
+    }
+    return false;
+}
+
+// Builds `using` declarations that rebuild, in the consumer's definition namespace,
+// the source-level using directives visible to a template. The template source stays
+// verbatim (nested templates, friends, defaults, ...); only directives the source
+// actually mentions are replayed, with fully-qualified targets. A directive shadowed
+// by a nearer namespace member is dropped, as lexical lookup would never reach it.
+static std::string build_using_prelude(const element* entity, std::string_view source) {
+    std::string prelude;
+    if (!entity) return prelude;
+    std::unordered_set<std::string> bound;
+    std::unordered_set<std::string> declared;
+    for (auto current = entity->parent<const element>(); current;
+         current = current->parent<const element>()) {
+        if (auto uh = dynamic_cast<const using_holder*>(current.get())) {
+            for (const auto& dir : uh->get_using_directives()) {
+                if (!dir.ast_node || dir.target_name.empty()) continue;
+                auto fq = resolve_target_fq_name(dir.target_name, current.get());
+                if (fq.empty()) continue;
+                if (dir.is_namespace() && !dir.has_alias()) {
+                    std::shared_ptr<const ns> target;
+                    for (auto scope = current; scope && !target; scope = scope->parent<const element>()) {
+                        auto holder = std::dynamic_pointer_cast<const ns>(scope);
+                        if (!holder) continue;
+                        auto candidate = holder->get_child_namespace(dir.target_name.front());
+                        for (size_t i = 1; candidate && i < dir.target_name.size(); ++i)
+                            candidate = candidate->get_child_namespace(dir.target_name[i]);
+                        target = candidate;
+                    }
+                    if (!target) continue;
+                    const bool mentioned = std::any_of(target->get_children().begin(), target->get_children().end(),
+                        [&](const auto& child) {
+                            auto named = dynamic_cast<const named_element*>(child.get());
+                            return named && !named->get_short_name().empty()
+                                && source_mentions_identifier(source, named->get_short_name());
+                        });
+                    if (mentioned) prelude += "using namespace ::" + fq + ";\n";
+                    continue;
+                }
+                const std::string name = dir.has_alias() ? *dir.alias_name : dir.target_name.back();
+                if (name.empty() || !source_mentions_identifier(source, name)
+                    || bound.contains(name) || declared.contains(name)) continue;
+                bound.insert(name);
+                prelude += "using ";
+                if (dir.is_namespace()) prelude += "namespace ";
+                if (dir.has_alias()) prelude += *dir.alias_name + " = ";
+                prelude += "::" + fq + ";\n";
+            }
+        }
+        if (auto scope = dynamic_cast<const ns*>(current.get())) {
+            for (const auto& child : scope->get_children()) {
+                auto named = dynamic_cast<const named_element*>(child.get());
+                if (named && !named->get_short_name().empty()) declared.insert(named->get_short_name());
+            }
+        }
+    }
+    return prelude;
+}
+
+// A template nested in a non-template aggregate is a recipe of its own: the host keeps no
+// copy of it, so it is exported as a definition linked to its host (host_fq_name), exactly
+// like member function templates. Templates inside template hosts belong to the host's
+// recipe and are rebuilt when the host is instantiated.
+void kdi_builder::export_member_template_aggregate(const aggregate& agg, const std::string& entity_kind) {
+    if (_agg_stack.empty() || _ns_stack.empty() || !agg.get_tpl_info()) return;
+    auto host = agg.parent<aggregate>();
+    if (!host || host->is_template() || host->has_tpl_args()) return;
+    const auto& ti = *agg.get_tpl_info();
+    if (ti.is_generic || agg.is_generic()) return;
+    std::string host_fq = _agg_stack.back()->fq_name;
+    if (host_fq.size() >= 2 && host_fq[0] == ':' && host_fq[1] == ':') host_fq = host_fq.substr(2);
+    auto def = build_template_def(agg.get_short_name(), host_fq + "::" + agg.get_short_name(),
+                                  entity_kind, agg.get_visibility(), ti, &agg);
+    def.host_fq_name = host_fq;
+    _ns_stack.back()->template_defs.push_back(std::move(def));
+}
+
 kdi::kdi_template_def kdi_builder::build_template_def(
     const std::string& name,
     const std::string& fq_name,
     const std::string& entity_kind,
     visibility vis,
     const tpl_info& ti,
-    const element* entity) const
+    const element* entity)
 {
     kdi::kdi_template_def def;
     def.name = name;
@@ -2186,9 +2496,6 @@ kdi::kdi_template_def kdi_builder::build_template_def(
             }
         }
     }
-    if (!is_generic && !ti.is_imported_signature_only && ti.source_text.empty()) {
-        is_generic = true;
-    }
     def.is_generic = is_generic;
 
     auto definition_ns = entity ? gen::scope_lookup::enclosing_namespace(*entity) : nullptr;
@@ -2202,7 +2509,7 @@ kdi::kdi_template_def kdi_builder::build_template_def(
     std::unordered_map<const expression*, std::string> source_reference_names;
     if (entity && !ti.source_text.empty()) {
         private_dependencies = std::make_unique<private_dependency_collector>(
-            const_cast<element&>(*entity), def.fq_name);
+            const_cast<element&>(*entity), def.fq_name, !is_generic);
         for (const auto& fn : private_dependencies->functions) {
             auto owner = gen::scope_lookup::enclosing_namespace(*fn);
             auto dependency_name = fn->get_short_name();
@@ -2221,25 +2528,19 @@ kdi::kdi_template_def kdi_builder::build_template_def(
     }
 
     if (!is_generic) {
-        // Determine if using-alias resolution is needed (emitter resolves aliases
-        // to their canonical names so the consumer can find the types).
-        std::unordered_map<std::string, std::string> alias_map;
-        if (entity) {
-            alias_map = build_using_alias_map(entity);
-        }
-
-        if (!ti.source_text.empty() && (alias_map.empty() || !ti.origin_module_ns_fq.empty())) {
-            // Prefer raw source_text (captured verbatim from the parser) when no
-            // alias resolution is needed. It preserves annotations, member template
-            // clauses, and other syntax that k_source_emitter may not reconstruct.
+        if (!ti.source_text.empty()) {
+            // Raw source_text (captured verbatim from the parser) is the only lossless
+            // form: it keeps annotations, member template clauses, nested aggregates,
+            // friends and default arguments that k_source_emitter does not rebuild.
+            // Using directives in scope are replayed as a prelude (see below).
             def.source = ti.source_text;
         } else {
-            // Use model-based reconstruction (resolves using-aliases to canonical names)
-            // with fallback to raw source_text.
+            // No captured source: fall back to model-based reconstruction.
             std::string emitted;
             if (entity) {
                 k_source_emitter emitter;
                 emitter.set_symbol_names(reference_names);
+                auto alias_map = build_using_alias_map(entity);
                 if (!alias_map.empty()) {
                     emitter.set_alias_map(std::move(alias_map));
                 }
@@ -2263,6 +2564,7 @@ kdi::kdi_template_def kdi_builder::build_template_def(
                 build_generic_template_aggregate_signature(*agg_ptr, ti, def.fq_name));
         } else if (auto fn_ptr = dynamic_cast<const function*>(entity)) {
             // Generic function templates keep source so importing modules can instantiate bodies.
+            resolve_template_signature_annotations(const_cast<function&>(*fn_ptr));
             std::string emitted;
             if (entity) {
                 k_source_emitter emitter;
@@ -2292,15 +2594,31 @@ kdi::kdi_template_def kdi_builder::build_template_def(
     // Carry them in source, where K already expresses both privacy and the exact
     // native symbol, instead of changing KDI's public/protected function DTO.
     if (entity && !def.source.empty()) {
-        if (def.source == ti.source_text && !source_reference_names.empty()) {
+        const bool raw_source = def.source == ti.source_text;
+        if (raw_source && !source_reference_names.empty()) {
             // Parser capture ends at the declaration's last token. Rewrite only
             // actual symbol-expression spans, never comments or string literals.
-            auto last = entity->get_last_lexeme();
-            if (!last) throw std::runtime_error("Template dependency has no declaration source range");
-            const char* end = std::visit([](const auto& token) {
-                return token.content.data() + token.content.size();
-            }, *last);
-            const char* begin = end - ti.source_text.size();
+            std::string_view source_span;
+            if (!is_generic) {
+                if (auto agg = dynamic_cast<const aggregate*>(entity)) {
+                    if (auto ast = agg->get_ast_aggregate_decl()) source_span = ast->template_source_span;
+                } else if (auto fn = dynamic_cast<const function*>(entity)) {
+                    if (auto ast = fn->get_ast_function_decl()) source_span = ast->template_source_span;
+                }
+            }
+            const char* begin;
+            const char* end;
+            if (!source_span.empty() && source_span == std::string_view(ti.source_text)) {
+                begin = source_span.data();
+                end = begin + source_span.size();
+            } else {
+                auto last = entity->get_last_lexeme();
+                if (!last) throw std::runtime_error("Template dependency has no declaration source range");
+                end = std::visit([](const auto& token) {
+                    return token.content.data() + token.content.size();
+                }, *last);
+                begin = end - ti.source_text.size();
+            }
             struct replacement { size_t offset; size_t length; std::string name; };
             std::vector<replacement> replacements;
             for (const auto& [symbol, name] : source_reference_names) {
@@ -2330,6 +2648,12 @@ kdi::kdi_template_def kdi_builder::build_template_def(
                     throw std::runtime_error("Overlapping template dependency source references");
                 def.source.replace(replacement.offset, replacement.length, replacement.name);
                 next_offset = replacement.offset;
+            }
+        }
+        if (raw_source) {
+            if (auto fn = dynamic_cast<const function*>(entity)) {
+                k_source_emitter emitter;
+                def.source = emitter.emit_function_annotations(*fn) + def.source;
             }
         }
         std::string dependencies;
@@ -2381,6 +2705,9 @@ kdi::kdi_template_def kdi_builder::build_template_def(
         if (!dependencies.empty()) {
             def.source = private_types + "namespace " + private_scope_name + " {\n"
                 + dependencies + "}\n" + def.source;
+        }
+        if (raw_source && !is_generic) {
+            def.source = build_using_prelude(entity, ti.source_text) + def.source;
         }
     }
 

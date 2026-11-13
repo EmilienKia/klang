@@ -40,6 +40,7 @@ protected:
      * Set by symbol_resolver when processing @ffi::CString annotations.
      */
     bool _is_ffi_cstring = false;
+    bool _ffi_cstring_type_validated = false;
 
     /** True if this parameter was declared with '...' (varargs). Informational flag. */
     bool _is_varargs = false;
@@ -81,6 +82,8 @@ public:
     bool is_ffi_cstring() const { return _is_ffi_cstring; }
     /** Mark this parameter as @ffi::CString. */
     void set_ffi_cstring(bool v) { _is_ffi_cstring = v; }
+    bool is_ffi_cstring_type_validated() const { return _ffi_cstring_type_validated; }
+    void set_ffi_cstring_type_validated() { _ffi_cstring_type_validated = true; }
 
     /** True if this parameter was declared with '...' (varargs). */
     bool is_varargs() const { return _is_varargs; }
@@ -222,6 +225,7 @@ protected:
     std::shared_ptr<function> _redirect_target = nullptr;
 
     std::shared_ptr<type> _return_type;
+    std::shared_ptr<generic_source_type> _generic_source_return_type;
     bool _has_explicit_return_type = false;
     bool _is_lambda = false;
     bool _has_bare_return = false;
@@ -261,6 +265,25 @@ protected:
      * it are emitted as calls to the erased synthesis.
      */
     std::shared_ptr<function> _erased_target;
+
+    /**
+     * Native @ffi::CString parameters reached from this erased generic body with an
+     * argument whose element type is only known per concrete instantiation: callee,
+     * parameter index and the source-level type of the argument. Replayed on each
+     * facade of the generic.
+     */
+    struct cstring_obligation {
+        std::shared_ptr<function> callee;
+        size_t parameter_index = 0;
+        std::shared_ptr<const generic_source_type> argument_source;
+    };
+    std::vector<cstring_obligation> _cstring_obligations;
+    /**
+     * Names of the generic type parameters whose value this body reads or writes through an
+     * addresser (`*p`, `p[i]` with `p : T*`). The erased synthesis moves a pointer-sized
+     * slot there, so each binding of these parameters must be pointer-like.
+     */
+    std::vector<std::string> _generic_pointee_value_params;
     std::shared_ptr<ns> _template_definition_scope;
 
      /**
@@ -276,8 +299,11 @@ protected:
     /** Raw unresolved exception type names from parser (consumed during resolution). */
     std::vector<std::string> _throws_spec_raw;
 
-    /** Resolved exception types that this function may throw. Empty = noexcept. */
+    /** Resolved exception types that this function may throw. */
     std::vector<std::shared_ptr<type>> _throws_spec;
+
+    /** The exception contract was not supplied by an imported descriptor. */
+    bool _throws_spec_unknown = false;
 
     function(std::shared_ptr<element> parent, bool is_static = false) :
         element(parent), _is_static(is_static) {}
@@ -298,6 +324,9 @@ public:
     bool has_return_type() const {return _return_type != nullptr;}
     std::shared_ptr<type> get_return_type() {return _return_type;}
     std::shared_ptr<const type> get_return_type() const {return _return_type;}
+    std::shared_ptr<const generic_source_type> get_generic_source_return_type() const {
+        return _generic_source_return_type;
+    }
 
     bool has_explicit_return_type() const { return _has_explicit_return_type; }
     void set_has_explicit_return_type(bool v) { _has_explicit_return_type = v; }
@@ -309,16 +338,19 @@ public:
     void set_has_bare_return(bool v) { _has_bare_return = v; }
 
     // ── Exception specification ──────────────────────────────────────────────
-    /** True if this function has an explicit throws clause (even if empty after resolution). */
+    /** True if a nonempty throws clause is known. Unknown is reported separately. */
     bool has_throws_spec() const { return !_throws_spec_raw.empty() || !_throws_spec.empty(); }
-    /** True if this function is guaranteed not to throw (no throws clause). */
-    bool is_noexcept() const { return _throws_spec_raw.empty() && _throws_spec.empty(); }
+    /** True only when the checked-exception contract is known to be empty. */
+    bool is_noexcept() const { return !_throws_spec_unknown && !has_throws_spec(); }
+    bool is_throws_spec_unknown() const { return _throws_spec_unknown; }
+    void set_throws_spec_unknown(bool value) { _throws_spec_unknown = value; }
     /** Raw unresolved exception type names (set by model builder, consumed by resolver). */
     const std::vector<std::string>& get_throws_spec_raw() const { return _throws_spec_raw; }
     void add_throws_spec_raw(const std::string& name) { _throws_spec_raw.push_back(name); }
     /** Resolved exception types. */
     const std::vector<std::shared_ptr<type>>& get_throws_spec() const { return _throws_spec; }
     void add_throws_type(std::shared_ptr<type> t) { _throws_spec.push_back(std::move(t)); }
+    void set_throws_spec(std::vector<std::shared_ptr<type>> types) { _throws_spec = std::move(types); }
 
     const std::vector<std::shared_ptr<parameter>>& parameters() const {
         return _parameters;
@@ -560,6 +592,22 @@ public:
     /** Turn this function into a facade forwarding to the erased synthesis @p target. */
     void set_erased_target(std::shared_ptr<function> target) { _erased_target = std::move(target); }
 
+    using cstring_obligation_list = std::vector<cstring_obligation>;
+    const cstring_obligation_list& get_cstring_obligations() const { return _cstring_obligations; }
+    void add_cstring_obligation(std::shared_ptr<function> callee, size_t parameter_index,
+                                std::shared_ptr<const generic_source_type> argument_source) {
+        _cstring_obligations.push_back({std::move(callee), parameter_index, std::move(argument_source)});
+    }
+
+    const std::vector<std::string>& get_generic_pointee_value_params() const {
+        return _generic_pointee_value_params;
+    }
+    void add_generic_pointee_value_param(const std::string& name) {
+        if (std::find(_generic_pointee_value_params.begin(), _generic_pointee_value_params.end(), name)
+            == _generic_pointee_value_params.end())
+            _generic_pointee_value_params.push_back(name);
+    }
+
 };
 
 class constructor : public function {
@@ -568,6 +616,7 @@ protected:
     friend class model_builder;
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
+    friend class gen::aggregate_type_resolver;
     friend class template_instantiator;
 
 public:
@@ -581,6 +630,9 @@ public:
 protected:
     std::vector<member_init_spec> _member_inits;
     bool _is_copy_constructor = false;
+    // Compiler-generated copy constructor that copies each non-trivial member or base
+    // with its own copy constructor instead of copying the object bytewise.
+    bool _is_memberwise_copy = false;
     bool _inits_injected = false;
     // Guards template_instantiator::inject_constructor_member_inits() against
     // being invoked more than once for the same (freshly-instantiated)
@@ -614,6 +666,12 @@ public:
 
     bool is_copy_constructor() const { return _is_copy_constructor; }
     void set_copy_constructor(bool v) { _is_copy_constructor = v; }
+    bool is_memberwise_copy() const { return _is_memberwise_copy; }
+    void set_memberwise_copy(bool v) { _is_memberwise_copy = v; }
+    /** True for a generated copy constructor that is a plain memcpy of the object. */
+    bool is_generated_bytewise_copy() const {
+        return _is_copy_constructor && is_compiler_generated() && !_is_memberwise_copy;
+    }
     // True once base/member init statements were injected into the body (re-resolution guard).
     bool inits_injected() const { return _inits_injected; }
     void set_inits_injected(bool v) { _inits_injected = v; }

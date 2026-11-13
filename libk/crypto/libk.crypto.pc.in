@@ -1,0 +1,10 @@
+prefix=${pcfiledir}
+libdir=${prefix}
+kdi_dir=${libdir}
+
+Name: libk.crypto
+Description: K cryptography standard library
+Version: @PROJECT_VERSION@
+Requires.private: libk
+Libs: -L${libdir} -lk.io.crypto -lk.crypto
+Libs.private: -lcrypto -pthread

@@ -19,6 +19,7 @@
 #include <catch2/catch_all.hpp>
 #include "kdi.hpp"
 #include "kdi_json.hpp"
+#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <sstream>
@@ -45,6 +46,222 @@ static kdi_file make_minimal_file() {
     f.header.compiler_ver = "klangc-test";
     f.unit.name = "test::json";
     return f;
+}
+
+TEST_CASE("JSON preserves native callable and CString metadata", "[json][ffi]") {
+    auto file = make_minimal_file();
+    kdi_param param;
+    param.name = "text";
+    param.type = kdi_type::make_int(8);
+    param.is_ffi_cstring = true;
+    kdi_function fn;
+    fn.name = "alias";
+    fn.fq_name = "test::json::alias";
+    fn.mangled_name = "native_symbol";
+    fn.is_extern = true;
+    fn.params.push_back(param);
+    file.unit.root_ns.functions.push_back(fn);
+    kdi_method method;
+    method.name = "method";
+    method.fq_name = "test::json::Box::method";
+    method.mangled_name = "native_method";
+    method.is_static = true;
+    method.is_extern = true;
+    method.params.push_back(param);
+    kdi_aggregate aggregate;
+    aggregate.name = "Box";
+    aggregate.fq_name = "test::json::Box";
+    aggregate.methods.push_back(method);
+    file.unit.root_ns.aggregates.push_back(aggregate);
+    kdi_template_def generic;
+    generic.name = "Generic";
+    generic.aggregate_signature = std::make_shared<kdi_aggregate>(aggregate);
+    generic.function_signature = std::make_shared<kdi_function>(fn);
+    file.unit.root_ns.template_defs.push_back(generic);
+
+    std::ostringstream out;
+    kdi_write_json(file, out);
+    auto payload = nlohmann::json::parse(out.str());
+    std::istringstream input(payload.dump());
+    auto restored = kdi_read_json(input);
+    const auto& result_fn = restored.unit.root_ns.functions.at(0);
+    const auto& result_method = restored.unit.root_ns.aggregates.at(0).methods.at(0);
+    CHECK(result_fn.is_extern);
+    CHECK(result_fn.mangled_name == "native_symbol");
+    CHECK(result_fn.params.at(0).is_ffi_cstring);
+    CHECK(result_method.is_extern);
+    CHECK(result_method.mangled_name == "native_method");
+    CHECK(result_method.params.at(0).is_ffi_cstring);
+    const auto& result_generic = restored.unit.root_ns.template_defs.at(0);
+    REQUIRE(result_generic.function_signature);
+    REQUIRE(result_generic.aggregate_signature);
+    CHECK(result_generic.function_signature->is_extern);
+    CHECK(result_generic.aggregate_signature->methods.at(0).is_extern);
+    CHECK(result_generic.aggregate_signature->methods.at(0).params.at(0).is_ffi_cstring);
+
+    auto& json_fn = payload["unit"]["root_ns"]["functions"][0];
+    auto& json_method = payload["unit"]["root_ns"]["aggregates"][0]["methods"][0];
+    json_fn.erase("is_extern");
+    json_fn["params"][0].erase("is_ffi_cstring");
+    json_method.erase("is_extern");
+    json_method["params"][0].erase("is_ffi_cstring");
+    std::istringstream legacy(payload.dump());
+    auto old = kdi_read_json(legacy);
+    CHECK_FALSE(old.unit.root_ns.functions[0].is_extern);
+    CHECK_FALSE(old.unit.root_ns.functions[0].params[0].is_ffi_cstring);
+    CHECK_FALSE(old.unit.root_ns.aggregates[0].methods[0].is_extern);
+    CHECK_FALSE(old.unit.root_ns.aggregates[0].methods[0].params[0].is_ffi_cstring);
+
+    for (bool member : {false, true}) {
+        for (bool parameter : {false, true}) {
+            for (const auto& invalid : {nlohmann::json(nullptr), nlohmann::json("true"),
+                                        nlohmann::json(1)}) {
+                auto bad = payload;
+                auto& callable = member ? bad["unit"]["root_ns"]["aggregates"][0]["methods"][0]
+                                        : bad["unit"]["root_ns"]["functions"][0];
+                if (parameter) callable["params"][0]["is_ffi_cstring"] = invalid;
+                else callable["is_extern"] = invalid;
+                std::istringstream malformed(bad.dump());
+                CHECK_THROWS(kdi_read_json(malformed));
+            }
+        }
+    }
+}
+
+TEST_CASE("JSON preserves constructor exception contract presence", "[json][constructor][throws]") {
+    auto file = make_minimal_file();
+    kdi_aggregate agg;
+    agg.name = "Value";
+    agg.fq_name = "test::json::Value";
+    kdi_constructor throwing;
+    throwing.throws_spec = std::vector<kdi_type>{
+        kdi_type::make_aggregate("test::json::FirstError"),
+        kdi_type::make_aggregate("test::json::SecondError")};
+    kdi_constructor no_throw;
+    no_throw.throws_spec.emplace();
+    kdi_constructor legacy;
+    agg.constructors = {throwing, no_throw, legacy};
+    file.unit.root_ns.aggregates.push_back(agg);
+
+    std::ostringstream out;
+    kdi_write_json(file, out);
+    auto payload = nlohmann::json::parse(out.str());
+    auto& ctors = payload["unit"]["root_ns"]["aggregates"][0]["constructors"];
+    REQUIRE(ctors[0]["throws_spec"].size() == 2);
+    REQUIRE(ctors[1]["throws_spec"].is_array());
+    REQUIRE(ctors[1]["throws_spec"].empty());
+    REQUIRE_FALSE(ctors[2].contains("throws_spec"));
+    std::istringstream input(payload.dump());
+    auto restored = kdi_read_json(input);
+    const auto& result = restored.unit.root_ns.aggregates[0].constructors;
+    REQUIRE(result[0].throws_spec);
+    REQUIRE(result[0].throws_spec->size() == 2);
+    CHECK(std::get<kdi_aggregate_ref>((*result[0].throws_spec)[0].value).fq_name == "test::json::FirstError");
+    CHECK(std::get<kdi_aggregate_ref>((*result[0].throws_spec)[1].value).fq_name == "test::json::SecondError");
+    REQUIRE(result[1].throws_spec);
+    CHECK(result[1].throws_spec->empty());
+    CHECK_FALSE(result[2].throws_spec);
+
+    ctors[1]["throws_spec"] = nullptr;
+    std::istringstream invalid(payload.dump());
+    CHECK_THROWS(kdi_read_json(invalid));
+}
+
+TEST_CASE("JSON preserves deleted private copy metadata and legacy defaults", "[json][copy][regression]") {
+    auto file = make_minimal_file();
+    kdi_aggregate agg;
+    agg.name = "Key";
+    agg.fq_name = "test::json::Key";
+    kdi_constructor ctor;
+    ctor.is_copy_constructor = true;
+    ctor.is_deleted = true;
+    ctor.is_private = true;
+    agg.constructors.push_back(ctor);
+    kdi_method method;
+    method.name = "__operator_aS_";
+    method.is_operator = true;
+    method.is_deleted = true;
+    method.is_private = true;
+    agg.methods.push_back(method);
+    file.unit.root_ns.aggregates.push_back(agg);
+    auto restored = json_round_trip(file);
+    CHECK(restored.unit.root_ns.aggregates[0].constructors[0].is_private);
+    CHECK(restored.unit.root_ns.aggregates[0].constructors[0].is_deleted);
+    CHECK(restored.unit.root_ns.aggregates[0].methods[0].is_private);
+    CHECK(restored.unit.root_ns.aggregates[0].methods[0].is_deleted);
+
+    file.unit.root_ns.aggregates[0].constructors[0].is_private = false;
+    file.unit.root_ns.aggregates[0].methods[0].is_private = false;
+    file.unit.root_ns.aggregates[0].methods[0].is_deleted = false;
+    restored = json_round_trip(file);
+    CHECK_FALSE(restored.unit.root_ns.aggregates[0].constructors[0].is_private);
+    CHECK_FALSE(restored.unit.root_ns.aggregates[0].methods[0].is_private);
+    CHECK_FALSE(restored.unit.root_ns.aggregates[0].methods[0].is_deleted);
+}
+
+TEST_CASE("JSON rejects malformed deletion and privacy flags", "[json][copy][regression]") {
+    auto file = make_minimal_file();
+    kdi_aggregate agg;
+    agg.name = "Key";
+    agg.fq_name = "test::json::Key";
+    agg.constructors.emplace_back();
+    kdi_method method;
+    method.name = "assign";
+    agg.methods.push_back(method);
+    file.unit.root_ns.aggregates.push_back(agg);
+    std::ostringstream out;
+    kdi_write_json(file, out);
+    const auto original = nlohmann::json::parse(out.str());
+    for (const std::string member : {"constructors", "methods"}) {
+        for (const std::string key : {"is_deleted", "is_private"}) {
+            CAPTURE(member, key);
+            for (const auto& invalid : {nlohmann::json(nullptr), nlohmann::json("true"),
+                                        nlohmann::json(1)}) {
+                auto payload = original;
+                payload["unit"]["root_ns"]["aggregates"][0][member][0][key] = invalid;
+                std::istringstream input(payload.dump());
+                CHECK_THROWS(kdi_read_json(input));
+            }
+        }
+    }
+}
+
+TEST_CASE("JSON legacy reader view cannot enforce new method metadata", "[json][copy][compatibility]") {
+    auto file = make_minimal_file();
+    kdi_aggregate agg;
+    agg.name = "Key";
+    agg.fq_name = "test::json::Key";
+    kdi_constructor ctor;
+    ctor.visibility = kdi_visibility::protected_;
+    ctor.is_deleted = true;
+    ctor.is_private = true;
+    agg.constructors.push_back(ctor);
+    kdi_method method;
+    method.name = "__operator_aS_";
+    method.visibility = kdi_visibility::protected_;
+    method.is_deleted = true;
+    method.is_private = true;
+    agg.methods.push_back(method);
+    file.unit.root_ns.aggregates.push_back(agg);
+    std::ostringstream out;
+    kdi_write_json(file, out);
+    auto payload = nlohmann::json::parse(out.str());
+    auto& encoded = payload["unit"]["root_ns"]["aggregates"][0];
+    CHECK(encoded["constructors"][0]["is_private"] == true);
+    CHECK(encoded["methods"][0]["is_deleted"] == true);
+    // Simulate the old reader ignoring the keys it did not understand.
+    encoded["constructors"][0].erase("is_private");
+    encoded["methods"][0].erase("is_private");
+    encoded["methods"][0].erase("is_deleted");
+    std::istringstream input(payload.dump());
+    auto legacy_view = kdi_read_json(input);
+    const auto& old_agg = legacy_view.unit.root_ns.aggregates[0];
+    CHECK(old_agg.constructors[0].is_deleted);
+    CHECK_FALSE(old_agg.constructors[0].is_private);
+    CHECK(old_agg.constructors[0].visibility == kdi_visibility::protected_);
+    CHECK_FALSE(old_agg.methods[0].is_deleted);
+    CHECK_FALSE(old_agg.methods[0].is_private);
+    CHECK(old_agg.methods[0].visibility == kdi_visibility::protected_);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -436,6 +653,36 @@ TEST_CASE("JSON: nested aggregate with enclosing info round-trips", "[json][aggr
 // Layout field variants
 // ─────────────────────────────────────────────────────────────────────────────
 
+TEST_CASE("JSON: bases_complete round-trips and defaults to false when absent",
+          "[json][aggregate][bases]") {
+    for (const bool complete : {true, false}) {
+        kdi_file f = make_minimal_file();
+        kdi_aggregate agg;
+        agg.kind         = kdi_aggregate_kind::class_;
+        agg.name         = "Derived";
+        agg.fq_name      = "::ns::Derived";
+        agg.mangled_name = "_KN2ns7DerivedE";
+        agg.bases_complete = complete;
+        f.unit.root_ns.aggregates.push_back(agg);
+
+        CHECK(json_round_trip(f).unit.root_ns.aggregates.at(0).bases_complete == complete);
+    }
+
+    // A file written before the flag existed must stay importable, conservatively.
+    kdi_file f = make_minimal_file();
+    kdi_aggregate agg;
+    agg.name = "Old"; agg.fq_name = "::ns::Old"; agg.mangled_name = "_KN2ns3OldE";
+    agg.bases_complete = true;
+    f.unit.root_ns.aggregates.push_back(agg);
+    std::ostringstream out;
+    kdi_write_json(f, out);
+    auto payload = nlohmann::json::parse(out.str());
+    auto& written = payload.at("unit").at("root_ns").at("aggregates").at(0);
+    REQUIRE(written.erase("bases_complete") == 1u);
+    std::istringstream input(payload.dump());
+    CHECK_FALSE(kdi_read_json(input).unit.root_ns.aggregates.at(0).bases_complete);
+}
+
 TEST_CASE("JSON: all layout field variants round-trip", "[json][layout]") {
     kdi_file f = make_minimal_file();
     kdi_aggregate agg;
@@ -767,10 +1014,17 @@ TEST_CASE("JSON: object-backed enum metadata round-trips", "[json][enum][typed]"
     REQUIRE(std::get<kdi_aggregate_ref>(ren.object_type->value).fq_name == "test::json::Vec2");
     REQUIRE(ren.object_table_symbol.has_value());
     REQUIRE(*ren.object_table_symbol == "__klang_enum_table_Dir__");
+    REQUIRE_FALSE(ren.object_table_kind.has_value());
     REQUIRE(ren.entries.size() == 1);
     REQUIRE(ren.entries[0].object_init_members.size() == 2);
     REQUIRE(ren.entries[0].object_init_members[0].first == "x");
     REQUIRE(ren.entries[0].object_init_members[0].second == 0);
+
+    f.unit.root_ns.enums[0].object_table_symbol = "arbitrary_accessor";
+    f.unit.root_ns.enums[0].object_table_kind = "runtime";
+    restored = json_round_trip(f);
+    REQUIRE(restored.unit.root_ns.enums[0].object_table_kind == "runtime");
+    REQUIRE(restored.unit.root_ns.enums[0].object_table_symbol == "arbitrary_accessor");
 }
 
 TEST_CASE("JSON: polymorphic union round-trips", "[json][union][polymorphic]") {

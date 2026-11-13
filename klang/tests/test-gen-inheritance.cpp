@@ -839,3 +839,45 @@ test_final_can_inherit() : int {
     REQUIRE(fn != nullptr);
     CHECK(fn() == 15);
 }
+
+TEST_CASE("Inheritance - rooted base names resolve from the module root",
+          "[gen][inheritance][rooted-base]") {
+    auto jit = gen_jit(R"SRC(
+module gen_inheritance_rooted;
+
+struct Base {
+    v: int;
+    Base() : v(10) {}
+}
+
+namespace inner {
+    struct Deep {
+        d: int;
+        Deep() : d(4) {}
+    }
+    struct Shadow : public ::Base {
+        Shadow() : Base() {}
+    }
+}
+
+struct Base2 {
+    w: int;
+    Base2() : w(20) {}
+}
+
+struct Leaf : public ::Base2, public ::inner::Deep, public ::gen_inheritance_rooted::Base {
+    Leaf() : Base2(), Deep(), Base() {}
+}
+
+test_rooted() : int {
+    l: Leaf;
+    s: inner::Shadow;
+    return l.w + l.d + l.v + s.v;
+}
+)SRC", false, false);
+    REQUIRE(jit);
+
+    auto fn = jit->lookup_symbol<int(*)()>("test_rooted");
+    REQUIRE(fn != nullptr);
+    CHECK(fn() == 44);
+}

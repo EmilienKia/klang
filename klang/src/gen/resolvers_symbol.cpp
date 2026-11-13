@@ -16,12 +16,14 @@
  * limitations under the License.
  */
 #include "resolvers_symbol.hpp"
+#include "resolvers_aggregate.hpp"
 #include "gen_helpers.hpp"
 #include "../model/imported.hpp"
 #include "../model/template.hpp"
 #include "../model/statements.hpp"
 #include "../model/expressions.hpp"
 #include "../errors.hpp"
+#include <optional>
 #include <queue>
 #include <unordered_set>
 namespace k::model::gen {
@@ -490,22 +492,41 @@ namespace {
 bool alias_target_denotes_namespace(const element& scope, const k::name& target_name) {
     auto enclosing = scope_lookup::enclosing_namespace(scope);
     if (!enclosing) return false;
+    auto root = scope_lookup::root_namespace(scope);
 
-    auto walk = [](std::shared_ptr<const ns> from, const k::name& name) -> bool {
+    auto walk = [](std::shared_ptr<const ns> from, const k::name& name) -> std::shared_ptr<const ns> {
         std::shared_ptr<const ns> current = std::move(from);
         for (size_t i = 0; i < name.size(); ++i) {
-            if (!current) return false;
+            if (!current) return {};
             current = current->get_child_namespace(name[i]);
         }
-        return (bool) current;
+        return current;
+    };
+
+    auto resolves_to_imported_aggregate = [](std::shared_ptr<const ns> from, const k::name& name) -> bool {
+        return from && std::dynamic_pointer_cast<imported_aggregate>(
+            aggregate_type_resolver::resolve_struct_from(*from, name)) != nullptr;
+    };
+
+    auto classify_target = [&](const std::shared_ptr<const ns>& from, const k::name& name)
+        -> std::optional<bool> {
+        auto target_ns = walk(from, name);
+        if (target_ns && target_ns->is_source_declared_namespace()) return true;
+        // KDI namespace trees can include synthetic aggregate scopes. They
+        // have no provenance in KDI, so prefer an imported aggregate over
+        // such a scope, but not over an explicit source namespace.
+        if (resolves_to_imported_aggregate(from, name)) return false;
+        if (target_ns) return true;
+        return std::nullopt;
     };
 
     if (target_name.has_root_prefix()) {
-        return walk(scope_lookup::root_namespace(scope), target_name.without_root_prefix());
+        auto unrooted_name = target_name.without_root_prefix();
+        return classify_target(root, unrooted_name).value_or(false);
     }
 
     for (std::shared_ptr<const ns> current = enclosing; current; ) {
-        if (walk(current, target_name)) return true;
+        if (auto result = classify_target(current, target_name)) return *result;
         if (current->is_root()) break;
         current = current->parent<ns>();
     }
@@ -522,7 +543,8 @@ void symbol_resolver::check_alias_declarations(const alias_holder& holder, const
         visit_named_element(*al);
         const k::name& target = al->get_target_name();
         if (target.empty()) continue;
-        if (alias_target_denotes_namespace(scope, target)) {
+        auto declaration_scope = al->parent<element>();
+        if (alias_target_denotes_namespace(declaration_scope ? *declaration_scope : scope, target)) {
             throw_error(static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_NAMESPACE_TARGET),
                         al->get_decl_lexeme(),
                         "'{}' names a namespace: a namespace cannot be aliased with '{}'; "

@@ -19,6 +19,7 @@
 #include "generators.hpp"
 #include "gen_helpers.hpp"
 #include "gen_callable_helpers.hpp"
+#include "ffi_validation.hpp"
 #include <exception>
 #include "../model/expressions.hpp"
 #include "../model/statements.hpp"
@@ -260,6 +261,86 @@ void type_reference_resolver::link_generic_facade(
 
     if (auto synthesis = ensure_generic_synthesis(tpl_func)) {
         facade->set_erased_target(synthesis);
+        replay_generic_cstring_obligations(*tpl_func, *facade, *synthesis);
+    }
+}
+
+namespace {
+
+std::shared_ptr<type> cstring_addressed_type(const std::shared_ptr<type>& parameter_type) {
+    auto inner = type::canonical(parameter_type);
+    while (inner && type::is_const(inner)) inner = type::canonical(inner->get_subtype());
+    if (!inner || !(type::is_reference(inner) || type::is_pointer(inner) || type::is_view(inner)
+                    || type::is_link(inner) || type::is_owner(inner) || type::is_drain(inner)))
+        return nullptr;
+    inner = type::canonical(inner->get_subtype());
+    while (inner && type::is_const(inner)) inner = type::canonical(inner->get_subtype());
+    return inner;
+}
+
+} // namespace
+
+void type_reference_resolver::record_generic_cstring_obligations(
+    const std::shared_ptr<function>& called,
+    const std::vector<std::shared_ptr<expression>>& args,
+    const lex::opt_any_lexeme& lexeme)
+{
+    if (!called || !called->is_extern() || _function_stack.empty() || !_function_stack.back()) return;
+    const auto& params = called->parameters();
+    for (size_t i = 0; i < params.size() && i < args.size(); ++i) {
+        if (!params[i]->is_ffi_cstring()) continue;
+        if (!type::is_erased_param(cstring_addressed_type(params[i]->get_type()))) continue;
+        // A concretely typed argument needs no tracing: the host's concrete type arguments
+        // are validated against the parameter declaration at the call (see
+        // validate_generic_cstring_contract).
+        if (args[i] && args[i]->get_type() && !type::contains_unresolved(args[i]->get_type())
+            && !type::is_erased_param(cstring_addressed_type(args[i]->get_type()))
+            && cstring_addressed_type(args[i]->get_type())) continue;
+
+        auto arg = args[i];
+        while (arg) {
+            if (auto load = std::dynamic_pointer_cast<load_value_expression>(arg)) arg = load->sub_expr();
+            else if (auto cast = std::dynamic_pointer_cast<cast_expression>(arg)) arg = cast->sub_expr();
+            else break;
+        }
+        auto symbol = std::dynamic_pointer_cast<symbol_expression>(arg);
+        auto source_param = symbol && symbol->is_variable_def()
+            ? std::dynamic_pointer_cast<parameter>(symbol->get_variable_def()) : nullptr;
+        auto source = source_param ? source_param->get_generic_source_type() : nullptr;
+        if (!source || source->has_unknown_bindings()) {
+            throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_TYPE_UNRESOLVED), lexeme,
+                "@ffi::CString on parameter '{}' of '{}': the element type of this argument is erased "
+                "and cannot be traced to a parameter of the enclosing generic",
+                {params[i]->get_short_name(), called->get_short_name()});
+        }
+        _function_stack.back()->add_cstring_obligation(called, i, source);
+    }
+}
+
+void type_reference_resolver::replay_generic_cstring_obligations(
+    const function& tpl_func, const function& facade, const function& synthesis)
+{
+    if (synthesis.get_cstring_obligations().empty()) return;
+    auto* ti = tpl_func.get_tpl_info();
+    if (!ti) return;
+    type_substitution_map subst;
+    const auto& args = facade.get_tpl_args();
+    for (size_t i = 0; i < ti->params.size() && i < args.size(); ++i) {
+        if (ti->params[i].is_type_param() && args[i].is_type())
+            subst[ti->params[i].name] = args[i].type_arg;
+    }
+    for (const auto& obligation : synthesis.get_cstring_obligations()) {
+        auto concrete = substitute_type(obligation.argument_source->get_type(), subst);
+        auto parameter = obligation.callee->parameters()[obligation.parameter_index];
+        if (!concrete || type::contains_unresolved(concrete)
+            || type::is_erased_param(cstring_addressed_type(concrete))) {
+            throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_TYPE_UNRESOLVED),
+                lex::opt_any_lexeme{},
+                "@ffi::CString on parameter '{}' of '{}': cannot validate the concrete element type "
+                "forwarded by generic '{}'",
+                {parameter->get_short_name(), obligation.callee->get_short_name(), tpl_func.get_short_name()});
+        }
+        validate_ffi_cstring_parameter(*this, *obligation.callee, *parameter, concrete);
     }
 }
 
@@ -950,7 +1031,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
                 size_t err_idx;
                 std::string err_reason;
-                if (!validate_template_arg_constraints(*ti, final_args, err_idx, err_reason)) {
+                if (!validate_function_template_constraints(*tpl_func, final_args, err_idx, err_reason)) {
                     if (err_reason.rfind("generic_", 0) == 0) {
                         auto [code, msg] = format_constraint_error(
                             tpl_func->get_short_name(), ti->params, final_args, err_idx, err_reason);
@@ -1091,7 +1172,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     }
                     size_t err_idx;
                     std::string err_reason;
-                    if (!validate_template_arg_constraints(ti->params, deduction.deduced_args, err_idx, err_reason)) {
+                    if (!validate_function_template_constraints(
+                            *tpl_func, deduction.deduced_args, err_idx, err_reason, nullptr, false)) {
                         rejected_tpl_candidates.emplace_back(tpl_func, "template constraint not satisfied: " + err_reason);
                         continue;
                     }
@@ -1275,6 +1357,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         annotate_dispatch_info(expr, best.func, member_callee);
         // Exception contract check
         check_call_contract(*best.func, expr.first_lexeme());
+        record_generic_cstring_obligations(best.func, expr.arguments(), expr.first_lexeme());
         return;
     }
 
@@ -1424,7 +1507,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             }
         };
 
+        std::optional<tpl_info::generic_usage_descriptor> qualifier_usage;
         if (is_qualified_call && callee->has_qualifier_template_args()) {
+            _generic_qualifier_usages.erase(&expr);
             const auto qualifier_name = callee->get_name().without_back();
 
             std::optional<lex::punctuator> root_prefix;
@@ -1446,6 +1531,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 auto qualifier_type = _context->from_type_specifier(ast_identified);
                 if (auto unres = std::dynamic_pointer_cast<unresolved_type>(qualifier_type)) {
                     auto resolved_type = try_instantiate_template_type(unres, expr);
+                    if (const auto* usage = find_generic_qualifier_usage(&expr)) qualifier_usage = *usage;
                     if (auto st_type = std::dynamic_pointer_cast<struct_type>(resolved_type)) {
                         if (auto owner_struct = st_type->get_struct()) {
                             for (auto& fn : owner_struct->functions()) {
@@ -1622,6 +1708,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             }
         }
 
+        std::vector<std::pair<unsigned int, std::string>> proven_constraint_rejections;
+        std::vector<std::pair<std::shared_ptr<function>, std::string>> rejected_constraint_candidates;
+
         // ── Template function instantiation ──────────────────────────────
         // If the callee carries explicit template arguments (e.g. identity<int>),
         // try to find a template function definition, instantiate it with the
@@ -1745,13 +1834,31 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     if (args_ok) {
                         size_t err_idx;
                         std::string err_reason;
-                        if (!validate_template_arg_constraints(*ti, model_args, err_idx, err_reason)) {
+                        bool proven_bound_violation = false;
+                        std::shared_ptr<type> proven_bound;
+                        if (!validate_function_template_constraints(
+                                *tpl_func, model_args, err_idx, err_reason, &proven_bound_violation,
+                                true, &proven_bound)) {
+                            if (err_reason.rfind("unresolved bound '", 0) == 0) {
+                                rejected_constraint_candidates.emplace_back(tpl_func, err_reason);
+                                proven_constraint_rejections.emplace_back(
+                                    static_cast<unsigned int>(k::diag::type_diag::ERR_UNRESOLVED_TYPE_EXPR),
+                                    "Template '" + tpl_func->get_short_name() + "' has " + err_reason);
+                                args_ok = false;
+                                continue;
+                            }
+                            auto diagnostic_params = ti->params;
+                            if (proven_bound_violation)
+                                diagnostic_params[err_idx].constraint_type = proven_bound;
                             auto [code, msg] = format_constraint_error(
-                                tpl_func->get_short_name(), ti->params, model_args, err_idx, err_reason);
+                                tpl_func->get_short_name(), diagnostic_params, model_args, err_idx, err_reason);
                             if (err_reason.rfind("generic_", 0) == 0) {
                                 throw_error(code, expr.first_lexeme(), msg);
                             }
-                            logger_relay::error(code, lex::opt_any_lexeme{}, msg);
+                            if (proven_bound_violation)
+                                proven_constraint_rejections.emplace_back(code, msg);
+                            else
+                                logger_relay::error(code, lex::opt_any_lexeme{}, msg);
                             args_ok = false;
                         }
                     }
@@ -1866,7 +1973,23 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     // Validate constraints
                     size_t err_idx;
                     std::string err_reason;
-                    if (!validate_template_arg_constraints(ti->params, deduction.deduced_args, err_idx, err_reason)) {
+                    bool proven_bound_violation = false;
+                    std::shared_ptr<type> proven_bound;
+                    if (!validate_function_template_constraints(
+                            *tpl_func, deduction.deduced_args, err_idx, err_reason,
+                            &proven_bound_violation, false, &proven_bound)) {
+                        if (err_reason.rfind("unresolved bound '", 0) == 0) {
+                            rejected_constraint_candidates.emplace_back(tpl_func, err_reason);
+                            proven_constraint_rejections.emplace_back(
+                                static_cast<unsigned int>(k::diag::type_diag::ERR_UNRESOLVED_TYPE_EXPR),
+                                "Template '" + tpl_func->get_short_name() + "' has " + err_reason);
+                        } else if (proven_bound_violation) {
+                            auto diagnostic_params = ti->params;
+                            diagnostic_params[err_idx].constraint_type = proven_bound;
+                            proven_constraint_rejections.push_back(format_constraint_error(
+                                tpl_func->get_short_name(), diagnostic_params, deduction.deduced_args,
+                                err_idx, err_reason));
+                        }
                         continue; // Constraint violation — skip this candidate
                     }
 
@@ -1970,6 +2093,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 }
                 // Exception contract check
                 check_call_contract(*already_func, expr.first_lexeme());
+                record_generic_cstring_obligations(already_func, expr.arguments(), expr.first_lexeme());
                 return;
             }
 
@@ -1992,10 +2116,10 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                     resolved_type = try_instantiate_template_type(unres, expr);
                 }
 
-                if (!resolved_type) {
+                if (!resolved_type && !callee->has_ast_template_args()) {
                     resolved_type = resolve_type_by_name(callee->get_name(), expr);
                 }
-                if (!resolved_type) {
+                if (!resolved_type && !callee->has_ast_template_args()) {
                     if (auto tpl_agg = find_template_aggregate(callee->get_name(), expr)) {
                         auto ctad = resolve_ctad(tpl_agg, expr.arguments(), expr, expr.first_lexeme());
                         if (ctad.success && ctad.concrete_struct_type) {
@@ -2017,6 +2141,10 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                         // Create a temporary_construction_expression
                         auto temp_expr = temporary_construction_expression::make_shared(
                             st_type, expr.arguments());
+                        if (auto usage = _generic_constructor_usages.find(&expr);
+                            usage != _generic_constructor_usages.end()) {
+                            _generic_constructor_usages[temp_expr.get()] = usage->second;
+                        }
                         // Copy AST node for diagnostics
                         if (auto ast = expr.get_ast_expression()) {
                             temp_expr->set_ast_expression(ast);
@@ -2030,6 +2158,10 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 }
             }
 
+            if (!proven_constraint_rejections.empty()) {
+                const auto& [code, message] = proven_constraint_rejections.front();
+                throw_error(code, expr.first_lexeme(), message);
+            }
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_INVOKE_AMBIGUOUS_OVERLOAD), expr.first_lexeme(),
                 "No function named '{}' found in the current scope; "
                 "check the spelling or add the appropriate declaration",
@@ -2042,7 +2174,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                                             this_candidate,
                                                             this_candidate ? &args : nullptr,
                                                             func_name,
-                                                            expr.first_lexeme());
+                                                            expr.first_lexeme(),
+                                                            rejected_constraint_candidates,
+                                                            qualifier_usage ? &*qualifier_usage : nullptr);
         bool is_free_to_member_call = false;
 
         // Step 6: Adapt arguments to match selected function's parameter types
@@ -2068,13 +2202,20 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         // Check visibility of the resolved function
         check_function_visibility(*best.func, expr);
         check_typedef_arguments(*best.func, expr.arguments(), expr.first_lexeme());
+        const auto* qualifier_bindings = qualifier_usage && best.func->is_member() && best.func->is_static()
+            ? &*qualifier_usage : nullptr;
+        if (qualifier_bindings) {
+            check_generic_call_arguments(*best.func, nullptr, expr.arguments(), expr.first_lexeme(),
+                                         qualifier_bindings);
+        }
 
         if (this_candidate && best.func->is_member() && !best.func->is_static() && !best.is_unified_call) {
             is_free_to_member_call = true;
         }
 
         callee->set_target(best.func);
-        auto resolved_return_type = resolve_generic_call_return_type(*best.func, this_candidate);
+        auto resolved_return_type = resolve_generic_call_return_type(
+            *best.func, this_candidate, qualifier_bindings);
         expr.set_type(resolved_return_type ? resolved_return_type : best.func->get_return_type());
 
         // If the resolved return type is still an unresolved template type — e.g. a
@@ -2137,6 +2278,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
 
         // Exception contract check: the called function may declare a throws clause
         check_call_contract(*best.func, expr.first_lexeme());
+        record_generic_cstring_obligations(best.func, expr.arguments(), expr.first_lexeme());
         return;
     }
 }
@@ -2163,7 +2305,7 @@ implementation_generator::call_argument_cleanup_scope::call_argument_cleanup_sco
     _context.cleanup_code_bb = llvm::BasicBlock::Create(llvm_ctx, "argument_unwind", func);
     const unsigned cleanup_depth = gen._cleanup_lpad_stack.empty() ? 0 : gen._cleanup_lpad_stack.top().depth;
     const unsigned catch_depth = gen._landing_pad_stack.empty() ? 0 : gen._landing_pad_stack.top().depth;
-    _has_local_catch = catch_depth != 0;
+    _has_local_catch = catch_depth != 0 && gen._landing_pad_stack.top().has_handler;
     if (cleanup_depth > catch_depth) {
         _context.continuation = cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP;
         _context.chain_target_bb = gen._cleanup_lpad_stack.top().cleanup_code_bb;
@@ -2186,7 +2328,10 @@ llvm::Value* implementation_generator::call_argument_cleanup_scope::track(
     auto bare_type = type::canonical(type::remove_const(value_type));
     bool needs_cleanup = type::is_owner(bare_type);
     if (auto st = std::dynamic_pointer_cast<struct_type>(bare_type)) {
-        needs_cleanup = st->get_struct() && st->get_struct()->get_destructor();
+        auto agg = st->get_struct();
+        auto un = agg ? nullptr : find_union_by_struct_type(_gen._unit.get_root_namespace(), st);
+        needs_cleanup = (agg && agg->get_destructor())
+            || (un && un->has_nontrivial_destructor_alternative());
     }
     if (auto ct = std::dynamic_pointer_cast<callable_type>(bare_type)) {
         needs_cleanup = ct->is_owner();
@@ -2211,10 +2356,26 @@ llvm::Value* implementation_generator::call_argument_cleanup_scope::track(
     return value;
 }
 
+void implementation_generator::call_argument_cleanup_scope::track_storage(
+    const std::shared_ptr<type>& value_type, llvm::Value* storage) {
+    if (!_enabled || !value_type || !storage) return;
+    auto* func = _gen._builder->GetInsertBlock()->getParent();
+    llvm::IRBuilder<> entry_builder(&func->getEntryBlock(), func->getEntryBlock().begin());
+    auto* live = entry_builder.CreateAlloca(entry_builder.getInt1Ty(), nullptr, "partial_value_live");
+    entry_builder.CreateStore(entry_builder.getFalse(), live);
+    _gen._builder->CreateStore(_gen._builder->getTrue(), live);
+    _entries.push_back({storage, live, value_type});
+}
+
+void implementation_generator::call_argument_cleanup_scope::track_variable(
+    const std::shared_ptr<variable_statement>& variable) {
+    if (_enabled && variable) _entries.push_back({nullptr, nullptr, nullptr, variable});
+}
+
 void implementation_generator::call_argument_cleanup_scope::transfer() {
     // The callee owns by-value arguments from entry, including when its body throws.
     for (const auto& entry : _entries) {
-        _gen._builder->CreateStore(_gen._builder->getFalse(), entry.live);
+        if (entry.live) _gen._builder->CreateStore(_gen._builder->getFalse(), entry.live);
     }
 }
 
@@ -2238,7 +2399,12 @@ implementation_generator::call_argument_cleanup_scope::~call_argument_cleanup_sc
     _gen._builder->CreateStore(_gen._builder->CreateExtractValue(lpad, 1), _gen._exc_sel_slot);
     _gen._builder->CreateBr(_context.cleanup_code_bb);
     _gen._builder->SetInsertPoint(_context.cleanup_code_bb);
+    auto pending_metadata = _gen.save_pending_exception_metadata();
     for (auto it = _entries.rbegin(); it != _entries.rend(); ++it) {
+        if (it->variable) {
+            _gen.emit_scope_variable_cleanup({it->variable}, "pending_result", true);
+            continue;
+        }
         auto* destroy_bb = llvm::BasicBlock::Create(llvm_ctx, "argument_destroy", func);
         auto* next_bb = llvm::BasicBlock::Create(llvm_ctx, "argument_destroy_done", func);
         auto* live = _gen._builder->CreateLoad(_gen._builder->getInt1Ty(), it->live);
@@ -2252,16 +2418,24 @@ implementation_generator::call_argument_cleanup_scope::~call_argument_cleanup_sc
             emit_owned_callable_cleanup_if_nonnull(_gen._builder.get(), _gen.get_module(), it->storage,
                 _gen._context->get_or_create_callable_llvm_type(), "argument_callable",
                 _gen.make_virtual_call_emitter());
+        } else if (type::is_sized_array(it->value_type)) {
+            _gen.emit_union_payload_cleanup(it->storage, it->value_type, false);
         } else if (auto st = std::dynamic_pointer_cast<struct_type>(it->value_type)) {
             auto agg = st->get_struct();
-            auto dtor = _gen._context->_functions.find(agg->get_destructor()->shared_as<function>());
-            if (dtor != _gen._context->_functions.end()) {
-                _gen.create_call_or_invoke(dtor->second->getFunctionType(), dtor->second, {it->storage});
+            if (agg && agg->get_destructor()) {
+                auto dtor = _gen._context->_functions.find(agg->get_destructor()->shared_as<function>());
+                if (dtor != _gen._context->_functions.end()) {
+                    _gen.create_call_or_invoke(dtor->second->getFunctionType(), dtor->second, {it->storage});
+                }
+            } else if (!agg) {
+                auto un = find_union_by_struct_type(_gen._unit.get_root_namespace(), st);
+                if (un) _gen.emit_union_cleanup(it->storage, *un);
             }
         }
         _gen._builder->CreateBr(next_bb);
         _gen._builder->SetInsertPoint(next_bb);
     }
+    _gen.restore_pending_exception_metadata(pending_metadata);
     if (_context.continuation == cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP) {
         _gen._builder->CreateBr(_context.chain_target_bb);
     } else {
@@ -2317,7 +2491,10 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         auto arg_type = arg->get_type() ? type::canonical(type::remove_const(arg->get_type())) : nullptr;
         if (type::is_owner(arg_type)) needs_argument_cleanup = true;
         if (auto st = std::dynamic_pointer_cast<struct_type>(arg_type)) {
-            if (st->get_struct() && st->get_struct()->get_destructor()) needs_argument_cleanup = true;
+            auto agg = st->get_struct();
+            auto un = agg ? nullptr : find_union_by_struct_type(_unit.get_root_namespace(), st);
+            if ((agg && agg->get_destructor())
+                || (un && un->has_nontrivial_destructor_alternative())) needs_argument_cleanup = true;
         }
         if (auto ct = std::dynamic_pointer_cast<callable_type>(arg_type)) {
             if (ct->is_owner()) needs_argument_cleanup = true;
@@ -2370,6 +2547,10 @@ void implementation_generator::visit_function_invocation_expression(function_inv
                     }
                 }
             }
+        } else if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), ret_st);
+                   un && un->has_nontrivial_destructor_alternative()) {
+            if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(sret_ptr_val))
+                _expression_temporaries.push_back({alloca, nullptr, nullptr, un});
         }
     };
 
@@ -2757,6 +2938,10 @@ void implementation_generator::visit_function_invocation_expression(function_inv
     auto function = callee->get_function();
     while (function && function->get_erased_target()) function = function->get_erased_target();
     auto it = _context->_functions.find(function);
+    if (it == _context->_functions.end() && function && function->is_extern()) {
+        ensure_function_declared(*function);
+        it = _context->_functions.find(function);
+    }
     if(it==_context->_functions.end()) {
         // Late materialization path for functions that appear after the main
         // declaration walk (e.g. template-instantiated methods).
@@ -2849,7 +3034,9 @@ void implementation_generator::visit_function_invocation_expression(function_inv
 
         // Abstract virtual functions and imported virtual functions without a
         // concrete LLVM declaration can still be dispatched through the vtable.
-        if (function && function->is_virtual() &&
+        if (it != _context->_functions.end()) {
+            // The late declaration was registered above.
+        } else if (function && function->is_virtual() &&
             (function->is_abstract_func() || function->is_external())) {
             // Fall through: llvm_func will remain null; virtual dispatch handles it below.
         } else {
@@ -3018,6 +3205,13 @@ void implementation_generator::visit_function_invocation_expression(function_inv
         argument_cleanup.transfer();
         create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args);
         handle_sret_result(sret_alloca);
+    } else if (function && function->is_extern() && expr.get_type()
+               && needs_sret_return(expr.get_type())) {
+        argument_cleanup.transfer();
+        auto* result = create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args);
+        auto* destination = get_sret_ptr_for_call();
+        _builder->CreateStore(result, destination);
+        handle_sret_result(destination);
     } else {
         argument_cleanup.transfer();
         _value = create_call_or_invoke(llvm_func->getFunctionType(), llvm_func, args);
@@ -3092,29 +3286,29 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                 std::shared_ptr<type> resolved;
                 if (unres->has_template_args()) {
                     resolved = try_instantiate_template_type(unres, static_cast<const element&>(expr));
-                }
-                if (!resolved || !type::is_resolved(resolved)) {
+                } else {
                     resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
-                }
-                if (!resolved || !type::is_resolved(resolved)) {
-                    if (auto tpl_agg = find_template_aggregate(unres->type_id(), static_cast<const element&>(expr))) {
-                        auto ctad = resolve_ctad(tpl_agg, expr.uniform_ctor_args(), static_cast<const element&>(expr), expr.first_lexeme());
-                        if (ctad.success && ctad.concrete_struct_type) {
-                            resolved = ctad.concrete_struct_type;
+                    if (!resolved || !type::is_resolved(resolved)) {
+                        if (auto tpl_agg = find_template_aggregate(unres->type_id(), static_cast<const element&>(expr))) {
+                            auto ctad = resolve_ctad(tpl_agg, expr.uniform_ctor_args(), static_cast<const element&>(expr), expr.first_lexeme());
+                            if (ctad.success && ctad.concrete_struct_type) {
+                                resolved = ctad.concrete_struct_type;
+                            }
                         }
                     }
+                    if (!resolved || !type::is_resolved(resolved)) {
+                        auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
+                        if (imported_agg) resolved = imported_agg->get_struct_type();
+                    }
                 }
-                if (!resolved || !type::is_resolved(resolved)) {
-                    auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
-                    if (imported_agg) resolved = imported_agg->get_struct_type();
-                }
-                if (resolved && type::is_resolved(resolved)) {
+                if (resolved && (type::is_resolved(resolved)
+                    || (unres->has_template_args() && std::dynamic_pointer_cast<struct_type>(resolved)))) {
                     expr.allocated_type(resolved);
                     elem_type = resolved;
                 }
             }
         }
-        if (!type::is_resolved(elem_type)) {
+        if (!type::is_resolved(elem_type) && !std::dynamic_pointer_cast<struct_type>(elem_type)) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_TYPE_NOT_FOUND), expr.first_lexeme(),
                 "Cannot resolve element type of 'new' uniform array expression: type '{}' is unknown",
                 {elem_type ? elem_type->to_string() : "<null>"});
@@ -3180,7 +3374,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                 return;
             }
             check_constructor_visibility(*best_ctor, expr);
-            check_call_contract(*best_ctor, expr.first_lexeme());
+            check_call_contract(*best_ctor, expr.first_lexeme(), &expr);
             expr._uniform_constructor = best_ctor;
             expr.set_uniform_ctor_args(adapted_args);
         } else if (type::is_primitive(elem_type)) {
@@ -3248,18 +3442,24 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
         auto elem_type = expr.allocated_type();
         if (!type::is_resolved(elem_type)) {
             if (auto unres = std::dynamic_pointer_cast<unresolved_type>(elem_type)) {
-                auto resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
-                if (!resolved || !type::is_resolved(resolved)) {
-                    auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
-                    if (imported_agg) resolved = imported_agg->get_struct_type();
+                std::shared_ptr<type> resolved;
+                if (unres->has_template_args()) {
+                    resolved = try_instantiate_template_type(unres, static_cast<const element&>(expr));
+                } else {
+                    resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
+                    if (!resolved || !type::is_resolved(resolved)) {
+                        auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
+                        if (imported_agg) resolved = imported_agg->get_struct_type();
+                    }
                 }
-                if (resolved && type::is_resolved(resolved)) {
+                if (resolved && (type::is_resolved(resolved)
+                    || (unres->has_template_args() && std::dynamic_pointer_cast<struct_type>(resolved)))) {
                     expr.allocated_type(resolved);
                     elem_type = resolved;
                 }
             }
         }
-        if (!type::is_resolved(elem_type)) {
+        if (!type::is_resolved(elem_type) && !std::dynamic_pointer_cast<struct_type>(elem_type)) {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_NEW_TYPE_NOT_FOUND), expr.first_lexeme(),
                 "Cannot resolve element type of 'new[]' expression: type '{}' is unknown",
                 {elem_type ? elem_type->to_string() : "<null>"});
@@ -3343,6 +3543,10 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                 // Resolve default constructor (needed for each element)
                 auto [default_ctor, default_args] = get_best_matching_constructor(
                     struct_model->constructors(), std::vector<std::shared_ptr<expression>>{});
+                if (default_ctor) {
+                    check_constructor_visibility(*default_ctor, expr);
+                    check_call_contract(*default_ctor, expr.first_lexeme(), &expr);
+                }
                 // Store in element_constructors[0] as the single default ctor to use
                 expr._element_constructors.resize(1, nullptr);
                 expr._element_constructors[0] = default_ctor;
@@ -3419,7 +3623,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                             {std::to_string(i), st_type->to_string()});
                     }
                     check_constructor_visibility(*best_ctor, expr);
-                    check_call_contract(*best_ctor, expr.first_lexeme());
+                    check_call_contract(*best_ctor, expr.first_lexeme(), &expr);
                     expr._element_constructors[i] = best_ctor;
                     func_inv->assign_arguments(adapted_args);
                 } else {
@@ -3434,7 +3638,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                              e->get_type() ? e->get_type()->to_string() : "?"});
                     }
                     check_constructor_visibility(*best_ctor, expr);
-                    check_call_contract(*best_ctor, expr.first_lexeme());
+                    check_call_contract(*best_ctor, expr.first_lexeme(), &expr);
                     expr._element_constructors[i] = best_ctor;
                     if (!adapted_args.empty() && adapted_args[0] != e) {
                         expr.assign_array_init_element(i, adapted_args[0]);
@@ -3454,7 +3658,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
                 auto [default_ctor, default_args] = get_best_matching_constructor(
                     struct_model->constructors(), std::vector<std::shared_ptr<expression>>{});
                 if (default_ctor) {
-                    check_call_contract(*default_ctor, expr.first_lexeme());
+                    check_call_contract(*default_ctor, expr.first_lexeme(), &expr);
                 }
                 for (size_t i = 0; i < arr_size; ++i) {
                     if (i >= init_count || !expr._array_init_elements[i]) {
@@ -3489,27 +3693,27 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
             // Try template instantiation first (e.g. new Node<int>(...))
             if (unres->has_template_args()) {
                 resolved = try_instantiate_template_type(unres, static_cast<const element&>(expr));
-            }
-            if (!resolved || !type::is_resolved(resolved)) {
+            } else {
                 resolved = resolve_type_by_name(unres->type_id(), static_cast<const element&>(expr));
-            }
-            if (!resolved || !type::is_resolved(resolved)) {
-                if (auto tpl_agg = find_template_aggregate(unres->type_id(), static_cast<const element&>(expr))) {
-                    auto ctad = resolve_ctad(tpl_agg, expr.arguments(), static_cast<const element&>(expr), expr.first_lexeme());
-                    if (ctad.success && ctad.concrete_struct_type) {
-                        resolved = ctad.concrete_struct_type;
-                    } else if (!ctad.failure_reason.empty()) {
-                        throw_error(static_cast<unsigned int>(k::diag::template_diag::ERR_CTAD_NO_MATCH), expr.first_lexeme(),
-                            "Class template argument deduction failed for 'new {}': {}",
-                            {tpl_agg->get_short_name(), ctad.failure_reason});
+                if (!resolved || !type::is_resolved(resolved)) {
+                    if (auto tpl_agg = find_template_aggregate(unres->type_id(), static_cast<const element&>(expr))) {
+                        auto ctad = resolve_ctad(tpl_agg, expr.arguments(), static_cast<const element&>(expr), expr.first_lexeme());
+                        if (ctad.success && ctad.concrete_struct_type) {
+                            resolved = ctad.concrete_struct_type;
+                        } else if (!ctad.failure_reason.empty()) {
+                            throw_error(static_cast<unsigned int>(k::diag::template_diag::ERR_CTAD_NO_MATCH), expr.first_lexeme(),
+                                "Class template argument deduction failed for 'new {}': {}",
+                                {tpl_agg->get_short_name(), ctad.failure_reason});
+                        }
                     }
                 }
+                if (!resolved || !type::is_resolved(resolved)) {
+                    auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
+                    if (imported_agg) resolved = imported_agg->get_struct_type();
+                }
             }
-            if (!resolved || !type::is_resolved(resolved)) {
-                auto imported_agg = _unit.get_or_create_imported_aggregate(unres->type_id(), _context);
-                if (imported_agg) resolved = imported_agg->get_struct_type();
-            }
-            if (resolved && type::is_resolved(resolved)) {
+            if (resolved && (type::is_resolved(resolved)
+                || (unres->has_template_args() && std::dynamic_pointer_cast<struct_type>(resolved)))) {
                 expr.allocated_type(resolved);
                 alloc_type = resolved;
             }
@@ -3566,7 +3770,7 @@ void type_reference_resolver::visit_new_expression(new_expression& expr) {
         }
         check_constructor_visibility(*best_ctor, expr);
         // Check exception contract for throwing constructors
-        check_call_contract(*best_ctor, expr.get_interest_lexeme());
+        check_call_contract(*best_ctor, expr.get_interest_lexeme(), &expr);
         expr.set_constructor(best_ctor);
         expr.assign_arguments(adapted_args);
     } else if (type::is_primitive(alloc_type)) {

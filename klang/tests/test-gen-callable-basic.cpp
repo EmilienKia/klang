@@ -37,6 +37,69 @@
 
 #include "helpers.hpp"
 
+#include <llvm/Support/DynamicLibrary.h>
+
+namespace {
+// A single i32 field uses the same native return register as LLVM { i32 }.
+struct NativeCallableResult { int value; };
+struct NativeCallableError {};
+}
+
+extern "C" NativeCallableResult __k_test_callable_native_result(int a, int b) {
+    if (a < 0) throw NativeCallableError{};
+    return {a * 10 + b};
+}
+
+extern "C" NativeCallableResult __k_test_callable_native_static(int a, int b) {
+    return {a + b * 10};
+}
+
+TEST_CASE("Callable: native aggregate return uses a K ABI adapter",
+          "[gen][callable][ffi][native-aggregate]") {
+    llvm::sys::DynamicLibrary::AddSymbol("__k_test_callable_native_result",
+        reinterpret_cast<void*>(&__k_test_callable_native_result));
+    llvm::sys::DynamicLibrary::AddSymbol("__k_test_callable_native_static",
+        reinterpret_cast<void*>(&__k_test_callable_native_static));
+    auto jit = gen_jit(R"K(
+        module callable_native_aggregate;
+        struct Result { value : int; }
+        @ffi::Extern("C", null, "__k_test_callable_native_result")
+        nativeFree(a : int, b : int) : Result;
+        struct Native {
+            @ffi::Extern("C", null, "__k_test_callable_native_static")
+            static make(a : int, b : int) : Result;
+        }
+        makeK(a : int, b : int) : Result {
+            result : Result;
+            result.value = a * 10 + b;
+            return result;
+        }
+        test() : int {
+            freeFn : *(int, int):Result = nativeFree;
+            staticFn : *(int, int):Result = Native::make;
+            kFn : *(int, int):Result = makeK;
+            a : Result = freeFn(4, 2);
+            b : Result = staticFn(2, 4);
+            c : Result = kFn(4, 2);
+            d : Result = nativeFree(4, 2);
+            e : Result = Native::make(2, 4);
+            return a.value + b.value + c.value + d.value + e.value;
+        }
+        throwing() : int {
+            f : *(int, int):Result = nativeFree;
+            result : Result = f(-1, 0);
+            return result.value;
+        }
+    )K", false, false);
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    auto throwing = jit->lookup_symbol<int(*)()>("throwing");
+    REQUIRE(test);
+    REQUIRE(throwing);
+    CHECK(test() == 210);
+    CHECK_THROWS_AS(throwing(), NativeCallableError);
+}
+
 TEST_CASE("Callable: local variable of pointer callable type", "[gen][callable]")
 {
     auto jit = gen_jit(R"SRC(

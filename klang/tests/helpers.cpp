@@ -20,6 +20,7 @@
 
 #include <unistd.h>
 #include <dlfcn.h>
+#include <cstdint>
 #include <set>
 #include <regex>
 
@@ -28,6 +29,9 @@
 #include <fmt/args.h>
 
 #include <catch2/catch_all.hpp>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Module.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/TargetParser/Host.h>
 
@@ -55,6 +59,26 @@ bool ensure_libk_loaded() {
                   << ": " << dlerror() << std::endl;
         return false;
     }
+    return true;
+}
+
+bool bind_jit_fixture(llvm::Function* declaration, void* address) {
+    if (!declaration || !declaration->isDeclaration() || !address) return false;
+    // ORC's process-symbol generator cannot see LLVM DynamicLibrary::AddSymbol entries.
+    auto& context = declaration->getContext();
+    auto& module = *declaration->getParent();
+    auto* entry = llvm::BasicBlock::Create(context, "entry", declaration);
+    llvm::IRBuilder<> builder(entry);
+    auto* integer = llvm::ConstantInt::get(module.getDataLayout().getIntPtrType(context),
+                                           reinterpret_cast<std::uintptr_t>(address));
+    auto* target = llvm::ConstantExpr::getIntToPtr(integer, llvm::PointerType::get(context, 0));
+    std::vector<llvm::Value*> args;
+    for (auto& arg : declaration->args()) args.push_back(&arg);
+    auto* call = builder.CreateCall(declaration->getFunctionType(), target, args);
+    call->setCallingConv(declaration->getCallingConv());
+    call->setAttributes(declaration->getAttributes());
+    if (declaration->getReturnType()->isVoidTy()) builder.CreateRetVoid();
+    else builder.CreateRet(call);
     return true;
 }
 

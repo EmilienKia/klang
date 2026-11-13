@@ -34,6 +34,8 @@
 #include "../parse/ast.hpp"
 #include "../errors.hpp"
 
+#include <unordered_set>
+
 namespace k::model::gen {
 
 
@@ -370,11 +372,15 @@ void type_reference_resolver::resolve_variable_type(
         const element* var_elem = dynamic_cast<const element*>(&var);
         if (var_elem) {
             auto tpl_resolved = try_instantiate_template_type(unres_type, *var_elem);
-            if (tpl_resolved && type::is_resolved(tpl_resolved)) {
+            if (tpl_resolved && (type::is_resolved(tpl_resolved)
+                || std::dynamic_pointer_cast<struct_type>(tpl_resolved))) {
                 var.set_type(tpl_resolved);
                 return;
             }
         }
+        throw_error(static_cast<unsigned int>(k::diag::variable_diag::ERR_VAR_TYPE_UNRESOLVED), var_lexeme,
+            "Unknown type '{}' for variable '{}': cannot resolve its template arguments",
+            {unres_type->type_id().to_string(), var.get_fq_name()});
     }
 
     // Step 5a: Qualified name resolution from root namespace (resolve_type_by_name)
@@ -387,6 +393,18 @@ void type_reference_resolver::resolve_variable_type(
         const element* var_elem = dynamic_cast<const element*>(&var);
         if (var_elem) {
             resolved = resolve_type_by_name(unres_type->type_id(), *var_elem);
+            // A nested clone can be found before its LLVM layout has been
+            // materialized, especially when its enclosing specialization was
+            // created by the declaration resolver.
+            if (auto nested_type = std::dynamic_pointer_cast<struct_type>(resolved);
+                nested_type && !nested_type->is_resolved()) {
+                auto nested = nested_type->get_struct();
+                if (nested && nested->is_instantiation() && nested->is_nested()
+                    && !nested->is_imported()) {
+                    std::unordered_set<struct_type*> in_progress;
+                    _context->resolve_struct_type(nested_type, in_progress);
+                }
+            }
         }
         if ((!resolved || !type::is_resolved(resolved)) && !unres_type->get_definition_namespace()) {
             auto root_ns = _unit.get_root_namespace();
@@ -681,11 +699,33 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
         if (is_direct_copy) {
             // For lvalue copies: reject non-trivial structs that have no copy constructor.
             if (is_lvalue_copy && struct_model) {
-                bool has_cc = struct_model->get_copy_constructor() != nullptr;
+                auto copy_ctor = struct_model->get_copy_constructor();
+                if (copy_ctor && !copy_ctor->is_generated_bytewise_copy()) {
+                    auto [selected, adapted] = get_best_matching_constructor(
+                        copy_constructors_of(*struct_model), ctor_args, true, ctx.var_lexeme);
+                    if (auto var_elem = dynamic_cast<const element*>(&ctx.var))
+                        check_constructor_visibility(*selected, *var_elem);
+                    check_call_contract(*selected, ctx.var_lexeme,
+                                        dynamic_cast<const element*>(&ctx.var));
+                    ctx.var.set_var_constructor(selected);
+                    if (ctx.init_expr) {
+                        ctx.init_expr->set_constructor(selected);
+                        ctx.init_expr->arguments(adapted);
+                    }
+                    return;
+                }
+                if (!std::dynamic_pointer_cast<temporary_construction_expression>(ctor_args[0])
+                    && scalar_union_wrapper(struct_model, _unit.get_root_namespace())) {
+                    check_union_payload_copy_contract(st_type,
+                        type::is_const(arg_type_nc->get_subtype()), ctx.var_lexeme);
+                }
+                bool has_cc = copy_ctor != nullptr;
+                // A constructor-call initializer is a prvalue: it is moved into the variable.
+                const bool is_prvalue_init = std::dynamic_pointer_cast<temporary_construction_expression>(ctor_args[0]) != nullptr;
                 // Check for a resource-referencing field (owner/pointer/link/view,
                 // recursively through nested struct members) — such a field makes
                 // shallow copy unsafe even without a direct owner-typed field.
-                if (!has_cc && aggregate_type_has_resource_field(st_type)) {
+                if (!has_cc && !is_prvalue_init && aggregate_type_has_resource_field(st_type)) {
                     throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE),
                         ctx.var_lexeme,
                         "Type '{}' is not copyable: variable initialisation from a lvalue requires a copy constructor",
@@ -715,6 +755,8 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
             if (auto var_elem = dynamic_cast<const element*>(&ctx.var)) {
                 check_constructor_visibility(*best_constructor, *var_elem);
             }
+            check_call_contract(*best_constructor, ctx.var_lexeme,
+                                dynamic_cast<const element*>(&ctx.var));
             ctx.var.set_var_constructor(best_constructor);
             if (ctx.init_expr) {
                 ctx.init_expr->set_constructor(best_constructor);

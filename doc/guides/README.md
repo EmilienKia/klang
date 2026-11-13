@@ -9,6 +9,7 @@ Practical overviews and workflows for commonly used K subsystems:
   entries, streams, and channels.
 - [Date and time](time.md) — timeline, civil time, zones, calendars, and
   formatting.
+- [Cryptography](crypto.md) — digests, HMAC, symmetric encryption, and streams.
 - [Calling native C code](ffi.md) — direct and runtime FFI, ABI types,
   strings, native handles, struct layouts, ownership, and linking. See also
   [How-To: Wrap a Native C Library](../howtos/wrap-native-c-libraries.md).

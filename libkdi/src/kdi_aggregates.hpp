@@ -189,6 +189,7 @@ struct kdi_param {
     kdi_type    type;
     bool        is_varargs = false;  ///< True if declared with '...' (informational)
     std::optional<std::string> default_source; ///< K expression evaluated in the declaration's scope.
+    bool        is_ffi_cstring = false; ///< Native CString parameter contract.
 };
 
 struct kdi_variable {
@@ -225,6 +226,7 @@ struct kdi_function {
     /// Exception types this function may throw (empty = noexcept).
     std::vector<kdi_type>    throws_spec;
     std::optional<kdi_doc_function> doc;
+    bool                     is_extern = false; ///< Native C declaration, not a K ABI function.
 };
 
 /** Member method. */
@@ -238,6 +240,8 @@ struct kdi_method {
     bool                     is_abstract     = false;
     bool                     is_final        = false;
     bool                     is_operator     = false;
+    bool                     is_deleted      = false;
+    bool                     is_private      = false; ///< Private deleted declaration metadata.
     int32_t                  vtable_slot     = -1;   ///< -1 = not virtual
     kdi_type                 return_type;
     std::vector<kdi_param>   params;                 ///< excluding 'this'
@@ -250,6 +254,7 @@ struct kdi_method {
     /// Exception types this method may throw (empty = noexcept).
     std::vector<kdi_type>    throws_spec;
     std::optional<kdi_doc_function> doc;
+    bool                     is_extern = false; ///< Native C declaration, not a K ABI method.
 };
 
 struct kdi_constructor {
@@ -257,12 +262,15 @@ struct kdi_constructor {
     bool                     is_copy_constructor = false;
     bool                     is_defaulted        = false;
     bool                     is_deleted          = false;
+    bool                     is_private          = false; ///< Private deleted declaration metadata.
     std::vector<kdi_param>   params;
     std::string              mangled_name;         ///< C1 variant
     std::string              mangled_name_c2;      ///< C2 (base-subobject) variant
     /// LLVM IR prototype of the C1 constructor variant, e.g.
     /// "declare void @_ZN3ns7CounterC1Ev(%struct.ns.Counter* %this)".
     std::string              llvm_def;
+    /// Absent for legacy/unknown contracts; a present empty vector means noexcept.
+    std::optional<std::vector<kdi_type>> throws_spec;
     std::optional<kdi_doc_function> doc;
 };
 
@@ -481,6 +489,12 @@ struct kdi_aggregate {
     // Inheritance
     std::vector<kdi_base> bases;
 
+    /// True when every declared direct base of the producer's aggregate was
+    /// resolved and is listed in `bases`. Absent (older files) means false: a
+    /// consumer must not conclude that this aggregate does NOT derive from a
+    /// type merely because that type is missing from `bases`.
+    bool bases_complete = false;
+
     // Physical layout (complete LLVM field list in index order)
     std::vector<kdi_layout_field> layout;
 
@@ -541,8 +555,11 @@ struct kdi_enum {
     kdi_type                      underlying_type; ///< backing primitive int type
     /// Backing object type for typed object-backed enums (must be aggregate ref when set).
     std::optional<kdi_type>       object_type;
-    /// Symbol name of the backing global table (array of object_type entries).
+    /// Symbol name of the backing global table, or the runtime accessor.
     std::optional<std::string>    object_table_symbol;
+    /// Absent means a constant table (including descriptors predating this field).
+    /// "runtime" denotes a lazy no-argument accessor returning the table address.
+    std::optional<std::string>    object_table_kind;
     std::optional<std::string>    base_fq_name;    ///< base enum fq_name (derivation)
     std::vector<kdi_enum_entry>   entries;
     std::optional<kdi_doc_block>  doc;

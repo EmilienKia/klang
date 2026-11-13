@@ -32,16 +32,2057 @@
 
 #include "helpers.hpp"
 #include "../src/errors.hpp"
+#include "../src/gen/resolvers_aggregate.hpp"
+#include "../src/gen/generators.hpp"
+#include "../src/model/context.hpp"
+#include "../src/model/expressions.hpp"
 #include "../src/model/imported.hpp"
+#include "../src/model/statements.hpp"
+#include "../src/model/tools/kdi_exporter.hpp"
+#include "../src/model/tools/kdi_type_converter.hpp"
 
+#include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/GlobalVariable.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/DynamicLibrary.h>
 #include <llvm/Support/raw_ostream.h>
 
 #include <algorithm>
+#include <fstream>
+#include <functional>
+#include <sstream>
 
 namespace fs = std::filesystem;
+
+extern "C" int __k_test_kdi_native_length(const unsigned char* text) {
+    int size = 0;
+    while (text[size]) ++size;
+    return size;
+}
+
+extern "C" int __k_test_kdi_native_abs(int value) {
+    return value < 0 ? -value : value;
+}
+
+extern "C" int __k_test_kdi_generic_default(const unsigned char* text) {
+    return __k_test_kdi_native_length(text);
+}
+
+extern "C" int __k_test_kdi_generic_free(const unsigned char* text) {
+    return __k_test_kdi_native_length(text);
+}
+
+extern "C" int __k_test_kdi_classic_length(const unsigned char* text) {
+    return __k_test_kdi_native_length(text);
+}
+
+struct kdi_native_point { int value; };
+extern "C" kdi_native_point __k_test_kdi_native_point(int value) {
+    return {value};
+}
+
+extern "C" kdi_native_point __k_test_kdi_native_point_late(int value) {
+    return {value};
+}
+
+TEST_CASE("KDI imports native and K callables with their exact symbols",
+          "[import][kdi][ffi]") {
+    auto producer = compile_model_with_stdlib(R"K(
+        module kdi_native_abi_producer;
+        @ffi::Extern("C", null, "__k_test_kdi_native_length")
+        length(@ffi::CString text : const unsigned byte*) : int;
+        public struct Native {
+            @ffi::Extern("C", null, "__k_test_kdi_native_abs")
+            static absolute(value : int) : int;
+        }
+        plusThree(value : int) : int { return value + 3; }
+    )K");
+    REQUIRE(producer);
+    auto root = producer->get_unit()->get_root_namespace();
+    auto plus = root->get_function("plusThree");
+    REQUIRE(plus);
+    const auto plus_symbol = plus->get_mangled_name();
+    k::model::kdi_builder exporter(*producer->get_context_for_test());
+    producer->get_unit()->accept(exporter);
+    auto descriptor = exporter.take();
+    auto exported_length = std::find_if(descriptor.unit.root_ns.functions.begin(),
+        descriptor.unit.root_ns.functions.end(), [](const auto& fn) { return fn.name == "length"; });
+    REQUIRE(exported_length != descriptor.unit.root_ns.functions.end());
+    CHECK(exported_length->is_extern);
+    auto exported_plus = std::find_if(descriptor.unit.root_ns.functions.begin(),
+        descriptor.unit.root_ns.functions.end(), [](const auto& fn) { return fn.name == "plusThree"; });
+    REQUIRE(exported_plus != descriptor.unit.root_ns.functions.end());
+    CHECK_FALSE(exported_plus->is_extern);
+    CHECK(exported_plus->mangled_name == plus_symbol);
+    REQUIRE(exported_length->params.size() == 1);
+    CHECK(exported_length->params[0].is_ffi_cstring);
+    auto alias = *exported_length;
+    alias.name = "lengthAlias";
+    alias.fq_name = "kdi_native_abi_producer::lengthAlias";
+    alias.params[0].is_ffi_cstring = false;
+    auto link_alias = *exported_length;
+    link_alias.name = "lengthLink";
+    link_alias.fq_name = "kdi_native_abi_producer::lengthLink";
+    auto* pointer = std::get_if<kdi::kdi_ptr_type>(&link_alias.params[0].type.value);
+    REQUIRE(pointer);
+    link_alias.params[0].type = kdi::kdi_type{kdi::kdi_link_type{pointer->inner}};
+    descriptor.unit.root_ns.functions.push_back(*exported_length);
+    descriptor.unit.root_ns.functions.push_back(alias);
+    descriptor.unit.root_ns.functions.push_back(link_alias);
+    auto path = fs::current_path() / "kdi_native_abi_producer.kdi";
+    REQUIRE_FALSE(fs::exists(path));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    REQUIRE(kdi::kdi_write_cbor_file(descriptor, path.string()));
+
+    auto producer_jit = producer->to_jit();
+    REQUIRE(producer_jit);
+    auto plus_address = producer_jit->lookup_symbol<int (*)(int)>("plusThree");
+    REQUIRE(plus_address);
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("kdi_native_abi_producer", path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    auto consumer = k::compiler::create();
+    consumer->set_file_resolver(resolver);
+    REQUIRE_NOTHROW(consumer->parse_source("kdi_native_abi_consumer.k", R"K(
+        module kdi_native_abi_consumer;
+        import kdi_native_abi_producer;
+        run() : int {
+            text : const unsigned byte[] = u8"ok";
+            return kdi_native_abi_producer::length(&text[0])
+                + kdi_native_abi_producer::lengthAlias(&text[0])
+                + kdi_native_abi_producer::lengthLink(&text[0])
+                + kdi_native_abi_producer::Native::absolute(-3)
+                + kdi_native_abi_producer::plusThree(4);
+        }
+    )K", false, false));
+    auto imported = consumer->get_unit()->get_root_namespace()
+        ->get_child_namespace("kdi_native_abi_producer");
+    REQUIRE(imported);
+    auto length = imported->get_function("length");
+    auto length_alias = imported->get_function("lengthAlias");
+    auto length_link = imported->get_function("lengthLink");
+    auto ordinary = imported->get_function("plusThree");
+    auto native = imported->get_aggregate("Native");
+    REQUIRE(length);
+    REQUIRE(length_alias);
+    REQUIRE(length_link);
+    CHECK(imported->get_functions("length").size() == 1);
+    CHECK(length_alias != length);
+    CHECK(length_alias->is_extern());
+    CHECK(length_alias->get_mangled_name() == length->get_mangled_name());
+    CHECK_FALSE(length_alias->parameters()[0]->is_ffi_cstring());
+    CHECK(length_link->parameters()[0]->is_ffi_cstring());
+    CHECK(k::model::type::is_link(k::model::type::canonical(length_link->parameters()[0]->get_type())));
+    REQUIRE(ordinary);
+    REQUIRE(native);
+    auto absolute = native->get_function("absolute");
+    REQUIRE(absolute);
+    CHECK(length->is_external());
+    CHECK(length->is_extern());
+    CHECK(length->get_mangled_name() == "__k_test_kdi_native_length");
+    REQUIRE(length->parameters().size() == 1);
+    CHECK(length->parameters()[0]->is_ffi_cstring());
+    CHECK(absolute->is_external());
+    CHECK(absolute->is_extern());
+    CHECK(absolute->get_mangled_name() == "__k_test_kdi_native_abs");
+    CHECK(ordinary->is_external());
+    CHECK_FALSE(ordinary->is_extern());
+    CHECK(ordinary->get_mangled_name() == plus_symbol);
+    auto& llvm_module = consumer->get_context_for_test()->module();
+    auto* length_decl = llvm_module.getFunction("__k_test_kdi_native_length");
+    auto* abs_decl = llvm_module.getFunction("__k_test_kdi_native_abs");
+    REQUIRE(length_decl);
+    REQUIRE(abs_decl);
+    CHECK(length_decl->isDeclaration());
+    CHECK(abs_decl->isDeclaration());
+    CHECK(llvm_module.getFunction("__k_test_kdi_native_length.1") == nullptr);
+    CHECK(llvm_module.getFunction("__k_test_kdi_native_abs.1") == nullptr);
+    REQUIRE(bind_jit_fixture(llvm_module.getFunction(plus_symbol),
+                             reinterpret_cast<void*>(plus_address)));
+    auto jit = consumer->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 16);
+
+    for (auto& fn : descriptor.unit.root_ns.functions) {
+        fn.is_extern = false;
+        for (auto& param : fn.params) param.is_ffi_cstring = false;
+    }
+    for (auto& agg : descriptor.unit.root_ns.aggregates)
+        for (auto& member : agg.methods) member.is_extern = false;
+    std::ostringstream encoded(std::ios::binary);
+    kdi::kdi_write_cbor(descriptor, encoded);
+    auto legacy_bytes = encoded.str();
+    const std::string key = "is_extern";
+    for (auto pos = legacy_bytes.find(key); pos != std::string::npos;
+         pos = legacy_bytes.find(key)) {
+        legacy_bytes.erase(pos - 1, key.size() + 2);
+    }
+    {
+        std::ofstream legacy_file(path, std::ios::binary | std::ios::trunc);
+        REQUIRE(legacy_file);
+        legacy_file.write(legacy_bytes.data(), static_cast<std::streamsize>(legacy_bytes.size()));
+        REQUIRE(legacy_file);
+    }
+    auto legacy_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    legacy_resolver->add_explicit_path("kdi_native_abi_producer", path);
+    legacy_resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    auto legacy_consumer = k::compiler::create();
+    legacy_consumer->set_file_resolver(legacy_resolver);
+    REQUIRE_NOTHROW(legacy_consumer->parse_source("kdi_native_abi_legacy.k", R"K(
+        module kdi_native_abi_legacy;
+        import kdi_native_abi_producer;
+        run() : int {
+            text : const unsigned byte[] = u8"ok";
+            return kdi_native_abi_producer::length(&text[0])
+                + kdi_native_abi_producer::Native::absolute(-3)
+                + kdi_native_abi_producer::plusThree(4);
+        }
+    )K", false, false));
+    REQUIRE(bind_jit_fixture(legacy_consumer->get_context_for_test()->module().getFunction(plus_symbol),
+                             reinterpret_cast<void*>(plus_address)));
+    auto legacy_jit = legacy_consumer->to_jit();
+    REQUIRE(legacy_jit);
+    auto legacy_run = legacy_jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(legacy_run);
+    CHECK(legacy_run() == 12);
+}
+
+TEST_CASE("KDI preserves native generic member signatures and calls",
+          "[import][kdi][ffi][generic]") {
+    auto producer = compile_model_with_stdlib(R"K(
+        module kdi_native_generic;
+        generic<typename T> public struct Host {
+            @ffi::Extern("C", null, "__k_test_kdi_generic_length")
+            static length(@ffi::CString text : const unsigned byte*) : int;
+            @ffi::Extern("C")
+            static __k_test_kdi_generic_default(@ffi::CString text : const unsigned byte*) : int;
+        }
+        force() : int {
+            text : const unsigned byte[] = u8"ok";
+            return Host<int>::length(&text[0])
+                + Host<int>::__k_test_kdi_generic_default(&text[0]);
+        }
+    )K");
+    REQUIRE(producer);
+    k::model::kdi_builder exporter(*producer->get_context_for_test());
+    producer->get_unit()->accept(exporter);
+    auto descriptor = exporter.take();
+    auto generic = std::find_if(descriptor.unit.root_ns.template_defs.begin(),
+        descriptor.unit.root_ns.template_defs.end(), [](const auto& entry) { return entry.name == "Host"; });
+    REQUIRE(generic != descriptor.unit.root_ns.template_defs.end());
+    REQUIRE(generic->aggregate_signature);
+    auto method = std::find_if(generic->aggregate_signature->methods.begin(),
+        generic->aggregate_signature->methods.end(), [](const auto& entry) { return entry.name == "length"; });
+    REQUIRE(method != generic->aggregate_signature->methods.end());
+    CHECK(method->is_extern);
+    CHECK(method->mangled_name == "__k_test_kdi_generic_length");
+    REQUIRE(method->params.size() == 1);
+    CHECK(method->params[0].is_ffi_cstring);
+    auto default_method = std::find_if(generic->aggregate_signature->methods.begin(),
+        generic->aggregate_signature->methods.end(),
+        [](const auto& entry) { return entry.name == "__k_test_kdi_generic_default"; });
+    REQUIRE(default_method != generic->aggregate_signature->methods.end());
+    CHECK(default_method->is_extern);
+    CHECK(default_method->mangled_name == "__k_test_kdi_generic_default");
+
+    auto path = fs::current_path() / "kdi_native_generic.kdi";
+    REQUIRE_FALSE(fs::exists(path));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    REQUIRE(kdi::kdi_write_cbor_file(descriptor, path.string()));
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("kdi_native_generic", path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    auto consumer = k::compiler::create();
+    consumer->set_file_resolver(resolver);
+    REQUIRE_NOTHROW(consumer->parse_source("kdi_native_generic_consumer.k", R"K(
+        module kdi_native_generic_consumer;
+        import kdi_native_generic;
+        run() : int {
+            text : const unsigned byte[] = u8"ok";
+            return kdi_native_generic::Host<int>::length(&text[0])
+                + kdi_native_generic::Host<int>::__k_test_kdi_generic_default(&text[0]);
+        }
+    )K", false, false));
+    auto imported = consumer->get_unit()->get_root_namespace()->get_child_namespace("kdi_native_generic");
+    REQUIRE(imported);
+    auto host = imported->get_aggregate("Host");
+    REQUIRE(host);
+    auto imported_method = host->get_function("length");
+    REQUIRE(imported_method);
+    CHECK(imported_method->is_extern());
+    CHECK(imported_method->get_extern_c_symbol().value_or("") == "__k_test_kdi_generic_length");
+    REQUIRE(imported_method->parameters().size() == 1);
+    CHECK(imported_method->parameters()[0]->is_ffi_cstring());
+    auto& llvm_module = consumer->get_context_for_test()->module();
+    REQUIRE(bind_jit_fixture(llvm_module.getFunction("__k_test_kdi_generic_length"),
+                             reinterpret_cast<void*>(&__k_test_kdi_native_length)));
+    REQUIRE(bind_jit_fixture(llvm_module.getFunction("__k_test_kdi_generic_default"),
+                             reinterpret_cast<void*>(&__k_test_kdi_generic_default)));
+    auto jit = consumer->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 4);
+}
+
+TEST_CASE("KDI generic native function recipes retain symbol and CString",
+          "[import][kdi][ffi][generic]") {
+    auto producer = compile_model_with_stdlib(R"K(
+        module kdi_native_generic_function;
+        @ffi::Extern("C", null, "__k_test_kdi_generic_free")
+        generic<typename T> length(@ffi::CString text : const unsigned byte*) : int;
+        @ffi::Extern("C")
+        generic<typename T> __k_test_kdi_generic_default(@ffi::CString text : const unsigned byte*) : int;
+        force() : int {
+            text : const unsigned byte[] = u8"ok";
+            return length<int>(&text[0]) + __k_test_kdi_generic_default<int>(&text[0]);
+        }
+    )K");
+    REQUIRE(producer);
+    auto& producer_ir = producer->get_context_for_test()->module();
+    REQUIRE(producer_ir.getFunction("__k_test_kdi_generic_free"));
+    REQUIRE(producer_ir.getFunction("__k_test_kdi_generic_default"));
+    CHECK(producer_ir.getFunction("__k_test_kdi_generic_default<generic>") == nullptr);
+    k::model::kdi_builder exporter(*producer->get_context_for_test());
+    producer->get_unit()->accept(exporter);
+    auto descriptor = exporter.take();
+    auto generic = std::find_if(descriptor.unit.root_ns.template_defs.begin(),
+        descriptor.unit.root_ns.template_defs.end(), [](const auto& entry) { return entry.name == "length"; });
+    REQUIRE(generic != descriptor.unit.root_ns.template_defs.end());
+    CHECK(generic->source.find("__k_test_kdi_generic_free") != std::string::npos);
+    CHECK(generic->source.find("@k::ffi::CString") != std::string::npos);
+    auto path = fs::current_path() / "kdi_native_generic_function.kdi";
+    REQUIRE_FALSE(fs::exists(path));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    REQUIRE(kdi::kdi_write_cbor_file(descriptor, path.string()));
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("kdi_native_generic_function", path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    auto consumer = k::compiler::create();
+    consumer->set_file_resolver(resolver);
+    REQUIRE_NOTHROW(consumer->parse_source("kdi_native_generic_function_consumer.k", R"K(
+        module kdi_native_generic_function_consumer;
+        import kdi_native_generic_function;
+        run() : int {
+            text : const unsigned byte[] = u8"ok";
+            return kdi_native_generic_function::length<int>(&text[0])
+                + kdi_native_generic_function::__k_test_kdi_generic_default<int>(&text[0]);
+        }
+    )K", false, false));
+    auto& llvm_module = consumer->get_context_for_test()->module();
+    auto* native = llvm_module.getFunction("__k_test_kdi_generic_free");
+    REQUIRE(native);
+    CHECK(native->isDeclaration());
+    CHECK(llvm_module.getFunction("__k_test_kdi_generic_free.1") == nullptr);
+    REQUIRE(llvm_module.getFunction("__k_test_kdi_generic_default"));
+    CHECK(llvm_module.getFunction("__k_test_kdi_generic_default<int>") == nullptr);
+    REQUIRE(bind_jit_fixture(native, reinterpret_cast<void*>(&__k_test_kdi_generic_free)));
+    REQUIRE(bind_jit_fixture(llvm_module.getFunction("__k_test_kdi_generic_default"),
+                             reinterpret_cast<void*>(&__k_test_kdi_generic_default)));
+    auto jit = consumer->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 4);
+}
+
+TEST_CASE("Imported native LLVM prototypes require an established ABI",
+          "[import][kdi][ffi][prototype]") {
+    auto producer = compile_model_with_stdlib(R"K(
+        module kdi_native_prototypes;
+        public struct Point { value : int; }
+        @ffi::Extern("C", null, "__k_test_kdi_prototype")
+        scalar(value : int) : int;
+        @ffi::Extern("C", null, "__k_test_kdi_point_prototype")
+        point(value : Point) : int;
+        @ffi::Extern("C", null, "__k_test_kdi_pointer_prototype")
+        pointer(value : int*) : int;
+    )K");
+    REQUIRE(producer);
+    k::model::kdi_builder exporter(*producer->get_context_for_test());
+    producer->get_unit()->accept(exporter);
+    auto descriptor = exporter.take();
+    auto scalar = std::find_if(descriptor.unit.root_ns.functions.begin(),
+        descriptor.unit.root_ns.functions.end(), [](const auto& fn) { return fn.name == "scalar"; });
+    auto point = std::find_if(descriptor.unit.root_ns.functions.begin(),
+        descriptor.unit.root_ns.functions.end(), [](const auto& fn) { return fn.name == "point"; });
+    auto pointer = std::find_if(descriptor.unit.root_ns.functions.begin(),
+        descriptor.unit.root_ns.functions.end(), [](const auto& fn) { return fn.name == "pointer"; });
+    REQUIRE(scalar != descriptor.unit.root_ns.functions.end());
+    REQUIRE(point != descriptor.unit.root_ns.functions.end());
+    REQUIRE(pointer != descriptor.unit.root_ns.functions.end());
+    REQUIRE(point->llvm_def.find('%') != std::string::npos);
+    const auto path = fs::current_path() / "kdi_native_prototypes.kdi";
+    REQUIRE_FALSE(fs::exists(path));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    auto compile_consumer = [&]() {
+        REQUIRE(kdi::kdi_write_cbor_file(descriptor, path.string()));
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("kdi_native_prototypes", path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        auto consumer = k::compiler::create();
+        consumer->set_file_resolver(resolver);
+        consumer->parse_source("kdi_native_prototypes_consumer.k", R"K(
+            module kdi_native_prototypes_consumer;
+            import kdi_native_prototypes;
+            run() : int {
+                p : kdi_native_prototypes::Point;
+                return kdi_native_prototypes::scalar(1) + kdi_native_prototypes::point(p);
+            }
+        )K", false, false);
+        return consumer;
+    };
+    bool expect_error = false;
+    SECTION("parseable and named-type declarations preserve the exact symbols") {
+        auto consumer = compile_consumer();
+        auto& module = consumer->get_context_for_test()->module();
+        REQUIRE(module.getFunction("__k_test_kdi_prototype"));
+        REQUIRE(module.getFunction("__k_test_kdi_point_prototype"));
+    }
+    SECTION("unparseable declaration is diagnosed") {
+        scalar->llvm_def += " invalid";
+        expect_error = true;
+    }
+    SECTION("missing declaration is diagnosed") {
+        scalar->llvm_def.clear();
+        expect_error = true;
+    }
+    SECTION("parseable but inconsistent result type is diagnosed") {
+        scalar->llvm_def = "declare i64 @__k_test_kdi_prototype(i32)";
+        expect_error = true;
+    }
+    SECTION("same LLVM type with byval parameter is diagnosed") {
+        pointer->llvm_def = "declare i32 @__k_test_kdi_pointer_prototype(ptr byval(i8))";
+        expect_error = true;
+    }
+    SECTION("same LLVM type with signext return is diagnosed") {
+        scalar->llvm_def = "declare signext i32 @__k_test_kdi_prototype(i32)";
+        expect_error = true;
+    }
+    SECTION("identical symbols with different LLVM attributes are diagnosed") {
+        auto alias = *scalar;
+        alias.name = "scalarAlias";
+        alias.fq_name = "kdi_native_prototypes::scalarAlias";
+        alias.llvm_def = "declare signext i32 @__k_test_kdi_prototype(i32)";
+        descriptor.unit.root_ns.functions.push_back(std::move(alias));
+        expect_error = true;
+    }
+    SECTION("same C symbol with incompatible native parameter types is diagnosed") {
+        auto alias = *scalar;
+        alias.name = "scalarAlias";
+        alias.fq_name = "kdi_native_prototypes::scalarAlias";
+        alias.params[0].type = kdi::kdi_type::make_int(64);
+        alias.llvm_def = "declare i32 @__k_test_kdi_prototype(i64)";
+        descriptor.unit.root_ns.functions.push_back(std::move(alias));
+        expect_error = true;
+    }
+    SECTION("legacy unmarked declaration retains its previous fallback") {
+        scalar->is_extern = false;
+        scalar->llvm_def += " invalid";
+        auto consumer = compile_consumer();
+        REQUIRE(consumer->get_context_for_test()->module().getFunction("__k_test_kdi_prototype"));
+    }
+    if (expect_error) {
+        REQUIRE_THROWS_MATCHES(compile_consumer(), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+                return error.get_diagnostic().code == static_cast<unsigned int>(
+                    k::diag::codegen_diag::ERR_KDI_NATIVE_ABI_UNPROVEN);
+            }, "native ABI diagnostic"));
+    }
+}
+
+TEST_CASE("Imported CString contracts are checked against resolved parameter types",
+          "[import][kdi][ffi][cstring]") {
+    auto producer = compile_model_with_stdlib(R"K(
+        module kdi_cstring_validation;
+        public typedef ByteChar : unsigned byte;
+        @ffi::Extern("C", null, "__k_test_kdi_cstring_validation")
+        text(@ffi::CString value : const unsigned byte*) : int;
+        @ffi::Extern("C", null, "__k_test_kdi_cstring_alias")
+        charAlias(@ffi::CString value : ByteChar*) : int;
+        generic<typename T> public struct Host {
+            @ffi::Extern("C", null, "__k_test_kdi_generic_cstring_validation")
+            static text(@ffi::CString value : const unsigned byte*) : int;
+        }
+        force() : int {
+            value : const unsigned byte[] = u8"ok";
+            return Host<int>::text(&value[0]);
+        }
+    )K");
+    REQUIRE(producer);
+    auto producer_root = producer->get_unit()->get_root_namespace();
+    REQUIRE(producer_root->get_function("charAlias"));
+    REQUIRE(producer_root->get_aggregate("Host"));
+    REQUIRE(producer_root->get_function("force"));
+    k::model::kdi_builder exporter(*producer->get_context_for_test());
+    producer->get_unit()->accept(exporter);
+    auto descriptor = exporter.take();
+    auto fn = std::find_if(descriptor.unit.root_ns.functions.begin(),
+        descriptor.unit.root_ns.functions.end(), [](const auto& entry) { return entry.name == "text"; });
+    auto host = std::find_if(descriptor.unit.root_ns.template_defs.begin(),
+        descriptor.unit.root_ns.template_defs.end(), [](const auto& entry) { return entry.name == "Host"; });
+    REQUIRE(fn != descriptor.unit.root_ns.functions.end());
+    REQUIRE(host != descriptor.unit.root_ns.template_defs.end());
+    REQUIRE(host->aggregate_signature);
+    auto method = std::find_if(host->aggregate_signature->methods.begin(),
+        host->aggregate_signature->methods.end(), [](const auto& entry) { return entry.name == "text"; });
+    REQUIRE(method != host->aggregate_signature->methods.end());
+    REQUIRE(fn->params.size() == 1);
+    REQUIRE(method->params.size() == 1);
+    const auto path = fs::current_path() / "kdi_cstring_validation.kdi";
+    REQUIRE_FALSE(fs::exists(path));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    auto compile_consumer = [&](const std::string& source) {
+        REQUIRE(kdi::kdi_write_cbor_file(descriptor, path.string()));
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("kdi_cstring_validation", path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        auto consumer = k::compiler::create();
+        consumer->set_file_resolver(resolver);
+        consumer->parse_source("kdi_cstring_validation_consumer.k", source, false, false);
+        return consumer;
+    };
+    const std::string plain = R"K(
+        module kdi_cstring_validation_consumer;
+        import kdi_cstring_validation;
+        run() : int { return 0; }
+    )K";
+    SECTION("strong aliases of character elements are accepted") {
+        auto consumer = compile_consumer(plain);
+        auto scope = consumer->get_unit()->get_root_namespace()
+            ->get_child_namespace("kdi_cstring_validation");
+        REQUIRE(scope);
+        auto alias = scope->get_function("charAlias");
+        REQUIRE(alias);
+        REQUIRE(alias->parameters().size() == 1);
+        CHECK(alias->parameters()[0]->is_ffi_cstring());
+    }
+    SECTION("scalar is rejected at import") {
+        fn->params[0].type = kdi::kdi_type::make_int(32);
+        REQUIRE_THROWS_MATCHES(compile_consumer(plain), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+                return error.get_diagnostic().code == static_cast<unsigned int>(
+                    k::diag::function_diag::ERR_PARAM_DRAIN_MUST_BE_LAST);
+            }, "CString addresser diagnostic"));
+    }
+    SECTION("non-character pointer is rejected at import") {
+        fn->params[0].type = kdi::kdi_type{kdi::kdi_ptr_type{
+            std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_int(32))}};
+        REQUIRE_THROWS_MATCHES(compile_consumer(plain), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+                return error.get_diagnostic().code == static_cast<unsigned int>(
+                    k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH);
+            }, "CString element diagnostic"));
+    }
+    SECTION("non-character generic method is rejected at import") {
+        method->params[0].type = kdi::kdi_type{kdi::kdi_ptr_type{
+            std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_int(32))}};
+        REQUIRE_THROWS_MATCHES(compile_consumer(plain), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+                return error.get_diagnostic().code == static_cast<unsigned int>(
+                    k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH);
+            }, "generic CString element diagnostic"));
+    }
+    SECTION("generic signature and synthesis cannot disagree about CString") {
+        method->params[0].is_ffi_cstring = false;
+        REQUIRE_THROWS_MATCHES(compile_consumer(R"K(
+            module kdi_cstring_validation_consumer;
+            import kdi_cstring_validation;
+            run() : int { instance : kdi_cstring_validation::Host<int>; return 0; }
+        )K"), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+                return error.get_diagnostic().code == static_cast<unsigned int>(
+                    k::diag::function_diag::ERR_PARAM_TYPE_UNRESOLVED);
+            }, "generic CString contract diagnostic"));
+    }
+    SECTION("generic host validates the substituted type") {
+        method->params[0].type = kdi::kdi_type{kdi::kdi_ptr_type{
+            std::make_shared<kdi::kdi_type>(kdi::kdi_type{kdi::kdi_template_param_ref{"T"}})}};
+        REQUIRE_NOTHROW(compile_consumer(R"K(
+            module kdi_cstring_validation_consumer;
+            import kdi_cstring_validation;
+            run() : int {
+                instance : kdi_cstring_validation::Host<char>;
+                return 0;
+            }
+        )K"));
+        REQUIRE_THROWS_MATCHES(compile_consumer(R"K(
+            module kdi_cstring_validation_consumer;
+            import kdi_cstring_validation;
+            run() : int {
+                instance : kdi_cstring_validation::Host<int>;
+                return 0;
+            }
+        )K"), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+                return error.get_diagnostic().code == static_cast<unsigned int>(
+                    k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH);
+            }, "substituted CString element diagnostic"));
+    }
+}
+
+TEST_CASE("Imported native template CString types are checked after substitution",
+          "[import][kdi][ffi][cstring][template]") {
+    auto producer = compile_model_with_stdlib(R"K(
+        module kdi_cstring_recipe;
+        @ffi::Extern("C", null, "__k_test_kdi_cstring_recipe")
+        template<typename T> text(@ffi::CString value : T*) : int;
+    )K");
+    REQUIRE(producer);
+    k::model::kdi_builder exporter(*producer->get_context_for_test());
+    producer->get_unit()->accept(exporter);
+    auto descriptor = exporter.take();
+    const auto path = fs::current_path() / "kdi_cstring_recipe.kdi";
+    REQUIRE_FALSE(fs::exists(path));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    REQUIRE(kdi::kdi_write_cbor_file(descriptor, path.string()));
+    auto compile_consumer = [&](const std::string& source) {
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("kdi_cstring_recipe", path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        auto consumer = k::compiler::create();
+        consumer->set_file_resolver(resolver);
+        consumer->parse_source("kdi_cstring_recipe_consumer.k", source, false, false);
+        return consumer;
+    };
+    REQUIRE_NOTHROW(compile_consumer(R"K(
+        module kdi_cstring_recipe_consumer;
+        import kdi_cstring_recipe;
+        run() : int { value : char; return kdi_cstring_recipe::text<char>(&value); }
+    )K"));
+    REQUIRE_THROWS_MATCHES(compile_consumer(R"K(
+        module kdi_cstring_recipe_consumer;
+        import kdi_cstring_recipe;
+        run() : int { value : int; return kdi_cstring_recipe::text<int>(&value); }
+    )K"), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+            return error.get_diagnostic().code == static_cast<unsigned int>(
+                k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH);
+        }, "substituted CString element diagnostic"));
+}
+
+TEST_CASE("Imported generic native CString calls validate concrete types",
+          "[import][kdi][ffi][cstring][generic][regression]") {
+    auto producer = compile_model_with_stdlib(R"K(
+        module kdi_generic_cstring_recipe;
+        @ffi::Extern("C", null, "__k_test_kdi_generic_cstring_recipe")
+        generic<typename T> public text(@ffi::CString value : T*) : int;
+        @ffi::Extern("C", null, "__k_test_kdi_generic_plain_recipe")
+        generic<typename T> public plain(value : T*) : int;
+    )K");
+    REQUIRE(producer);
+    k::model::kdi_builder exporter(*producer->get_context_for_test());
+    producer->get_unit()->accept(exporter);
+    auto descriptor = exporter.take();
+    auto generic = std::find_if(descriptor.unit.root_ns.template_defs.begin(),
+        descriptor.unit.root_ns.template_defs.end(),
+        [](const auto& entry) { return entry.name == "text"; });
+    REQUIRE(generic != descriptor.unit.root_ns.template_defs.end());
+    REQUIRE(generic->source.find("@k::ffi::CString") != std::string::npos);
+    const auto path = fs::current_path() / "kdi_generic_cstring_recipe.kdi";
+    REQUIRE_FALSE(fs::exists(path));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    REQUIRE(kdi::kdi_write_cbor_file(descriptor, path.string()));
+    auto compile_consumer = [&](const std::string& source) {
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("kdi_generic_cstring_recipe", path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        auto consumer = k::compiler::create();
+        consumer->set_file_resolver(resolver);
+        consumer->parse_source("kdi_generic_cstring_consumer.k", source, false, false);
+        return consumer;
+    };
+    auto cstring_element_error = Catch::Matchers::Predicate<k::log::compiler_error>(
+        [](const auto& error) {
+            const auto& diagnostic = error.get_diagnostic();
+            return diagnostic.code == static_cast<unsigned int>(
+                k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH)
+                && diagnostic.message.find("@ffi::CString") != std::string::npos
+                && diagnostic.args.size() == 2 && diagnostic.args[1] == "int";
+        }, "CString int element diagnostic");
+    SECTION("char is accepted") {
+        REQUIRE_NOTHROW(compile_consumer(R"K(
+            module kdi_generic_cstring_consumer;
+            import kdi_generic_cstring_recipe;
+            run() : int {
+                value : char;
+                return kdi_generic_cstring_recipe::text<char>(&value);
+            }
+        )K"));
+    }
+    SECTION("int is rejected") {
+        REQUIRE_THROWS_MATCHES(compile_consumer(R"K(
+            module kdi_generic_cstring_consumer;
+            import kdi_generic_cstring_recipe;
+            run() : int {
+                value : int;
+                return kdi_generic_cstring_recipe::text<int>(&value);
+            }
+        )K"), k::log::compiler_error, cstring_element_error);
+    }
+    SECTION("forwarded char is accepted") {
+        REQUIRE_NOTHROW(compile_consumer(R"K(
+            module kdi_generic_cstring_consumer;
+            import kdi_generic_cstring_recipe;
+            generic<typename U> forward(value : U*) : int {
+                return kdi_generic_cstring_recipe::plain(value);
+            }
+            run() : int { value : char; return forward<char>(&value); }
+        )K"));
+        REQUIRE_NOTHROW(compile_consumer(R"K(
+            module kdi_generic_cstring_consumer;
+            import kdi_generic_cstring_recipe;
+            generic<typename U> forward(value : U*) : int {
+                return kdi_generic_cstring_recipe::text(value);
+            }
+            run() : int { value : char; return forward<char>(&value); }
+        )K"));
+    }
+    SECTION("forwarded int is rejected") {
+        REQUIRE_NOTHROW(compile_consumer(R"K(
+            module kdi_generic_cstring_consumer;
+            import kdi_generic_cstring_recipe;
+            generic<typename U> forward(value : U*) : int {
+                return kdi_generic_cstring_recipe::plain(value);
+            }
+            run() : int { value : int; return forward<int>(&value); }
+        )K"));
+        REQUIRE_THROWS_MATCHES(compile_consumer(R"K(
+            module kdi_generic_cstring_consumer;
+            import kdi_generic_cstring_recipe;
+            generic<typename U> forward(value : U*) : int {
+                return kdi_generic_cstring_recipe::text(value);
+            }
+            run() : int { value : int; return forward<int>(&value); }
+        )K"), k::log::compiler_error, cstring_element_error);
+    }
+}
+
+TEST_CASE("Imported native aggregate results use the direct C declaration",
+          "[import][kdi][ffi][aggregate-return]") {
+    auto producer = compile_model_with_stdlib(R"K(
+        module kdi_native_point;
+        public struct Point { value : int; }
+        @ffi::Extern("C", null, "__k_test_kdi_native_point")
+        make(value : int) : Point;
+    )K");
+    REQUIRE(producer);
+    k::model::kdi_builder exporter(*producer->get_context_for_test());
+    producer->get_unit()->accept(exporter);
+    auto descriptor = exporter.take();
+    const auto path = fs::current_path() / "kdi_native_point.kdi";
+    REQUIRE_FALSE(fs::exists(path));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    REQUIRE(kdi::kdi_write_cbor_file(descriptor, path.string()));
+    llvm::sys::DynamicLibrary::AddSymbol("__k_test_kdi_native_point",
+        reinterpret_cast<void*>(&__k_test_kdi_native_point));
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("kdi_native_point", path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    auto consumer = k::compiler::create();
+    consumer->set_file_resolver(resolver);
+    REQUIRE_NOTHROW(consumer->parse_source("kdi_native_point_consumer.k", R"K(
+        module kdi_native_point_consumer;
+        import kdi_native_point;
+        run() : int {
+            point : kdi_native_point::Point = kdi_native_point::make(41);
+            return point.value;
+        }
+    )K", false, false));
+    auto* native = consumer->get_context_for_test()->module()
+        .getFunction("__k_test_kdi_native_point");
+    REQUIRE(native);
+    CHECK(native->getReturnType()->isStructTy());
+    CHECK(native->arg_size() == 1);
+    auto jit = consumer->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 41);
+}
+
+TEST_CASE("Late native direct calls declare aggregate returns without K sret",
+          "[gen][ffi][aggregate-return][late-declaration]") {
+    const bool imported_without_prototype = GENERATE(false, true);
+    auto comp = compile_model_with_stdlib(R"K(
+        module kdi_late_native_point;
+        struct Point { value : int; }
+        @ffi::Extern("C", null, "__k_test_kdi_native_point")
+        make(value : int) : Point;
+        forward() : Point { return make(41); }
+        run() : int { point : Point = forward(); return point.value; }
+    )K");
+    REQUIRE(comp);
+    auto root = comp->get_unit()->get_root_namespace();
+    auto original = root->get_function("make");
+    auto forward = root->get_function("forward");
+    REQUIRE(original);
+    REQUIRE(forward);
+    kdi::kdi_function descriptor;
+    descriptor.name = "lateNative";
+    descriptor.fq_name = "kdi_late_native_point::lateNative";
+    descriptor.mangled_name = "__k_test_kdi_native_point_late";
+    descriptor.is_extern = true;
+    std::shared_ptr<k::model::function> late = imported_without_prototype
+        ? k::model::imported_function::make_shared(root, &descriptor)
+        : root->define_function("lateNative", false);
+    REQUIRE(late);
+    late->set_extern_c_symbol("__k_test_kdi_native_point_late");
+    late->set_return_type(std::const_pointer_cast<k::model::type>(original->get_return_type()));
+    REQUIRE(late->append_parameter("value", original->parameters()[0]->get_type()));
+    static_cast<k::model::named_element&>(*late).update_mangled_name();
+    auto context = comp->get_context_for_test();
+    REQUIRE_FALSE(context->lookup_llvm_function(late));
+    auto body = forward->get_block();
+    REQUIRE(body);
+    REQUIRE(body->get_statements().size() == 1);
+    auto result = std::dynamic_pointer_cast<k::model::return_statement>(body->get_statements()[0]);
+    REQUIRE(result);
+    auto invocation = std::dynamic_pointer_cast<k::model::function_invocation_expression>(
+        result->get_expression());
+    REQUIRE(invocation);
+    auto callee = std::dynamic_pointer_cast<k::model::symbol_expression>(invocation->callee_expr());
+    REQUIRE(callee);
+    callee->set_target(late);
+    auto* forward_ir = context->lookup_llvm_function(forward);
+    REQUIRE(forward_ir);
+    forward_ir->deleteBody();
+    test_logger logger;
+    k::model::gen::implementation_generator generator(logger, *comp, context, *comp->get_unit());
+    if (imported_without_prototype) {
+        kdi::kdi_function scalar_descriptor;
+        scalar_descriptor.name = "lateNativeScalar";
+        scalar_descriptor.fq_name = "kdi_late_native_point::lateNativeScalar";
+        scalar_descriptor.mangled_name = "__k_test_kdi_native_scalar_late";
+        scalar_descriptor.is_extern = true;
+        auto scalar = k::model::imported_function::make_shared(root, &scalar_descriptor);
+        scalar->set_return_type(original->parameters()[0]->get_type());
+        REQUIRE(scalar->append_parameter("value", original->parameters()[0]->get_type()));
+        auto bind = k::model::callable_bind_expression::make_shared(
+            k::model::callable_bind_expression::kind::free_function, scalar);
+        REQUIRE_THROWS_MATCHES(bind->accept(generator), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+                return error.get_diagnostic().code == static_cast<unsigned int>(
+                    k::diag::codegen_diag::ERR_KDI_NATIVE_ABI_UNPROVEN);
+            }, "missing validated scalar native callable declaration diagnostic"));
+        CHECK_FALSE(context->lookup_llvm_function(scalar));
+        REQUIRE_THROWS_MATCHES(forward->accept(generator), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+                return error.get_diagnostic().code == static_cast<unsigned int>(
+                    k::diag::codegen_diag::ERR_KDI_NATIVE_ABI_UNPROVEN);
+            }, "missing validated native declaration diagnostic"));
+        CHECK_FALSE(context->lookup_llvm_function(late));
+        return;
+    }
+    REQUIRE_NOTHROW(forward->accept(generator));
+    auto* native = context->lookup_llvm_function(late);
+    REQUIRE(native);
+    CHECK(native->getReturnType()->isStructTy());
+    CHECK(native->arg_size() == 1);
+    llvm::CallBase* direct_call = nullptr;
+    for (auto& block : *forward_ir) {
+        for (auto& instruction : block) {
+            auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+            if (call && call->getCalledFunction() == native) direct_call = call;
+        }
+    }
+    REQUIRE(direct_call);
+    CHECK(direct_call->getType()->isStructTy());
+    CHECK(direct_call->arg_size() == 1);
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 41);
+}
+
+TEST_CASE("Classic template reconstruction retains native annotations",
+          "[import][kdi][ffi][template][using-alias]") {
+    auto producer = compile_model_with_stdlib(R"K(
+        module kdi_native_classic;
+        namespace inner {
+            public struct Payload {
+                public value : int;
+                Payload() { value = 40; }
+            }
+        }
+        using Alias = inner::Payload;
+        template<typename T> public struct Host {
+            public value : Alias;
+            @ffi::Extern("C", null, "__k_test_kdi_classic_length")
+            static length(@ffi::CString text : const unsigned byte*) : int;
+        }
+        template<typename T> public struct Invalid {
+            value : Alias;
+            @ffi::Extern("Java") static invalid(value : int) : int;
+        }
+    )K");
+    REQUIRE(producer);
+    k::model::kdi_builder exporter(*producer->get_context_for_test());
+    producer->get_unit()->accept(exporter);
+    auto descriptor = exporter.take();
+    auto host = std::find_if(descriptor.unit.root_ns.template_defs.begin(),
+        descriptor.unit.root_ns.template_defs.end(), [](const auto& entry) { return entry.name == "Host"; });
+    auto invalid_host = std::find_if(descriptor.unit.root_ns.template_defs.begin(),
+        descriptor.unit.root_ns.template_defs.end(), [](const auto& entry) { return entry.name == "Invalid"; });
+    REQUIRE(host != descriptor.unit.root_ns.template_defs.end());
+    REQUIRE(invalid_host != descriptor.unit.root_ns.template_defs.end());
+    CHECK(host->source.find("inner::Payload") != std::string::npos);
+    CHECK(host->source.find("__k_test_kdi_classic_length") != std::string::npos);
+    CHECK(host->source.find("CString") != std::string::npos);
+    CHECK(invalid_host->source.find("@ffi::Extern(\"Java\")") != std::string::npos);
+    auto inner = producer->get_unit()->get_root_namespace()->get_child_namespace("inner");
+    REQUIRE(inner);
+    auto payload = inner->get_aggregate("Payload");
+    REQUIRE(payload);
+    auto ctor = std::find_if(payload->constructors().begin(), payload->constructors().end(),
+        [](const auto& candidate) { return candidate && candidate->parameters().empty(); });
+    REQUIRE(ctor != payload->constructors().end());
+    const auto ctor_symbol = (*ctor)->get_mangled_name();
+    auto* producer_ctor = producer->get_context_for_test()->module().getFunction(ctor_symbol);
+    REQUIRE(producer_ctor);
+    REQUIRE_FALSE(producer_ctor->isDeclaration());
+    REQUIRE(producer_ctor->getReturnType()->isVoidTy());
+    REQUIRE(producer_ctor->arg_size() == 1);
+    REQUIRE(producer_ctor->getArg(0)->getType()->isPointerTy());
+    const auto path = fs::current_path() / "kdi_native_classic.kdi";
+    REQUIRE_FALSE(fs::exists(path));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    REQUIRE(kdi::kdi_write_cbor_file(descriptor, path.string()));
+    auto producer_jit = producer->to_jit();
+    REQUIRE(producer_jit);
+    auto ctor_address = producer_jit->lookup_symbol<void (*)()>(ctor_symbol);
+    REQUIRE(ctor_address);
+    auto make_consumer = [&]() {
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("kdi_native_classic", path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        auto consumer = k::compiler::create();
+        consumer->set_file_resolver(resolver);
+        return consumer;
+    };
+    auto consumer = make_consumer();
+    REQUIRE_NOTHROW(consumer->parse_source("kdi_native_classic_consumer.k", R"K(
+        module kdi_native_classic_consumer;
+        import kdi_native_classic;
+        run() : int {
+            text : const unsigned byte[] = u8"ok";
+            return kdi_native_classic::Host<int>::length(&text[0]);
+        }
+        payloadValue() : int {
+            host : kdi_native_classic::Host<int>;
+            return host.value.value;
+        }
+    )K", false, false));
+    auto& llvm_module = consumer->get_context_for_test()->module();
+    auto* native = llvm_module.getFunction("__k_test_kdi_classic_length");
+    REQUIRE(native);
+    CHECK(native->isDeclaration());
+    auto* imported_ctor = llvm_module.getFunction(ctor_symbol);
+    REQUIRE(imported_ctor);
+    REQUIRE(imported_ctor->isDeclaration());
+    REQUIRE(imported_ctor->getReturnType()->isVoidTy());
+    REQUIRE(imported_ctor->arg_size() == 1);
+    REQUIRE(imported_ctor->getArg(0)->getType()->isPointerTy());
+    REQUIRE(bind_jit_fixture(imported_ctor, reinterpret_cast<void*>(ctor_address)));
+    auto jit = consumer->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("run");
+    REQUIRE(run);
+    CHECK(run() == 2);
+    auto payload_value = jit->lookup_symbol<int (*)()>("payloadValue");
+    REQUIRE(payload_value);
+    CHECK(payload_value() == 40);
+
+    auto invalid = make_consumer();
+    REQUIRE_THROWS_MATCHES(invalid->parse_source("kdi_native_classic_invalid.k", R"K(
+        module kdi_native_classic_invalid;
+        import kdi_native_classic;
+        run() : int { value : kdi_native_classic::Invalid<int>; return 0; }
+    )K", false, false), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+            return error.get_diagnostic().code == static_cast<unsigned int>(
+                k::diag::function_diag::ERR_FUNC_ANNOTATION_MISMATCH);
+        }, "deferred unsupported Extern language diagnostic"));
+}
+
+TEST_CASE("Classic function template annotations remain deferred during KDI export",
+          "[import][kdi][ffi][template][annotations]") {
+    auto producer = compile_model_with_stdlib(R"K(
+        module kdi_classic_native_functions;
+        @ffi::Extern("C", null, "__k_test_kdi_classic_function")
+        template<typename T> valid(@ffi::CString text : const unsigned byte*) : int;
+        @ffi::Extern("Java")
+        template<typename T> invalid(value : T) : int;
+        @::k::ffi::Extern("Java")
+        template<typename T> invalidBody(value : T) : int { return 1; }
+    )K");
+    REQUIRE(producer);
+    k::model::kdi_builder exporter(*producer->get_context_for_test());
+    REQUIRE_NOTHROW(producer->get_unit()->accept(exporter));
+    auto descriptor = exporter.take();
+    const auto find = [&](const std::string& name) {
+        return std::find_if(descriptor.unit.root_ns.template_defs.begin(),
+            descriptor.unit.root_ns.template_defs.end(),
+            [&](const auto& entry) { return entry.name == name; });
+    };
+    auto valid = find("valid");
+    auto invalid = find("invalid");
+    auto invalid_body = find("invalidBody");
+    REQUIRE(valid != descriptor.unit.root_ns.template_defs.end());
+    REQUIRE(invalid != descriptor.unit.root_ns.template_defs.end());
+    REQUIRE(invalid_body != descriptor.unit.root_ns.template_defs.end());
+    CHECK_FALSE(valid->is_generic);
+    CHECK_FALSE(invalid->is_generic);
+    CHECK_FALSE(invalid_body->is_generic);
+    CHECK(valid->source.find("@ffi::Extern(\"C\", null, \"__k_test_kdi_classic_function\")") != std::string::npos);
+    CHECK(valid->source.find("@ffi::CString") != std::string::npos);
+    CHECK(invalid->source.find("@ffi::Extern(\"Java\")") != std::string::npos);
+    CHECK(invalid_body->source.find("@::k::ffi::Extern(\"Java\")") != std::string::npos);
+    CHECK(invalid_body->source.find("return 1;") != std::string::npos);
+    REQUIRE(valid->function_signature);
+    CHECK_FALSE(valid->function_signature->is_extern);
+    REQUIRE(valid->function_signature->params.size() == 1);
+    CHECK_FALSE(valid->function_signature->params[0].is_ffi_cstring);
+
+    const auto path = fs::current_path() / "kdi_classic_native_functions.kdi";
+    REQUIRE_FALSE(fs::exists(path));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    REQUIRE(kdi::kdi_write_cbor_file(descriptor, path.string()));
+    auto compile_consumer = [&](const std::string& source) {
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("kdi_classic_native_functions", path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        auto consumer = k::compiler::create();
+        consumer->set_file_resolver(resolver);
+        consumer->parse_source("kdi_classic_native_consumer.k", source, false, false);
+        return consumer;
+    };
+    REQUIRE_NOTHROW(compile_consumer(R"K(
+        module kdi_classic_native_consumer;
+        import kdi_classic_native_functions;
+        run() : int {
+            text : const unsigned byte[] = u8"ok";
+            return kdi_classic_native_functions::valid<int>(&text[0]);
+        }
+    )K"));
+    for (const auto& name : {"invalid", "invalidBody"}) {
+        const auto source = std::string(R"K(
+            module kdi_classic_native_consumer;
+            import kdi_classic_native_functions;
+            run() : int { return kdi_classic_native_functions::)K") + name + R"K(<int>(1); }
+        )K";
+        REQUIRE_THROWS_MATCHES(compile_consumer(source), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+                return error.get_diagnostic().code == static_cast<unsigned int>(
+                    k::diag::function_diag::ERR_FUNC_ANNOTATION_MISMATCH);
+            }, "deferred unsupported Extern language diagnostic"));
+    }
+}
+
+TEST_CASE("Imported links preserve signatures and overload selection",
+          "[import][kdi][link][regression]") {
+    auto producer = compile_model_with_stdlib(R"K(
+        module imported_link_identity;
+        linkValue(value: int+): int+ { return value; }
+        pointerValue(value: int*): int* { return value; }
+        nested(value: int*+): int*+ { return value; }
+        select(value: int+): int { return 1; }
+        select(value: int*): int { return 2; }
+    )K");
+    REQUIRE(producer);
+    k::model::kdi_builder exporter(*producer->get_context_for_test());
+    producer->get_unit()->accept(exporter);
+    auto descriptor = exporter.take();
+    auto path = fs::current_path() / "imported_link_identity.kdi";
+    REQUIRE_FALSE(fs::exists(path));
+    struct Cleanup {
+        fs::path path;
+        ~Cleanup() { std::error_code ec; fs::remove(path, ec); }
+    } cleanup{path};
+    REQUIRE(kdi::kdi_write_cbor_file(descriptor, path.string()));
+
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("imported_link_identity", path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    auto consumer = k::compiler::create();
+    consumer->set_file_resolver(resolver);
+    REQUIRE_NOTHROW(consumer->parse_source("imported_link_identity_consumer.k", R"K(
+        module imported_link_identity_consumer;
+        import imported_link_identity;
+        probeLink(): int {
+            value: int = 42;
+            return imported_link_identity::select(imported_link_identity::linkValue(&value));
+        }
+        probePointer(): int {
+            return imported_link_identity::select(imported_link_identity::pointerValue(null));
+        }
+    )K", false, false));
+    REQUIRE_FALSE(consumer->has_compilation_error());
+
+    auto root = consumer->get_unit()->get_root_namespace();
+    auto imported = root->get_child_namespace("imported_link_identity");
+    REQUIRE(imported);
+    auto link_fn = imported->get_function("linkValue");
+    auto pointer_fn = imported->get_function("pointerValue");
+    auto nested_fn = imported->get_function("nested");
+    REQUIRE(link_fn);
+    REQUIRE(pointer_fn);
+    REQUIRE(nested_fn);
+    REQUIRE(link_fn->parameters().size() == 1);
+    REQUIRE(pointer_fn->parameters().size() == 1);
+    REQUIRE(nested_fn->parameters().size() == 1);
+    CHECK(k::model::type::is_link(link_fn->parameters()[0]->get_type()));
+    CHECK(k::model::type::is_pointer(pointer_fn->parameters()[0]->get_type()));
+    auto link_return = std::const_pointer_cast<k::model::type>(link_fn->get_return_type());
+    auto pointer_return = std::const_pointer_cast<k::model::type>(pointer_fn->get_return_type());
+    CHECK(k::model::type::is_link(link_return));
+    CHECK(k::model::type::is_pointer(pointer_return));
+    auto nested_param = nested_fn->parameters()[0]->get_type();
+    auto nested_return = std::const_pointer_cast<k::model::type>(nested_fn->get_return_type());
+    REQUIRE(k::model::type::is_link(nested_param));
+    REQUIRE(k::model::type::is_link(nested_return));
+    CHECK(k::model::type::is_pointer(nested_param->get_subtype()));
+    CHECK(k::model::type::is_pointer(nested_return->get_subtype()));
+
+    auto overloads = imported->get_functions("select");
+    REQUIRE(overloads.size() == 2);
+    llvm::Function* link_select = nullptr;
+    llvm::Function* pointer_select = nullptr;
+    auto& module = consumer->get_context_for_test()->module();
+    for (const auto& overload : overloads) {
+        REQUIRE(overload->parameters().size() == 1);
+        auto* declaration = module.getFunction(overload->get_mangled_name());
+        REQUIRE(declaration);
+        if (k::model::type::is_link(overload->parameters()[0]->get_type())) link_select = declaration;
+        if (k::model::type::is_pointer(overload->parameters()[0]->get_type())) pointer_select = declaration;
+    }
+    REQUIRE(link_select);
+    REQUIRE(pointer_select);
+    auto calls = [&](const char* name, llvm::Function* target) {
+        auto probe = root->get_function(name);
+        REQUIRE(probe);
+        auto* definition = module.getFunction(probe->get_mangled_name());
+        REQUIRE(definition);
+        bool found = false;
+        for (auto& block : *definition) {
+            for (auto& instruction : block) {
+                if (auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+                    call && call->getCalledFunction() == target) found = true;
+            }
+        }
+        CHECK(found);
+    };
+    calls("probeLink", link_select);
+    calls("probePointer", pointer_select);
+}
+
+TEST_CASE("KDI links pin nested generic subtypes through re-export",
+          "[import][kdi][link][generic][regression]") {
+    auto compiler = k::compiler::create();
+    REQUIRE_NOTHROW(compiler->parse_source("link_generic_export.k", R"K(
+        module link_generic_export;
+        public carrier: int;
+    )K", false, false));
+    auto unit = compiler->get_unit();
+    auto carrier = unit->get_root_namespace()->get_variable("carrier");
+    REQUIRE(carrier);
+
+    kdi::kdi_generic_ref_type generic;
+    generic.name = "::source::Box";
+    generic.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_int(32)));
+    kdi::kdi_link_type link;
+    link.inner = std::make_shared<kdi::kdi_type>(kdi::kdi_type{std::move(generic)});
+    kdi::kdi_ptr_type pointer;
+    pointer.inner = std::make_shared<kdi::kdi_type>(kdi::kdi_type{std::move(link)});
+    kdi::kdi_type original{std::move(pointer)};
+
+    auto model = k::model::kdi_type_to_model_type(original, *unit, compiler->get_context_for_test());
+    REQUIRE(k::model::type::is_pointer(model));
+    REQUIRE(model->is_pinned());
+    auto inner_link = model->get_subtype();
+    REQUIRE(k::model::type::is_link(inner_link));
+    REQUIRE(inner_link->is_pinned());
+    auto inner_generic = std::dynamic_pointer_cast<k::model::unresolved_type>(inner_link->get_subtype());
+    REQUIRE(inner_generic);
+    REQUIRE(inner_generic->get_model_template_args().size() == 1);
+    CHECK(inner_generic->get_model_template_args()[0]);
+    carrier->set_type(model);
+    inner_generic.reset();
+    inner_link.reset();
+    model.reset();
+
+    k::model::kdi_builder exporter(*compiler->get_context_for_test());
+    unit->accept(exporter);
+    auto output = exporter.take();
+    auto exported = std::find_if(output.unit.root_ns.variables.begin(),
+        output.unit.root_ns.variables.end(), [](const auto& var) { return var.name == "carrier"; });
+    REQUIRE(exported != output.unit.root_ns.variables.end());
+    CHECK(kdi::kdi_type_to_string(exported->type) == kdi::kdi_type_to_string(original));
+}
+
+TEST_CASE("Ordinary KDI conversion retains generic arguments on re-export",
+          "[import][kdi][generic][regression]") {
+    auto compiler = k::compiler::create();
+    REQUIRE_NOTHROW(compiler->parse_source("generic_reference_export.k", R"K(
+        module generic_reference_export;
+        public value: int;
+        public callback: int;
+    )K", false, false));
+    auto unit = compiler->get_unit();
+    auto value = unit->get_root_namespace()->get_variable("value");
+    auto callback = unit->get_root_namespace()->get_variable("callback");
+    REQUIRE(value);
+    REQUIRE(callback);
+
+    kdi::kdi_generic_ref_type inner;
+    inner.name = "::source::Inner";
+    inner.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_bool()));
+    kdi::kdi_generic_ref_type outer;
+    outer.name = "::source::Outer";
+    outer.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type{std::move(inner)}));
+    outer.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_int(32)));
+    outer.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_void()));
+    kdi::kdi_ref_type ref;
+    ref.inner = std::make_shared<kdi::kdi_type>(kdi::kdi_type{std::move(outer)});
+    kdi::kdi_type original{std::move(ref)};
+
+    auto model = k::model::kdi_type_to_model_type(original, *unit, compiler->get_context_for_test());
+    REQUIRE(model);
+    value->set_type(model);
+    kdi::kdi_callable_type callable;
+    callable.ret = std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_void());
+    callable.params.push_back(std::make_shared<kdi::kdi_type>(original));
+    auto callable_model = k::model::kdi_type_to_model_type(
+        kdi::kdi_type{std::move(callable)}, *unit, compiler->get_context_for_test());
+    REQUIRE(callable_model);
+    callback->set_type(callable_model);
+    k::model::kdi_builder exporter(*compiler->get_context_for_test());
+    unit->accept(exporter);
+    auto output = exporter.take();
+    auto exported = std::find_if(output.unit.root_ns.variables.begin(),
+        output.unit.root_ns.variables.end(), [](const auto& var) { return var.name == "value"; });
+    REQUIRE(exported != output.unit.root_ns.variables.end());
+    auto result_ref = std::get_if<kdi::kdi_ref_type>(&exported->type.value);
+    REQUIRE(result_ref);
+    REQUIRE(result_ref->inner);
+    auto result_outer = std::get_if<kdi::kdi_generic_ref_type>(&result_ref->inner->value);
+    REQUIRE(result_outer);
+    CHECK(result_outer->name == "::source::Outer");
+    REQUIRE(result_outer->args.size() == 3);
+    auto result_inner = std::get_if<kdi::kdi_generic_ref_type>(&result_outer->args[0]->value);
+    REQUIRE(result_inner);
+    CHECK(result_inner->name == "::source::Inner");
+    REQUIRE(result_inner->args.size() == 1);
+    CHECK(std::holds_alternative<kdi::kdi_bool_type>(result_inner->args[0]->value));
+    CHECK(std::holds_alternative<kdi::kdi_int_type>(result_outer->args[1]->value));
+    CHECK(std::holds_alternative<kdi::kdi_void_type>(result_outer->args[2]->value));
+    auto exported_callback = std::find_if(output.unit.root_ns.variables.begin(),
+        output.unit.root_ns.variables.end(), [](const auto& var) { return var.name == "callback"; });
+    REQUIRE(exported_callback != output.unit.root_ns.variables.end());
+    auto result_callable = std::get_if<kdi::kdi_callable_type>(&exported_callback->type.value);
+    REQUIRE(result_callable);
+    REQUIRE(result_callable->params.size() == 1);
+    REQUIRE(result_callable->params[0]);
+    CHECK(kdi::kdi_type_to_string(*result_callable->params[0]) == kdi::kdi_type_to_string(original));
+}
+
+TEST_CASE("Unrecoverable generic return arguments do not bind a bare name",
+          "[import][kdi][generic][regression]") {
+    auto compiler = k::compiler::create();
+    REQUIRE_NOTHROW(compiler->parse_source("generic_return_scope.k", R"K(
+        module generic_return_scope;
+        public struct Named {}
+        public make(): int { return 1; }
+    )K", false, false));
+    auto unit = compiler->get_unit();
+    auto function = unit->get_root_namespace()->get_function("make");
+    REQUIRE(function);
+    kdi::kdi_generic_ref_type descriptor;
+    descriptor.name = "Named";
+    descriptor.args.push_back(std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_void()));
+    auto model = k::model::kdi_type_to_model_type(
+        kdi::kdi_type{std::move(descriptor)}, *unit, compiler->get_context_for_test());
+    REQUIRE(model);
+    function->set_return_type(model);
+    k::model::gen::aggregate_type_resolver resolver(
+        compiler->diagnostics(), compiler->get_context_for_test(), *unit);
+    function->accept(resolver);
+    auto unresolved = std::dynamic_pointer_cast<k::model::unresolved_type>(function->get_return_type());
+    REQUIRE(unresolved);
+    REQUIRE(unresolved->get_model_template_args().size() == 1);
+    CHECK_FALSE(unresolved->get_model_template_args()[0]);
+}
+
+TEST_CASE("Import rejects a legacy union lifecycle layout",
+          "[import][union][abi][regression]") {
+    TmpKdi lib(R"K(
+        module legacyunionabi;
+        public union Value { number: int; text: byte; }
+    )K", true);
+    auto metadata = kdi::kdi_read_cbor_file(lib.kdi_path);
+    auto un = std::find_if(metadata.unit.root_ns.unions.begin(), metadata.unit.root_ns.unions.end(),
+        [](const auto& entry) { return entry.name == "Value"; });
+    REQUIRE(un != metadata.unit.root_ns.unions.end());
+    const auto body = un->llvm_def.find('{');
+    REQUIRE(body != std::string::npos);
+    const auto tag = un->llvm_def.find("i64", body);
+    REQUIRE(tag != std::string::npos);
+
+    auto make_compiler = [&]() {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("legacyunionabi", lib.kdi_path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        compiler->set_file_resolver(resolver);
+        return compiler;
+    };
+    const auto consumer = R"K(
+        module legacyunionabi_consumer;
+        import legacyunionabi;
+        use(value: legacyunionabi::Value&) {}
+    )K";
+    REQUIRE_NOTHROW(make_compiler()->parse_source("union_abi_current.k", consumer, false, false));
+
+    un->llvm_def.replace(tag, 3, "i32");
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+    auto incompatible = Catch::Matchers::Predicate<k::log::compiler_error>(
+        [](const auto& error) {
+            return error.get_diagnostic().message.find("incompatible lifecycle ABI") != std::string::npos;
+        }, "rejects the legacy union layout");
+    REQUIRE_THROWS_MATCHES(make_compiler()->parse_source("union_abi_legacy.k", consumer, false, false),
+                           k::log::compiler_error, incompatible);
+}
+
+TEST_CASE("Import fails closed on a missing or malformed or undersized union layout",
+          "[import][union][abi][regression]") {
+    TmpKdi lib(R"K(
+        module unionlayoutguard;
+        public union Value { number: int; text: byte; }
+        public struct Holder {
+            private:
+            union Storage { number: int; flag: byte; }
+            _storage: Storage;
+            public:
+            Holder() {}
+        }
+    )K", true);
+    const auto original = kdi::kdi_read_cbor_file(lib.kdi_path);
+    REQUIRE(original.unit.root_ns.unions.size() == 1);
+    REQUIRE(original.unit.root_ns.aggregates.size() == 1);
+    REQUIRE(original.unit.root_ns.aggregates[0].nested_unions.size() == 1);
+
+    auto consumer_error = [&](const std::function<void(kdi::kdi_file&)>& tamper) -> std::string {
+        auto metadata = original;
+        tamper(metadata);
+        REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("unionlayoutguard", lib.kdi_path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        compiler->set_file_resolver(resolver);
+        try {
+            compiler->parse_source("union_layout_guard.k", R"K(
+                module unionlayoutguard_consumer;
+                import unionlayoutguard;
+                use(value: unionlayoutguard::Value&, holder: unionlayoutguard::Holder&) {}
+            )K", false, false);
+        } catch (const k::log::compiler_error& error) {
+            return error.get_diagnostic().message;
+        }
+        return {};
+    };
+    auto public_union = [](kdi::kdi_file& file) -> kdi::kdi_union& {
+        return file.unit.root_ns.unions[0];
+    };
+    auto private_union = [](kdi::kdi_file& file) -> kdi::kdi_union& {
+        return file.unit.root_ns.aggregates[0].nested_unions[0];
+    };
+
+    CHECK(consumer_error([](kdi::kdi_file&) {}).empty());
+    CHECK(consumer_error([&](kdi::kdi_file& f) { public_union(f).llvm_def.clear(); })
+          .find("has no LLVM layout") != std::string::npos);
+    CHECK(consumer_error([&](kdi::kdi_file& f) { private_union(f).llvm_def.clear(); })
+          .find("has no LLVM layout") != std::string::npos);
+    CHECK(consumer_error([&](kdi::kdi_file& f) {
+              auto& def = public_union(f).llvm_def;
+              def = def.substr(0, def.find('{')) + "{ i64 }";
+          }).find("has an invalid LLVM layout") != std::string::npos);
+    CHECK(consumer_error([&](kdi::kdi_file& f) {
+              auto& def = public_union(f).llvm_def;
+              const auto open = def.find('[');
+              def = def.substr(0, open) + "[1 x i8] }";
+          }).find("cannot hold alternative") != std::string::npos);
+}
+
+TEST_CASE("KDI preserves imported default and copy constructor exception contracts",
+          "[import][constructor][exceptions][regression]") {
+    TmpKdi lib(R"K(
+        module ctorcontracts;
+        public class Failure : public Exception {}
+        public class OtherFailure : public Exception {}
+        public struct Value {
+            Value() throws(Failure) {}
+            Value(other: const Value&) throws(Failure) {}
+        }
+        public struct Safe {
+            Safe() {}
+        }
+    )K", true);
+    auto metadata = kdi::kdi_read_cbor_file(lib.kdi_path);
+    auto value = std::find_if(metadata.unit.root_ns.aggregates.begin(),
+        metadata.unit.root_ns.aggregates.end(), [](const auto& agg) { return agg.name == "Value"; });
+    REQUIRE(value != metadata.unit.root_ns.aggregates.end());
+    REQUIRE(value->constructors.size() == 2);
+    for (const auto& ctor : value->constructors) {
+        REQUIRE(ctor.throws_spec);
+        REQUIRE(ctor.throws_spec->size() == 1);
+        CHECK(std::get<kdi::kdi_aggregate_ref>((*ctor.throws_spec)[0].value).fq_name
+              == "ctorcontracts::Failure");
+    }
+    auto safe = std::find_if(metadata.unit.root_ns.aggregates.begin(),
+        metadata.unit.root_ns.aggregates.end(), [](const auto& agg) { return agg.name == "Safe"; });
+    REQUIRE(safe != metadata.unit.root_ns.aggregates.end());
+    REQUIRE_FALSE(safe->constructors.empty());
+    REQUIRE(safe->constructors[0].throws_spec);
+    CHECK(safe->constructors[0].throws_spec->empty());
+
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("ctorcontracts", lib.kdi_path);
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    compiler->set_file_resolver(resolver);
+    REQUIRE_NOTHROW(compiler->parse_source("ctorcontracts_consumer.k", R"K(
+        module ctorcontracts_consumer;
+        import ctorcontracts;
+        use(value: const ctorcontracts::Value&) throws(ctorcontracts::Failure) {
+            first: ctorcontracts::Value;
+            second: ctorcontracts::Value(value);
+        }
+    )K", false, false));
+    auto ns = compiler->get_unit()->get_root_namespace()->get_child_namespace("ctorcontracts");
+    REQUIRE(ns);
+    auto imported = ns->get_aggregate("Value");
+    REQUIRE(imported);
+    REQUIRE(imported->constructors().size() == 2);
+    for (const auto& ctor : imported->constructors()) {
+        CHECK_FALSE(ctor->is_throws_spec_unknown());
+        CHECK_FALSE(ctor->is_noexcept());
+        REQUIRE(ctor->get_throws_spec().size() == 1);
+        auto exc = std::dynamic_pointer_cast<k::model::struct_type>(
+            k::model::type::canonical(ctor->get_throws_spec()[0]));
+        REQUIRE(exc);
+        CHECK(exc->get_struct()->get_fq_name() == "::ctorcontracts::Failure");
+    }
+    auto imported_safe = ns->get_aggregate("Safe");
+    REQUIRE(imported_safe);
+    REQUIRE_FALSE(imported_safe->constructors().empty());
+    CHECK_FALSE(imported_safe->constructors()[0]->is_throws_spec_unknown());
+    CHECK(imported_safe->constructors()[0]->is_noexcept());
+
+    auto denied = k::compiler::create();
+    auto denied_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    denied_resolver->add_explicit_path("ctorcontracts", lib.kdi_path);
+    denied_resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    denied->set_file_resolver(denied_resolver);
+    CHECK_THROWS(denied->parse_source("ctorcontracts_denied.k", R"K(
+        module ctorcontracts_denied;
+        import ctorcontracts;
+        use() throws(ctorcontracts::OtherFailure) {
+            value: ctorcontracts::Value;
+        }
+    )K", false, false));
+
+    for (auto& agg : metadata.unit.root_ns.aggregates) {
+        if (agg.name != "Value") continue;
+        for (auto& ctor : agg.constructors)
+            if (!ctor.is_copy_constructor) ctor.throws_spec.reset();
+    }
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+    auto legacy = k::compiler::create();
+    auto legacy_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    legacy_resolver->add_explicit_path("ctorcontracts", lib.kdi_path);
+    legacy_resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    legacy->set_file_resolver(legacy_resolver);
+    REQUIRE_NOTHROW(legacy->parse_source("ctorcontracts_legacy.k", R"K(
+        module ctorcontracts_legacy;
+        import ctorcontracts;
+        use() throws(ctorcontracts::OtherFailure) {
+            value: ctorcontracts::Value;
+        }
+    )K", false, false));
+    auto legacy_ns = legacy->get_unit()->get_root_namespace()->get_child_namespace("ctorcontracts");
+    REQUIRE(legacy_ns);
+    auto legacy_value = legacy_ns->get_aggregate("Value");
+    REQUIRE(legacy_value);
+    for (const auto& ctor : legacy_value->constructors()) {
+        if (ctor->is_copy_constructor()) {
+            CHECK_FALSE(ctor->is_throws_spec_unknown());
+            CHECK(ctor->get_throws_spec().size() == 1);
+        } else {
+            CHECK(ctor->is_throws_spec_unknown());
+            CHECK_FALSE(ctor->is_noexcept());
+        }
+    }
+
+    kdi::kdi_const_type cnst;
+    cnst.inner = std::make_shared<kdi::kdi_type>(kdi::kdi_type::make_template_param("T"));
+    kdi::kdi_ref_type ref;
+    ref.inner = std::make_shared<kdi::kdi_type>(kdi::kdi_type{std::move(cnst)});
+    for (auto& agg : metadata.unit.root_ns.aggregates) {
+        if (agg.name != "Value") continue;
+        for (auto& ctor : agg.constructors)
+            if (!ctor.is_copy_constructor)
+                ctor.throws_spec = std::vector<kdi::kdi_type>{kdi::kdi_type{ref}};
+    }
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+    auto invalid = k::compiler::create();
+    auto invalid_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    invalid_resolver->add_explicit_path("ctorcontracts", lib.kdi_path);
+    invalid_resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    invalid->set_file_resolver(invalid_resolver);
+    REQUIRE_THROWS_MATCHES(invalid->parse_source("ctorcontracts_invalid.k", R"K(
+        module ctorcontracts_invalid;
+        import ctorcontracts;
+        struct T {}
+    )K", false, false), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+            return error.get_diagnostic().code == static_cast<unsigned int>(
+                k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND);
+        }, "rejects a placeholder nested in a concrete constructor contract"));
+}
+
+TEST_CASE("KDI completes late aliases in imported function and method contracts",
+          "[import][exceptions][alias][regression]") {
+    TmpKdi lib(R"K(
+        module latecontracts;
+        public class Failure : public Exception {}
+        public class OtherFailure : public Exception {}
+        public struct Worker {
+            Worker() {}
+            run(): int { return 1; }
+        }
+        public work(): int { return 1; }
+        namespace late {
+            public typedef AliasFailure : Failure;
+        }
+    )K", true);
+    auto metadata = kdi::kdi_read_cbor_file(lib.kdi_path);
+    auto work = std::find_if(metadata.unit.root_ns.functions.begin(), metadata.unit.root_ns.functions.end(),
+        [](const auto& entry) { return entry.name == "work"; });
+    auto worker = std::find_if(metadata.unit.root_ns.aggregates.begin(), metadata.unit.root_ns.aggregates.end(),
+        [](const auto& entry) { return entry.name == "Worker"; });
+    auto late = std::find_if(metadata.unit.root_ns.namespaces.begin(), metadata.unit.root_ns.namespaces.end(),
+        [](const auto& entry) { return entry.name == "late"; });
+    REQUIRE(work != metadata.unit.root_ns.functions.end());
+    REQUIRE(worker != metadata.unit.root_ns.aggregates.end());
+    REQUIRE(late != metadata.unit.root_ns.namespaces.end());
+    auto method = std::find_if(worker->methods.begin(), worker->methods.end(),
+        [](const auto& entry) { return entry.name == "run"; });
+    auto alias = std::find_if(late->aliases.begin(), late->aliases.end(),
+        [](const auto& entry) { return entry.name == "AliasFailure"; });
+    REQUIRE(method != worker->methods.end());
+    REQUIRE(alias != late->aliases.end());
+    REQUIRE_FALSE(worker->constructors.empty());
+    const std::vector<kdi::kdi_type> spec{
+        kdi::kdi_type::make_aggregate("latecontracts::Failure"),
+        kdi::kdi_type::make_alias("latecontracts::late::AliasFailure"),
+        kdi::kdi_type::make_aggregate("latecontracts::OtherFailure")};
+    work->throws_spec = spec;
+    method->throws_spec = spec;
+    worker->constructors[0].throws_spec = spec;
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+
+    auto make_compiler = [&]() {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("latecontracts", lib.kdi_path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        compiler->set_file_resolver(resolver);
+        return compiler;
+    };
+    auto compiler = make_compiler();
+    constexpr auto consumer = R"K(
+        module latecontracts_consumer;
+        import latecontracts;
+    )K";
+    REQUIRE_NOTHROW(compiler->parse_source("latecontracts_consumer.k", consumer, false, false));
+    REQUIRE_FALSE(compiler->has_compilation_error());
+    auto ns = compiler->get_unit()->get_root_namespace()->get_child_namespace("latecontracts");
+    REQUIRE(ns);
+    auto imported_work = ns->get_function("work");
+    auto imported_worker = ns->get_aggregate("Worker");
+    REQUIRE(imported_work);
+    REQUIRE(imported_worker);
+    auto imported_method = imported_worker->get_function("run");
+    REQUIRE(imported_method);
+    REQUIRE_FALSE(imported_worker->constructors().empty());
+    auto imported_late = ns->get_child_namespace("late");
+    REQUIRE(imported_late);
+    auto imported_alias = imported_late->get_alias("AliasFailure");
+    REQUIRE(imported_alias);
+    for (const auto& fn : {imported_work, imported_method,
+                           std::static_pointer_cast<k::model::function>(imported_worker->constructors()[0])}) {
+        const auto& types = fn->get_throws_spec();
+        REQUIRE(types.size() == 3);
+        auto nominal = std::dynamic_pointer_cast<k::model::alias_type>(types[1]);
+        REQUIRE(nominal);
+        CHECK(nominal->get_alias() == imported_alias);
+        CHECK(k::model::type::canonical(types[0]) == ns->get_aggregate("Failure")->get_struct_type());
+        CHECK(k::model::type::canonical(types[2]) == ns->get_aggregate("OtherFailure")->get_struct_type());
+    }
+
+    for (const auto& target : {"latecontracts::late::AliasFailure", "latecontracts::late::Missing"}) {
+        alias->target_type = kdi::kdi_type::make_alias(target);
+        REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+        auto invalid = make_compiler();
+        INFO(target);
+        REQUIRE_THROWS_MATCHES(invalid->parse_source("latecontracts_invalid.k", consumer, false, false),
+            k::log::compiler_error, Catch::Matchers::Predicate<k::log::compiler_error>(
+                [](const auto& error) {
+                    return error.get_diagnostic().code == static_cast<unsigned int>(
+                        k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND);
+                }, "unavailable exception alias"));
+    }
+}
+
+TEST_CASE("KDI preserves deleted aggregate copy operations", "[import][copy][delete][regression]") {
+    TmpKdi lib(R"K(
+        module noncopyapi;
+        public final class PrivateKey {
+        private:
+            handle: int* = null;
+            PrivateKey(other: const PrivateKey&) -> delete;
+            operator =(other: const PrivateKey&) -> delete;
+        public:
+            PrivateKey() {}
+            ~PrivateKey() {}
+        }
+        public final class PublicKey {
+        public:
+            PublicKey() {}
+            PublicKey(other: const PublicKey&) -> delete;
+            operator =(other: const PublicKey&) -> delete;
+            operator =(value: int): PublicKey& { return this; }
+        }
+        public struct Value {
+            Value() {}
+            Value(other: const Value&) -> delete;
+            operator =(other: const Value&) -> delete;
+        }
+        public final class Mixed {
+        private:
+            Mixed(other: const Mixed&) -> delete;
+        public:
+            Mixed() {}
+            Mixed(other: Mixed&) {}
+        }
+        public final class BothDeleted {
+        private:
+            BothDeleted(other: BothDeleted&) -> delete;
+            BothDeleted(other: const BothDeleted&) -> delete;
+        public:
+            BothDeleted() {}
+        }
+        public final class Movable {
+        private:
+            Movable(other: const Movable&) -> delete;
+        public:
+            Movable() {}
+            Movable(other: Movable#) {}
+        }
+    )K");
+    auto metadata = kdi::kdi_read_cbor_file(lib.kdi_path);
+    for (const auto& name : {"PrivateKey", "PublicKey", "Value"}) {
+        auto it = std::find_if(metadata.unit.root_ns.aggregates.begin(),
+            metadata.unit.root_ns.aggregates.end(),
+            [&](const auto& agg) { return agg.name == name; });
+        REQUIRE(it != metadata.unit.root_ns.aggregates.end());
+        const bool is_private = std::string(name) == "PrivateKey";
+        auto ctor = std::find_if(it->constructors.begin(), it->constructors.end(),
+            [](const auto& c) { return c.is_copy_constructor; });
+        REQUIRE(ctor != it->constructors.end());
+        CHECK(ctor->is_deleted);
+        CHECK(ctor->is_private == is_private);
+        if (is_private) CHECK(ctor->visibility == kdi::kdi_visibility::protected_);
+        auto method = std::find_if(it->methods.begin(), it->methods.end(),
+            [](const auto& m) { return m.is_operator && m.is_deleted; });
+        REQUIRE(method != it->methods.end());
+        CHECK(method->is_private == is_private);
+        if (is_private) CHECK(method->visibility == kdi::kdi_visibility::protected_);
+    }
+    for (const auto& name : {"Mixed", "BothDeleted"}) {
+        auto it = std::find_if(metadata.unit.root_ns.aggregates.begin(),
+            metadata.unit.root_ns.aggregates.end(),
+            [&](const auto& agg) { return agg.name == name; });
+        REQUIRE(it != metadata.unit.root_ns.aggregates.end());
+        CHECK(std::count_if(it->constructors.begin(), it->constructors.end(),
+            [](const auto& ctor) { return ctor.is_copy_constructor; }) == 2);
+        CHECK(std::count_if(it->constructors.begin(), it->constructors.end(),
+            [](const auto& ctor) { return ctor.is_copy_constructor && ctor.is_deleted && ctor.is_private; })
+            == (std::string(name) == "Mixed" ? 1 : 2));
+    }
+
+    for (const auto& name : {"PrivateKey", "PublicKey", "Value"}) {
+        for (const auto& body : {"copy: noncopyapi::TYPE = p;",
+                                 "copy: noncopyapi::TYPE(p);",
+                                 "copy: noncopyapi::TYPE; copy = p;"}) {
+          for (const auto& qualifier : {"const ", ""}) {
+            std::string statement(body);
+            statement.replace(statement.find("TYPE"), 4, name);
+            std::string source = "module noncopyconsumer; import noncopyapi; "
+                "test(p: " + std::string(qualifier) + "noncopyapi::" + std::string(name) + "&): int { "
+                + statement + " return 0; }";
+            auto compiler = k::compiler::create();
+            auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+            resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+            compiler->set_file_resolver(resolver);
+            INFO(name);
+            INFO(qualifier);
+            INFO(statement);
+            REQUIRE_THROWS_MATCHES(compiler->parse_source("noncopyconsumer.k", source),
+                k::log::compiler_error,
+                Catch::Matchers::Predicate<k::log::compiler_error>(
+                    [](const auto& error) {
+                        return error.get_diagnostic().message.find("deleted") != std::string::npos;
+                    }, "deleted copy operation"));
+          }
+        }
+    }
+
+    for (const auto* body : {
+             "test(p: const noncopyapi::PrivateKey&): int { value: Storage(p); return 0; }",
+             "test(p: noncopyapi::PrivateKey&): int { value: Storage(p); return 0; }",
+             "test(p: const noncopyapi::PrivateKey&): int { use(Storage(p)); return 0; }",
+             "test(p: const noncopyapi::PrivateKey&): int { useKey(noncopyapi::PrivateKey(p)); return 0; }",
+             "test(p: const noncopyapi::PrivateKey&): int { useKey((noncopyapi::PrivateKey) p); return 0; }",
+             "test(value: Storage&): int { copy: noncopyapi::PrivateKey = (noncopyapi::PrivateKey) value; return 0; }",
+             "test(value: Storage&): int { copy: noncopyapi::PrivateKey = value; return 0; }",
+             "test(value: Storage&): int { return useKey(value); }",
+             "test(p: noncopyapi::PrivateKey&): int { useKey(#p); return 0; }",
+             "test(p: noncopyapi::PrivateKey#): int { useKey(p); return 0; }",
+             "test(p: noncopyapi::PrivateKey&): noncopyapi::PrivateKey { return #p; }",
+             "test(p: noncopyapi::PrivateKey&): int { useKey((noncopyapi::PrivateKey) #p); return 0; }",
+             "test(p: noncopyapi::PrivateKey&): int { value: Storage(#p); return 0; }",
+             "test(p: noncopyapi::PrivateKey&): int { d: noncopyapi::PrivateKey# = #p; value: Storage(d); return 0; }",
+             "test(p: noncopyapi::PrivateKey&): int { use(Storage(#p)); return 0; }"}) {
+        std::string source = R"K(
+            module unioncopyconsumer;
+            import noncopyapi;
+            union Storage { key: noncopyapi::PrivateKey; number: int; }
+            use(value: Storage) {}
+            useKey(value: noncopyapi::PrivateKey): int { return 0; }
+        )K";
+        source += body;
+        auto union_compiler = k::compiler::create();
+        auto union_resolver = std::make_shared<k::path_lookup_file_resolver>();
+        union_resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+        union_compiler->set_file_resolver(union_resolver);
+        INFO(body);
+        REQUIRE_THROWS_MATCHES(union_compiler->parse_source("unioncopyconsumer.k", source),
+            k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>(
+                [](const auto& error) {
+                    return error.get_diagnostic().message.find("deleted") != std::string::npos;
+                }, "deleted union alternative copy"));
+    }
+
+    {
+        auto union_compiler = k::compiler::create();
+        auto union_resolver = std::make_shared<k::path_lookup_file_resolver>();
+        union_resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+        union_compiler->set_file_resolver(union_resolver);
+        REQUIRE_NOTHROW(union_compiler->parse_source("unionreference.k", R"K(
+            module unionreference;
+            import noncopyapi;
+            union Storage { key: noncopyapi::PrivateKey; number: int; }
+            test(value: Storage&): int {
+                key: noncopyapi::PrivateKey& = (noncopyapi::PrivateKey&) value;
+                return 0;
+            }
+        )K"));
+    }
+
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+    compiler->set_file_resolver(resolver);
+    REQUIRE_NOTHROW(compiler->parse_source("noncopyconsumer.k", R"K(
+        module noncopyconsumer; import noncopyapi;
+        test(): int { key: noncopyapi::PublicKey; key = 7; return 0; }
+    )K", false, false));
+
+    auto mixed_compiler = k::compiler::create();
+    auto mixed_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    mixed_resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+    mixed_compiler->set_file_resolver(mixed_resolver);
+    REQUIRE_NOTHROW(mixed_compiler->parse_source("mixedconsumer.k", R"K(
+        module mixedconsumer; import noncopyapi;
+        struct Holder {
+            value: noncopyapi::Mixed;
+            Holder(p: noncopyapi::Mixed&) : value(p) {}
+        }
+        consume(value: noncopyapi::Mixed): int { return 0; }
+        test(p: noncopyapi::Mixed&): int {
+            copy: noncopyapi::Mixed = p;
+            holder: Holder(p);
+            return consume(p);
+        }
+    )K"));
+    CHECK_FALSE(mixed_compiler->has_compilation_error());
+
+    auto movable_compiler = k::compiler::create();
+    auto movable_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    movable_resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+    movable_compiler->set_file_resolver(movable_resolver);
+    REQUIRE_NOTHROW(movable_compiler->parse_source("movableconsumer.k", R"K(
+        module movableconsumer; import noncopyapi;
+        consume(value: noncopyapi::Movable) {}
+        test(p: noncopyapi::Movable&) { consume(#p); }
+    )K"));
+
+    auto mixed_union_compiler = k::compiler::create();
+    auto mixed_union_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    mixed_union_resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+    mixed_union_compiler->set_file_resolver(mixed_union_resolver);
+    REQUIRE_NOTHROW(mixed_union_compiler->parse_source("mixedunion.k", R"K(
+        module mixedunion; import noncopyapi;
+        union Storage { value: noncopyapi::Mixed; number: int; }
+        test(p: noncopyapi::Mixed&): int {
+            storage: Storage(p);
+            copy: noncopyapi::Mixed = (noncopyapi::Mixed) storage;
+            return 0;
+        }
+    )K"));
+
+    auto const_compiler = k::compiler::create();
+    auto const_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    const_resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+    const_compiler->set_file_resolver(const_resolver);
+    REQUIRE_THROWS_MATCHES(const_compiler->parse_source("mixedconst.k", R"K(
+        module mixedconst; import noncopyapi;
+        test(p: const noncopyapi::Mixed&): int { copy: noncopyapi::Mixed = p; return 0; }
+    )K"), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>(
+            [](const auto& error) {
+                return error.get_diagnostic().message.find("deleted") != std::string::npos;
+            }, "selected deleted copy constructor"));
+
+    // Older KDI producers could export a public deleted constructor without
+    // setting its copy flag. Its resolved signature must still prohibit copying.
+    for (auto& agg : metadata.unit.root_ns.aggregates) {
+        if (agg.name != "PublicKey") continue;
+        for (auto& ctor : agg.constructors) ctor.is_copy_constructor = false;
+    }
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+    auto legacy_compiler = k::compiler::create();
+    auto legacy_resolver = std::make_shared<k::path_lookup_file_resolver>();
+    legacy_resolver->add_explicit_path("noncopyapi", lib.kdi_path);
+    legacy_compiler->set_file_resolver(legacy_resolver);
+    REQUIRE_THROWS_MATCHES(legacy_compiler->parse_source("legacyconsumer.k", R"K(
+        module legacyconsumer; import noncopyapi;
+        test(p: const noncopyapi::PublicKey&): int {
+            copy: noncopyapi::PublicKey = p; return 0;
+        }
+    )K"), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>(
+            [](const auto& error) {
+                return error.get_diagnostic().message.find("deleted") != std::string::npos;
+            }, "deleted copy operation"));
+}
+
+TEST_CASE("Imported opaque Counter rejects tutorial copy probes", "[import][copy][delete][regression]") {
+    for (const auto* kind : {"final class", "struct"}) {
+        std::string producer = std::string(R"K(
+            module toy;
+            private struct NativeCounter {}
+            public )K") + kind + R"K( Counter {
+            private:
+                _handle: NativeCounter* = null;
+            public:
+                Counter() {}
+                Counter(other: const Counter&) -> delete;
+                operator =(const other: Counter&) -> delete;
+            }
+        )K";
+        TmpKdi lib(producer);
+        for (const auto* statement : {"b: toy::Counter; b = a;",
+                                       "b: toy::Counter(a);",
+                                       "b: toy::Counter = a;"}) {
+            std::string consumer = "module copyprobe; import toy; main(): int { "
+                "a: toy::Counter; " + std::string(statement) + " return 0; }";
+            auto compiler = k::compiler::create();
+            auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+            resolver->add_explicit_path("toy", lib.kdi_path);
+            compiler->set_file_resolver(resolver);
+            INFO(kind);
+            INFO(statement);
+            REQUIRE_THROWS_MATCHES(compiler->parse_source("copyprobe.k", consumer),
+                k::log::compiler_error,
+                Catch::Matchers::Predicate<k::log::compiler_error>(
+                    [](const auto& error) {
+                        return error.get_diagnostic().message.find("deleted") != std::string::npos;
+                    }, "deleted copy operation, not a missing LLVM declaration"));
+        }
+    }
+}
+
+TEST_CASE("KDI duplicate layouts require compatible referenced definitions",
+          "[import][kdi-layout][regression]") {
+    auto provider = std::make_shared<kdi::kdi_file>();
+    provider->header.module_name = "layoutprovider";
+    provider->unit.root_ns.name = "layoutprovider";
+    provider->unit.root_ns.fq_name = "layoutprovider";
+    kdi::kdi_aggregate base;
+    base.name = "Base";
+    base.fq_name = "::layoutprovider::Base";
+    base.mangled_name = "LayoutBase";
+    base.llvm_def = "%LayoutBase = type { %LayoutInner }\n"
+                    "%LayoutInner = type { %LayoutLeaf }\n"
+                    "%LayoutLeaf = type { i32 }";
+    kdi::kdi_aggregate inner;
+    inner.name = "Inner";
+    inner.fq_name = "layoutprovider::Inner";
+    inner.mangled_name = "LayoutInner";
+    inner.llvm_def = "%LayoutInner = type { %LayoutLeaf }\n"
+                     "%LayoutLeaf = type { i32 }";
+    kdi::kdi_aggregate leaf;
+    leaf.name = "Leaf";
+    leaf.fq_name = "layoutprovider::Leaf";
+    leaf.mangled_name = "LayoutLeaf";
+    leaf.llvm_def = "%LayoutLeaf = type { i32 }";
+    provider->unit.root_ns.aggregates = {base, inner, leaf};
+
+    auto wrapper = std::make_shared<kdi::kdi_file>();
+    wrapper->header.module_name = "layoutwrapper";
+    wrapper->unit.root_ns.name = "layoutwrapper";
+    wrapper->unit.root_ns.fq_name = "layoutwrapper";
+    kdi::kdi_aggregate outer;
+    outer.name = "Wrapper";
+    outer.fq_name = "layoutwrapper::Wrapper";
+    outer.mangled_name = "LayoutWrapper";
+    outer.llvm_def = "%LayoutWrapper = type { %LayoutBase }\n"
+                     "%LayoutBase = type { %LayoutInner.691 }\n"
+                     "%LayoutInner.691 = type { %LayoutLeaf.692 }\n"
+                     "%LayoutLeaf.692 = type { i32 }";
+    const bool wrapper_first = GENERATE(false, true);
+    bool conflict = false;
+    bool identity_conflict = false;
+    bool distinct_suffixed_type = false;
+    SECTION("context-local copies have equivalent recursive layouts") {}
+    SECTION("same mangled name can denote distinct registered LLVM types") {
+        kdi::kdi_aggregate other;
+        other.name = "Other";
+        other.fq_name = "layoutwrapper::Other";
+        other.mangled_name = "LayoutLeaf";
+        other.llvm_def = "%LayoutLeaf.77 = type { i64 }";
+        wrapper->unit.root_ns.aggregates.push_back(other);
+        distinct_suffixed_type = true;
+    }
+    SECTION("a nested copy has an incompatible layout") {
+        outer.llvm_def.replace(outer.llvm_def.find("i32"), 3, "i64");
+        conflict = true;
+    }
+    SECTION("a referenced copy has no definition") {
+        outer.llvm_def.erase(outer.llvm_def.find("%LayoutLeaf.692 = type"));
+        conflict = true;
+    }
+    SECTION("a suffixed reference has a different KDI identity") {
+        kdi::kdi_aggregate other;
+        other.name = "Other";
+        other.fq_name = "layoutwrapper::Other";
+        other.mangled_name = "LayoutLeaf.692";
+        other.llvm_def = "%LayoutLeaf.692 = type { i32 }";
+        wrapper->unit.root_ns.aggregates.push_back(other);
+        conflict = true;
+    }
+    SECTION("different types claim the same LLVM name and layout") {
+        kdi::kdi_aggregate other;
+        other.name = "Other";
+        other.fq_name = "layoutwrapper::Other";
+        other.mangled_name = "LayoutBase";
+        other.llvm_def = base.llvm_def;
+        wrapper->unit.root_ns.aggregates.push_back(other);
+        conflict = true;
+        identity_conflict = true;
+    }
+    wrapper->unit.root_ns.aggregates.push_back(outer);
+
+    auto compiler = k::compiler::create();
+    auto unit = compiler->get_unit();
+    unit->add_import(k::name::from(wrapper_first ? "layoutwrapper" : "layoutprovider"));
+    unit->add_import(k::name::from(wrapper_first ? "layoutprovider" : "layoutwrapper"));
+    unit->get_imports()[0].kdi = wrapper_first ? wrapper : provider;
+    unit->get_imports()[1].kdi = wrapper_first ? provider : wrapper;
+    k::path_lookup_file_resolver resolver;
+    test_logger logger;
+    k::model::kdi_importer importer(*unit, resolver, logger);
+    auto ctx = compiler->get_context_for_test();
+    ctx->init_module("layoutconsumer");
+    if (conflict) {
+        REQUIRE_THROWS_MATCHES(importer.materialise_all(ctx), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>(
+                [identity_conflict](const k::log::compiler_error& error) {
+                    const auto& diagnostic = error.get_diagnostic();
+                    return diagnostic.code == static_cast<unsigned int>(
+                               k::diag::codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT) &&
+                           (!identity_conflict ||
+                            (diagnostic.message.find("distinct KDI identities") != std::string::npos &&
+                             diagnostic.args.size() == 3));
+                }, "duplicate imported LLVM layout conflict"));
+    } else {
+        REQUIRE_NOTHROW(importer.materialise_all(ctx));
+        auto* imported_base = llvm::StructType::getTypeByName(ctx->llvm_context(), "LayoutBase");
+        REQUIRE(imported_base);
+        REQUIRE_FALSE(imported_base->isOpaque());
+        auto* imported_inner = llvm::dyn_cast<llvm::StructType>(imported_base->getElementType(0));
+        REQUIRE(imported_inner);
+        CHECK(imported_inner->getName() == "LayoutInner");
+        auto* imported_leaf = llvm::dyn_cast<llvm::StructType>(imported_inner->getElementType(0));
+        REQUIRE(imported_leaf);
+        CHECK(imported_leaf->getElementType(0)->isIntegerTy(32));
+        if (distinct_suffixed_type) {
+            auto* other = llvm::StructType::getTypeByName(ctx->llvm_context(), "LayoutLeaf.77");
+            REQUIRE(other);
+            REQUIRE_FALSE(other->isOpaque());
+            CHECK(other != imported_leaf);
+            CHECK(other->getElementType(0)->isIntegerTy(64));
+        }
+    }
+}
 
 TEST_CASE("imported parameter defaults preserve primitive and enum arguments",
           "[import][default-args][regression]") {
@@ -639,14 +2680,13 @@ TEST_CASE("get_or_create_imported_function — LLVM declare emitted in IR",
     const auto& ifns = comp->get_unit()->get_imported_functions();
     // First verify that there IS an imported function named 'mul'
     bool found_mul = false;
-    for (const auto& [mangled, fn] : ifns) {
+    for (const auto& [descriptor, fn] : ifns) {
         if (fn->get_short_name() == "mul") {
             found_mul = true;
-            INFO("mangled key   = " << mangled);
             INFO("get_mangled() = " << fn->get_mangled_name());
             INFO("IR snippet    = " << ir.substr(0, 500));
             // The mangled name must appear in IR as a declare, not a define
-            REQUIRE( ir.find(mangled) != std::string::npos );
+            REQUIRE( ir.find(fn->get_mangled_name()) != std::string::npos );
         }
     }
     REQUIRE( found_mul );
@@ -1741,6 +3781,7 @@ TEST_CASE("import enum — local typed extension from imported typed base enum",
                 y : int;
             }
             enum Dir : Vec2 {
+                UP_ALIAS = UP;
                 UP{.x = 0, .y = 1} default;
                 RIGHT{.x = 1, .y = 0};
             }
@@ -1755,13 +3796,128 @@ TEST_CASE("import enum — local typed extension from imported typed base enum",
 
             main() : int {
                 p : const typedbase_lib::Vec2& = ExtendedDir::DOWN;
-                return p.y + ExtendedDir::DOWN;
+                q : const typedbase_lib::Vec2& = ExtendedDir::UP_ALIAS;
+                return p.y + ExtendedDir::DOWN + q.y;
             }
         )K");
 
     if (!result.out.empty()) INFO("stdout: " << result.out);
     if (!result.err.empty()) INFO("stderr: " << result.err);
-    REQUIRE( result.exit_code == 9 );  // y=7 and DOWN index=2
+    REQUIRE( result.exit_code == 10 );  // y=7, DOWN index=2, inherited y=1
+}
+
+TEST_CASE("import enum — String table and derived table access across modules",
+          "[import][e2e][import-enum][typed][runtime]") {
+    auto result = build_exec_with_lib(
+        R"K(
+            module stringenumlib;
+            enum Label : String {
+                FIRST("one");
+                ALIAS = FIRST;
+                SECOND("four");
+            }
+        )K",
+        R"K(
+            module exec_import_string_enum;
+            import stringenumlib;
+            enum Extended : stringenumlib::Label {
+                THIRD("five");
+                SAME = FIRST;
+            }
+            main() : int {
+                a : const String& = stringenumlib::Label::ALIAS;
+                b : const String& = Extended::SAME;
+                c : const String& = Extended::SECOND;
+                d : const String& = Extended::THIRD;
+                return a.size() + b.size() + c.size() + d.size() + Extended::THIRD;
+            }
+        )K");
+    if (!result.out.empty()) INFO("stdout: " << result.out);
+    if (!result.err.empty()) INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 16);
+}
+
+TEST_CASE("import enum — constant table inheritance preserves slots across re-export",
+          "[import][e2e][import-enum][typed][import-enum-derive][regression]") {
+    std::vector<LibSpec> libs = {
+        { R"K(
+            module constant_enum_base;
+            struct Value { x : int; y : int; }
+            enum Base : Value {
+                ALIAS = FIRST;
+                FIRST{.x = 8, .y = 13};
+                SECOND;
+                RESET();
+                AFTER;
+                LAST_ALIAS = AFTER;
+            }
+        )K" },
+        { R"K(
+            module constant_enum_mid;
+            import constant_enum_base;
+            enum Mid : constant_enum_base::Base {
+                MIDDLE{.x = 9, .y = 31};
+                NEXT;
+                OTHER_ALIAS = SECOND;
+            }
+        )K" }
+    };
+
+    auto result = build_exec_with_libs(libs, R"K(
+        module constant_enum_leaf;
+        import constant_enum_base;
+        import constant_enum_mid;
+        enum Leaf : constant_enum_mid::Mid {
+            LAST;
+            EXPLICIT{.y = 67};
+            SAME = AFTER;
+        }
+        main() : int {
+            a : const constant_enum_base::Value& = Leaf::ALIAS;
+            b : const constant_enum_base::Value& = Leaf::OTHER_ALIAS;
+            c : const constant_enum_base::Value& = Leaf::RESET;
+            d : const constant_enum_base::Value& = Leaf::SAME;
+            e : const constant_enum_base::Value& = Leaf::MIDDLE;
+            f : const constant_enum_base::Value& = Leaf::NEXT;
+            g : const constant_enum_base::Value& = Leaf::LAST;
+            h : const constant_enum_base::Value& = Leaf::EXPLICIT;
+            if (a.x != 8 || a.y != 13 || b.y != 14 || c.y != 0 || d.y != 1) return 1;
+            if (e.x != 9 || e.y != 31 || f.y != 32 || g.y != 33 || h.y != 67) return 2;
+            if (Leaf::ALIAS != 0 || Leaf::SECOND != 1 || Leaf::RESET != 2 ||
+                Leaf::AFTER != 3 || Leaf::MIDDLE != 4 || Leaf::NEXT != 5 ||
+                Leaf::LAST != 6 || Leaf::EXPLICIT != 7) return 3;
+            return 42;
+        }
+    )K");
+    INFO("stdout: " << result.out);
+    INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
+}
+
+TEST_CASE("import enum — constructor extension copies an imported constant table",
+          "[import][e2e][import-enum][typed][runtime][regression]") {
+    auto result = build_exec_with_lib(R"K(
+        module constant_ctor_base;
+        struct Value {
+            number : int;
+            Value(n : int) : number(n) {}
+        }
+        enum Base : Value { FIRST{.number = 17}; NEXT; }
+    )K", R"K(
+        module constant_ctor_leaf;
+        import constant_ctor_base;
+        enum Extended : constant_ctor_base::Base { THIRD(31); }
+        main() : int {
+            a : const constant_ctor_base::Value& = Extended::FIRST;
+            b : const constant_ctor_base::Value& = Extended::NEXT;
+            c : const constant_ctor_base::Value& = Extended::THIRD;
+            if (a.number != 17 || b.number != 18 || c.number != 31) return 1;
+            return Extended::THIRD + 40;
+        }
+    )K");
+    INFO("stdout: " << result.out);
+    INFO("stderr: " << result.err);
+    REQUIRE(result.exit_code == 42);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

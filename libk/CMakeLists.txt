@@ -6,4 +6,4 @@
 # and all optional sub-libraries (e.g. "k::math") compiled from src/math/.
 # ─────────────────────────────────────────────────────────────────────────────
 add_subdirectory(libk)
-
+add_subdirectory(crypto)

@@ -181,6 +181,29 @@ with the `@ffi::CString` annotation:
 | `0x0804` | Symbol resolver | `@CString` parameter uses drain (`#`) indirection. | `@ffi::CString on parameter '…': drain indirection (#) is not meaningful for C FFI; treating as reference` |
 | `0x0807` | Symbol resolver | `@CString` addressed type is `unsigned char` / `byte`. | `@ffi::CString on parameter '…': unsigned char will be treated as char for C FFI` |
 
+### `@CString` and generics
+
+A generic body is synthesised once with its type parameters erased, so a
+`@CString` parameter whose addressed type is a type parameter (for example
+`@ffi::CString value : T*`) cannot be checked against `char` at declaration
+time. The contract is validated against the **original** (pre-erasure)
+signature at each concrete use instead:
+
+- a call through a generic host or an imported generic is checked with the
+  concrete template arguments — at instance calls, at static calls through a
+  qualifier (`Host<char>::text(&c)`) and at callable bindings
+  (`callable : &(char*):int = Host<char>::text`) — and a non-`char` argument is
+  rejected with the same diagnostic as a direct call (the `@ffi::CString`
+  parameter-type mismatch error);
+- a generic function that forwards its own type-parameter argument to such a
+  native function records the obligation, and each instantiation replays it
+  with the substituted type;
+- the `@ffi::CString` flag of a generic parameter is preserved in the KDI
+  template signature and in the exported erased synthesis, and an import whose
+  two copies disagree is rejected (unresolved-parameter-type error);
+- an obligation that cannot be traced to a concrete type (for example nested
+  generic forwarding) is rejected rather than ignored.
+
 ---
 
 ## 5. Examples

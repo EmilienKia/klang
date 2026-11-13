@@ -98,7 +98,167 @@ static kdi_type rt_type(const kdi_type& t) {
     return restored.unit.root_ns.functions.at(0).return_type;
 }
 
+TEST_CASE("CBOR preserves and validates native callable metadata", "[cbor][ffi]") {
+    auto file = make_aggregate_file();
+    kdi_function k_fn;
+    k_fn.name = "ordinary";
+    k_fn.fq_name = "geo::ordinary";
+    k_fn.mangled_name = "_K_ordinary";
+    file.unit.root_ns.functions.push_back(k_fn);
+    kdi_function fn;
+    fn.name = "alias";
+    fn.fq_name = "geo::alias";
+    fn.mangled_name = "native_symbol";
+    fn.is_extern = true;
+    kdi_param p;
+    p.name = "text";
+    p.type = kdi_type::make_int(8);
+    p.is_ffi_cstring = true;
+    fn.params.push_back(p);
+    file.unit.root_ns.functions.push_back(fn);
+    auto& method = file.unit.root_ns.aggregates[0].methods[0];
+    method.is_static = true;
+    method.is_extern = true;
+    method.mangled_name = "native_method";
+    method.params.push_back(p);
+    kdi_template_def generic;
+    generic.name = "Generic";
+    generic.is_generic = true;
+    generic.function_signature = std::make_shared<kdi_function>(fn);
+    generic.aggregate_signature = std::make_shared<kdi_aggregate>(file.unit.root_ns.aggregates[0]);
+    file.unit.root_ns.template_defs.push_back(generic);
+    std::ostringstream out(std::ios::binary);
+    kdi_write_cbor(file, out);
+    const auto bytes = out.str();
+    std::istringstream input(bytes, std::ios::binary);
+    auto restored = kdi_read_cbor(input);
+    CHECK_FALSE(restored.unit.root_ns.functions[0].is_extern);
+    CHECK(restored.unit.root_ns.functions[1].is_extern);
+    CHECK(restored.unit.root_ns.functions[1].mangled_name == "native_symbol");
+    CHECK(restored.unit.root_ns.functions[1].params[0].is_ffi_cstring);
+    CHECK(restored.unit.root_ns.aggregates[0].methods[0].is_extern);
+    CHECK(restored.unit.root_ns.aggregates[0].methods[0].params[0].is_ffi_cstring);
+    REQUIRE(restored.unit.root_ns.template_defs[0].function_signature);
+    REQUIRE(restored.unit.root_ns.template_defs[0].aggregate_signature);
+    CHECK(restored.unit.root_ns.template_defs[0].function_signature->is_extern);
+    CHECK(restored.unit.root_ns.template_defs[0].aggregate_signature->methods[0].params[0].is_ffi_cstring);
+
+    for (const std::string key : {"is_extern", "is_ffi_cstring"}) {
+        auto pos = bytes.find(key);
+        REQUIRE(pos != std::string::npos);
+        while (pos != std::string::npos) {
+            auto malformed = bytes;
+            malformed[pos + key.size()] = static_cast<char>(0xf6);
+            std::istringstream bad(malformed, std::ios::binary);
+            CHECK_THROWS_AS(kdi_read_cbor(bad), kdi_parse_error);
+            pos = bytes.find(key, pos + key.size());
+        }
+    }
+    auto legacy = bytes;
+    for (const std::string key : {"is_extern", "is_ffi_cstring"}) {
+        auto pos = legacy.find(key);
+        while (pos != std::string::npos) {
+            legacy.erase(pos - 1, key.size() + 2);
+            pos = legacy.find(key);
+        }
+    }
+    std::istringstream old_input(legacy, std::ios::binary);
+    auto old = kdi_read_cbor(old_input);
+    CHECK_FALSE(old.unit.root_ns.functions[1].is_extern);
+    CHECK_FALSE(old.unit.root_ns.functions[1].params[0].is_ffi_cstring);
+    CHECK_FALSE(old.unit.root_ns.aggregates[0].methods[0].is_extern);
+    CHECK_FALSE(old.unit.root_ns.aggregates[0].methods[0].params[0].is_ffi_cstring);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
+
+TEST_CASE("CBOR preserves constructor exception contract presence", "[cbor][constructor][throws]") {
+    auto file = make_aggregate_file();
+    auto& ctors = file.unit.root_ns.aggregates[0].constructors;
+    ctors[0].throws_spec = std::vector<kdi_type>{
+        kdi_type::make_aggregate("geo::FirstError"),
+        kdi_type::make_aggregate("geo::SecondError")};
+    kdi_constructor no_throw = ctors[0];
+    no_throw.throws_spec->clear();
+    kdi_constructor legacy = ctors[0];
+    legacy.throws_spec.reset();
+    ctors.push_back(no_throw);
+    ctors.push_back(legacy);
+
+    std::ostringstream bytes(std::ios::binary);
+    kdi_write_cbor(file, bytes);
+    std::istringstream input(bytes.str(), std::ios::binary);
+    auto restored = kdi_read_cbor(input);
+    const auto& result = restored.unit.root_ns.aggregates[0].constructors;
+    REQUIRE(result.size() == 3);
+    REQUIRE(result[0].throws_spec);
+    REQUIRE(result[0].throws_spec->size() == 2);
+    CHECK(std::get<kdi_aggregate_ref>((*result[0].throws_spec)[0].value).fq_name == "geo::FirstError");
+    CHECK(std::get<kdi_aggregate_ref>((*result[0].throws_spec)[1].value).fq_name == "geo::SecondError");
+    REQUIRE(result[1].throws_spec);
+    CHECK(result[1].throws_spec->empty());
+    CHECK_FALSE(result[2].throws_spec);
+
+    std::ostringstream json;
+    kdi_write_json(restored, json);
+    std::istringstream json_input(json.str());
+    auto transcoded = kdi_read_json(json_input);
+    CHECK(transcoded.unit.root_ns.aggregates[0].constructors[0].throws_spec->size() == 2);
+    CHECK(transcoded.unit.root_ns.aggregates[0].constructors[1].throws_spec->empty());
+    CHECK_FALSE(transcoded.unit.root_ns.aggregates[0].constructors[2].throws_spec);
+}
+
+TEST_CASE("CBOR rejects non-array constructor throws metadata", "[cbor][constructor][throws]") {
+    auto file = make_aggregate_file();
+    file.unit.root_ns.aggregates[0].constructors[0].throws_spec.emplace();
+    std::ostringstream out(std::ios::binary);
+    kdi_write_cbor(file, out);
+    auto encoded = out.str();
+    const std::string key = "throws_spec";
+    auto position = encoded.find(key);
+    REQUIRE(position != std::string::npos);
+    position += key.size();
+    REQUIRE(static_cast<unsigned char>(encoded[position]) == 0x9f);
+    REQUIRE(static_cast<unsigned char>(encoded[position + 1]) == 0xff);
+    encoded[position] = static_cast<char>(0xf6);
+    encoded.erase(position + 1, 1);
+    std::istringstream input(encoded, std::ios::binary);
+    CHECK_THROWS_AS(kdi_read_cbor(input), kdi_parse_error);
+}
+
+TEST_CASE("CBOR rejects malformed deletion and privacy flags", "[cbor][copy][regression]") {
+    for (bool constructor : {false, true}) {
+        for (const std::string key : {"is_deleted", "is_private"}) {
+            auto file = make_aggregate_file();
+            auto& agg = file.unit.root_ns.aggregates[0];
+            if (constructor) {
+                if (key == "is_deleted") agg.constructors[0].is_deleted = true;
+                else agg.constructors[0].is_private = true;
+            } else {
+                if (key == "is_deleted") agg.methods[0].is_deleted = true;
+                else agg.methods[0].is_private = true;
+            }
+            std::ostringstream out(std::ios::binary);
+            kdi_write_cbor(file, out);
+            auto encoded = out.str();
+            auto position = encoded.find(key);
+            REQUIRE(position != std::string::npos);
+            REQUIRE(encoded.find(key, position + key.size()) == std::string::npos);
+            position += key.size();
+            REQUIRE(static_cast<unsigned char>(encoded[position]) == 0xf5);
+            CAPTURE(constructor, key);
+            for (unsigned char invalid : {0x01, 0xf6}) {
+                auto malformed = encoded;
+                malformed[position] = static_cast<char>(invalid);
+                std::istringstream input(malformed, std::ios::binary);
+                CHECK_THROWS_AS(kdi_read_cbor(input), kdi_parse_error);
+            }
+            encoded[position] = static_cast<char>(0xf4);
+            std::istringstream valid(encoded, std::ios::binary);
+            CHECK_NOTHROW(kdi_read_cbor(valid));
+        }
+    }
+}
 
 TEST_CASE("CBOR: minimal file round-trips", "[cbor]") {
     auto original = make_minimal_file();
@@ -206,6 +366,34 @@ TEST_CASE("CBOR: aggregate file round-trips", "[cbor]") {
     REQUIRE(agg.annotations.size() == 1u);
     CHECK(agg.annotations[0].name == "annotations::Retention");
     CHECK(agg.annotations[0].source == "@annotations::Retention(Policy::SOURCE)");
+}
+
+TEST_CASE("CBOR preserves deleted private copy metadata and legacy defaults", "[cbor][copy][regression]") {
+    auto file = make_aggregate_file();
+    auto& agg = file.unit.root_ns.aggregates[0];
+    agg.constructors[0].is_copy_constructor = true;
+    agg.constructors[0].is_deleted = true;
+    agg.constructors[0].is_private = true;
+    agg.methods[0].is_deleted = true;
+    agg.methods[0].is_private = true;
+    auto round_trip = [](const kdi_file& original) {
+        std::ostringstream out(std::ios::binary);
+        kdi_write_cbor(original, out);
+        std::istringstream in(out.str(), std::ios::binary);
+        return kdi_read_cbor(in);
+    };
+    auto restored = round_trip(file);
+    CHECK(restored.unit.root_ns.aggregates[0].constructors[0].is_deleted);
+    CHECK(restored.unit.root_ns.aggregates[0].constructors[0].is_private);
+    CHECK(restored.unit.root_ns.aggregates[0].methods[0].is_deleted);
+    CHECK(restored.unit.root_ns.aggregates[0].methods[0].is_private);
+    agg.constructors[0].is_private = false;
+    agg.methods[0].is_private = false;
+    agg.methods[0].is_deleted = false;
+    restored = round_trip(file);
+    CHECK_FALSE(restored.unit.root_ns.aggregates[0].constructors[0].is_private);
+    CHECK_FALSE(restored.unit.root_ns.aggregates[0].methods[0].is_private);
+    CHECK_FALSE(restored.unit.root_ns.aggregates[0].methods[0].is_deleted);
 }
 
 TEST_CASE("CBOR: aggregate annotations default empty for legacy payloads", "[cbor][aggregate][annotations]") {
@@ -346,6 +534,29 @@ TEST_CASE("CBOR: nested aggregate with enclosing info round-trips", "[cbor][aggr
     REQUIRE(i2.fq_name == "nest::Outer::Inner");
     REQUIRE(i2.is_static_nested == true);
     REQUIRE(i2.enclosing_fq_name == "nest::Outer");
+}
+
+TEST_CASE("CBOR: bases_complete round-trips and is absent when false", "[cbor][bases]") {
+    for (const bool complete : {true, false}) {
+        kdi_file f;
+        f.header.module_name = "bases::mod";
+        f.unit.name          = "bases::mod";
+        kdi_aggregate agg;
+        agg.kind           = kdi_aggregate_kind::class_;
+        agg.name           = "Derived";
+        agg.fq_name        = "bases::Derived";
+        agg.mangled_name   = "_KN5bases7DerivedE";
+        agg.bases_complete = complete;
+        f.unit.root_ns.aggregates.push_back(agg);
+
+        std::ostringstream oss(std::ios::binary);
+        REQUIRE_NOTHROW(kdi_write_cbor(f, oss));
+        CHECK((oss.str().find("bases_complete") != std::string::npos) == complete);
+
+        std::istringstream iss(oss.str(), std::ios::binary);
+        auto restored = kdi_read_cbor(iss);
+        CHECK(restored.unit.root_ns.aggregates.at(0).bases_complete == complete);
+    }
 }
 
 TEST_CASE("CBOR: vtable round-trips", "[cbor]") {
@@ -823,8 +1034,18 @@ TEST_CASE("CBOR: object-backed enum metadata round-trips", "[cbor][enum][typed]"
     REQUIRE(std::get<kdi_aggregate_ref>(ren.object_type->value).fq_name == "typed::enum::Vec2");
     REQUIRE(ren.object_table_symbol.has_value());
     REQUIRE(*ren.object_table_symbol == "__klang_enum_table_Dir__");
+    REQUIRE_FALSE(ren.object_table_kind.has_value());
     REQUIRE(ren.entries.size() == 1);
     REQUIRE(ren.entries[0].object_init_members.size() == 2);
+
+    f.unit.root_ns.enums[0].object_table_symbol = "arbitrary_accessor";
+    f.unit.root_ns.enums[0].object_table_kind = "runtime";
+    std::ostringstream runtime_out(std::ios::binary);
+    REQUIRE_NOTHROW(kdi_write_cbor(f, runtime_out));
+    std::istringstream runtime_in(runtime_out.str(), std::ios::binary);
+    REQUIRE_NOTHROW(restored = kdi_read_cbor(runtime_in));
+    REQUIRE(restored.unit.root_ns.enums[0].object_table_kind == "runtime");
+    REQUIRE(restored.unit.root_ns.enums[0].object_table_symbol == "arbitrary_accessor");
 }
 
 TEST_CASE("CBOR: polymorphic union round-trips", "[cbor][union][polymorphic]") {

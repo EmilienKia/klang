@@ -118,6 +118,7 @@ find_package(Catch2 REQUIRED)
 find_package(nlohmann_json REQUIRED)
 
 find_package(fmt REQUIRED)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 
 find_package(Boost REQUIRED
     COMPONENTS program_options filesystem

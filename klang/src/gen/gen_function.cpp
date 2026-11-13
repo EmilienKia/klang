@@ -25,6 +25,7 @@
 #include "generators.hpp"
 #include "gen_helpers.hpp"
 #include "gen_intrinsics.hpp"
+#include "ffi_validation.hpp"
 
 #include "../model/expressions.hpp"
 #include "../model/statements.hpp"
@@ -41,10 +42,70 @@
 #include <cctype>
 #include <queue>
 #include <unordered_set>
+#include <utility>
 #include "../errors.hpp"
 
 
 namespace k::model::gen {
+
+void validate_ffi_cstring_parameter(k::log::logger& logger, const function& fn,
+                                   const parameter& param,
+                                   const std::shared_ptr<type>& parameter_type) {
+    lex::opt_any_lexeme location;
+    if (auto ast = param.get_ast_parameter_spec(); ast && ast->name)
+        location = lex::any_lexeme{*ast->name};
+    const auto fail = [&](unsigned code, const std::string& message,
+                          const std::vector<std::string>& args) {
+        auto diag = k::log::diagnostic::make_error(code, message, args);
+        if (location) diag.at(*location);
+        logger.report(diag);
+        throw resolution_error(std::move(diag));
+    };
+    if (!fn.is_extern()) {
+        fail(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_TYPE_UNRESOLVED),
+             "@ffi::CString on parameter '{}' of function '{}': "
+             "@ffi::CString is only valid on parameters of @ffi::Extern(\"C\") functions",
+             {param.get_short_name(), fn.get_short_name()});
+    }
+    if (!parameter_type || type::contains_unresolved(parameter_type)) {
+        fail(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_TYPE_UNRESOLVED),
+             "@ffi::CString on parameter '{}': cannot resolve parameter type",
+             {param.get_short_name()});
+    }
+    auto inner = type::canonical(parameter_type);
+    while (type::is_const(inner)) inner = type::canonical(inner->get_subtype());
+    if (type::is_drain(inner)) {
+        logger.warn(static_cast<unsigned int>(k::diag::function_diag::WARN_PARAM_DRAIN_NON_STRUCT), location,
+            "@ffi::CString on parameter '{}': drain indirection (#) is not meaningful "
+            "for C FFI; treating as reference", {param.get_short_name()});
+        inner = type::canonical(inner->get_subtype());
+    } else if (type::is_reference(inner) || type::is_pointer(inner)
+            || type::is_view(inner) || type::is_link(inner) || type::is_owner(inner)) {
+        inner = type::canonical(inner->get_subtype());
+    } else {
+        fail(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_DRAIN_MUST_BE_LAST),
+             "@ffi::CString on parameter '{}': the parameter type must be an addresser "
+             "(reference, pointer, view, link or owner) to char, but got '{}'",
+             {param.get_short_name(), parameter_type->to_string()});
+    }
+    while (type::is_const(inner)) inner = type::canonical(inner->get_subtype());
+    // The erased synthesis of a generic only carries the placeholder; the contract is
+    // checked against the original signature at each concrete use.
+    if (type::is_erased_param(inner)) return;
+    auto prim = std::dynamic_pointer_cast<primitive_type>(inner);
+    if (!prim || (prim->get_type() != primitive_type::CHAR
+                  && prim->get_type() != primitive_type::BYTE
+                  && prim->get_type() != primitive_type::UNSIGNED_BYTE)) {
+        fail(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH),
+             "@ffi::CString on parameter '{}': the addressed type must be char, but got '{}'",
+             {param.get_short_name(), inner ? inner->to_string() : "<unavailable>"});
+    }
+    if (prim->get_type() == primitive_type::BYTE) {
+        logger.warn(static_cast<unsigned int>(k::diag::function_diag::WARN_PARAM_DEFAULT_NARROWING), location,
+            "@ffi::CString on parameter '{}': byte will be treated as char for C FFI",
+            {param.get_short_name()});
+    }
+}
 
 
 
@@ -584,7 +645,8 @@ void symbol_resolver::resolve_function_annotations(function& fn) {
             }
 
             // Determine the C symbol name
-            std::string c_symbol = symbol.value_or(fn.get_short_name());
+            std::string c_symbol = symbol.value_or(
+                fn.has_tpl_args() ? fn.get_tpl_base_name() : fn.get_short_name());
             fn.set_extern_c_symbol(c_symbol);
             // Re-compute the mangled name now that _is_extern and _extern_c_symbol are set.
             fn.update_mangled_name();
@@ -598,81 +660,21 @@ void symbol_resolver::resolve_function_annotations(function& fn) {
     // Validate that each @CString-annotated parameter belongs to an @Extern("C")
     // function and that its K type is an addresser (ref, ptr, view, link or owner)
     // to char.  Drain (#) triggers a warning and is treated as reference.
-    // unsigned char triggers a warning.  Any other addressed type is rejected.
+    // byte triggers a warning. Any other non-character addressed type is rejected.
     for (auto& param : fn.parameters()) {
         for (auto& ann_inst : param->get_annotations()) {
             if (!ann_inst.resolved_type) continue;
             std::string fq = ann_inst.resolved_type->get_fq_name();
             if (fq != "k::ffi::CString" && fq != "::k::ffi::CString") continue;
 
-            lex::opt_any_lexeme param_lexeme;
-            if (auto ast_ps = param->get_ast_parameter_spec()) {
-                if (ast_ps->name) param_lexeme = lex::any_lexeme{*ast_ps->name};
-            }
-
-            // 1. The owning function must be @Extern("C")
             if (!fn.is_extern()) {
-                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_TYPE_UNRESOLVED), param_lexeme,
-                    "@ffi::CString on parameter '{}' of function '{}': "
-                    "@ffi::CString is only valid on parameters of @ffi::Extern(\"C\") functions",
-                    {param->get_short_name(), fn.get_short_name()});
+                validate_ffi_cstring_parameter(*this, fn, *param, param->get_type());
             }
-
-            // 2. Validate the parameter type
-            auto ptype = param->get_type();
-            if (!ptype || !type::is_resolved(ptype)) break; // unresolved — skip silently
-
-            // 2a. Strip const wrappers
-            auto inner = ptype;
-            while (type::is_const(inner)) inner = inner->get_subtype();
-
-            // 2b. Check for drain — warn and peel
-            if (type::is_drain(inner)) {
-                warn(static_cast<unsigned int>(k::diag::function_diag::WARN_PARAM_DRAIN_NON_STRUCT), param_lexeme,
-                    "@ffi::CString on parameter '{}': drain indirection (#) is not meaningful "
-                    "for C FFI; treating as reference",
-                    {param->get_short_name()});
-                inner = inner->get_subtype();
-            }
-            // 2c. Check for an addresser (reference, pointer, view, link, owner)
-            else if (type::is_reference(inner) || type::is_pointer(inner)
-                  || type::is_view(inner) || type::is_link(inner)
-                  || type::is_owner(inner)) {
-                inner = inner->get_subtype();
-            } else {
-                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_DRAIN_MUST_BE_LAST), param_lexeme,
-                    "@ffi::CString on parameter '{}': the parameter type must be an addresser "
-                    "(reference, pointer, view, link or owner) to char, but got '{}'",
-                    {param->get_short_name(), ptype->to_string()});
-            }
-
-            // 2d. Strip const again (for `const char&` patterns)
-            while (type::is_const(inner)) inner = inner->get_subtype();
-
-            // 2e. Leaf type must be char (or unsigned char with warning)
-            auto prim = std::dynamic_pointer_cast<primitive_type>(inner);
-            if (!prim) {
-                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH), param_lexeme,
-                    "@ffi::CString on parameter '{}': the addressed type must be char, "
-                    "but got '{}'",
-                    {param->get_short_name(), inner->to_string()});
-            } else if (prim->get_type() == primitive_type::BYTE) {
-                warn(static_cast<unsigned int>(k::diag::function_diag::WARN_PARAM_DEFAULT_NARROWING), param_lexeme,
-                    "@ffi::CString on parameter '{}': byte will be treated "
-                    "as char for C FFI",
-                    {param->get_short_name()});
-            } else if (prim->get_type() == primitive_type::UNSIGNED_BYTE) {
-                // unsigned byte is the natural element type for a C string (UTF-8 bytes).
-            } else if (prim->get_type() != primitive_type::CHAR) {
-                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH), param_lexeme,
-                    "@ffi::CString on parameter '{}': the addressed type must be char, "
-                    "but got '{}'",
-                    {param->get_short_name(), inner->to_string()});
-            }
-
-            // 3. Mark the parameter
             param->set_ffi_cstring(true);
-
+            if (type::is_resolved(param->get_type()) && !param->is_ffi_cstring_type_validated()) {
+                validate_ffi_cstring_parameter(*this, fn, *param, param->get_type());
+                param->set_ffi_cstring_type_validated();
+            }
             // Only process the first @CString occurrence per parameter
             break;
         }
@@ -929,10 +931,25 @@ void type_reference_resolver::visit_function(function& fn) {
     }
 
     // Cloned template declarations missed the initial symbol-resolution pass.
-    if (std::any_of(fn.get_annotations().begin(), fn.get_annotations().end(),
-                    [](const auto& ann) { return !ann.resolved_type; })) {
+    const auto unresolved_annotation = [](const auto& ann) { return !ann.resolved_type; };
+    if (std::any_of(fn.get_annotations().begin(), fn.get_annotations().end(), unresolved_annotation)
+        || std::any_of(fn.parameters().begin(), fn.parameters().end(), [&](const auto& param) {
+               return std::any_of(param->get_annotations().begin(), param->get_annotations().end(),
+                                  unresolved_annotation);
+           })) {
         symbol_resolver annotation_resolver(*this, _context, _unit);
+        for (const auto& param : fn.parameters()) {
+            if (std::any_of(param->get_annotations().begin(), param->get_annotations().end(),
+                            unresolved_annotation))
+                param->accept(annotation_resolver);
+        }
         annotation_resolver.resolve_function_annotations(fn);
+    }
+    for (const auto& param : fn.parameters()) {
+        if (param->is_ffi_cstring() && !param->is_ffi_cstring_type_validated()) {
+            validate_ffi_cstring_parameter(*this, fn, *param, param->get_type());
+            param->set_ffi_cstring_type_validated();
+        }
     }
 
     // Resolve return type if still unresolved (e.g. member functions returning StructType&)
@@ -994,79 +1011,15 @@ void type_reference_resolver::visit_function(function& fn) {
     }
 
     // Resolve throws spec types from raw names
-    if (!fn.get_throws_spec_raw().empty() && fn.get_throws_spec().empty()) {
+    if (!fn.get_throws_spec_raw().empty()
+        && fn.get_throws_spec_raw().size() != fn.get_throws_spec().size()) {
         lex::opt_any_lexeme throws_lexeme;
         if (auto ast_fd = fn.get_ast_function_decl()) throws_lexeme = lex::any_lexeme{ast_fd->name};
 
-        for (const auto& raw_name : fn.get_throws_spec_raw()) {
-            std::shared_ptr<aggregate> agg;
-            std::shared_ptr<type> throws_type;
-
-            // Look up the type by name (it should resolve to a struct/class)
-            auto unres = _context->create_unresolved(k::name(raw_name));
-            auto resolved = _context->resolve_type(unres);
-            if (resolved && type::is_resolved(resolved)) {
-                if (auto st = std::dynamic_pointer_cast<struct_type>(resolved)) {
-                    agg = st->get_struct();
-                }
-                throws_type = resolved;
-            } else {
-                // Try scope lookup — the type may be in the same namespace
-                agg = scope_lookup::lookup_structure(fn.shared_as<element>(), raw_name);
-                if (!agg) {
-                    // Try imported aggregates (e.g. Exception from stdlib)
-                    k::name type_name(raw_name);
-                    agg = _unit.get_or_create_imported_aggregate(type_name, _context);
-                }
-                if (agg) {
-                    auto st = agg->get_struct_type();
-                    if (!st) {
-                        // Create a struct_type for the aggregate
-                        st = std::make_shared<struct_type>(agg->get_short_name(), agg);
-                        _context->add_struct(st);
-                        agg->set_struct_type(st);
-                    }
-                    throws_type = st;
-                } else {
-                    throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND),
-                                throws_lexeme, "Cannot resolve type '{}' in throws clause of function '{}'",
-                                {raw_name, fn.get_short_name()});
-                }
-            }
-
-            // Validate that the throws type derives from ::k::Throwable
-            if (agg) {
-                std::shared_ptr<aggregate> throwable_class;
-                auto root_ns = _unit.get_root_namespace();
-                if (root_ns) {
-                    auto k_ns = root_ns->get_child_namespace("k");
-                    if (k_ns) {
-                        throwable_class = k_ns->get_aggregate("Throwable");
-                    }
-                }
-                if (!throwable_class) {
-                    k::name thr_name(false, {"k", "Throwable"});
-                    throwable_class = _unit.get_or_create_imported_aggregate(thr_name, _context);
-                }
-                if (throwable_class) {
-                    if (agg != throwable_class && !agg->is_derived_from(throwable_class)) {
-                        throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_NOT_EXCEPTION_TYPE),
-                                    throws_lexeme,
-                                    "Type '{}' in throws clause of function '{}' does not derive from ::k::Throwable",
-                                    {agg->get_short_name(), fn.get_short_name()});
-                    }
-                }
-            } else {
-                throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_NOT_EXCEPTION_TYPE),
-                            throws_lexeme,
-                            "Type '{}' in throws clause of function '{}' does not derive from ::k::Throwable",
-                            {raw_name, fn.get_short_name()});
-            }
-
-            if (throws_type) {
-                fn.add_throws_type(throws_type);
-            }
-        }
+        auto exceptions = resolve_raw_function_throws(fn, throws_lexeme);
+        const auto& existing = fn.get_throws_spec();
+        exceptions.insert(exceptions.end(), existing.begin(), existing.end());
+        fn.set_throws_spec(std::move(exceptions));
     }
 
     // Recompute the mangled name now that parameter and return types are fully resolved.
@@ -1365,6 +1318,25 @@ llvm::Function* implementation_generator::ensure_function_declared(k::model::fun
     auto func_it = _context->_functions.find(function.shared_as<k::model::function>());
     if (func_it != _context->_functions.end()) return func_it->second;
 
+    if (function.is_extern()) {
+        if (function.is_external()) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_NATIVE_ABI_UNPROVEN),
+                function.get_first_lexeme(),
+                "Cannot establish native ABI for imported function '{}' (symbol '{}'): "
+                "its validated LLVM declaration is unavailable",
+                {function.get_fq_name(), function.get_mangled_name()});
+        }
+        if (function.get_mangled_name().empty()) function.update_mangled_name();
+        declaration_generator declarations(*this, _compiler, _context, _unit);
+        declarations.visit_function(function);
+        func_it = _context->_functions.find(function.shared_as<k::model::function>());
+        if (func_it != _context->_functions.end()) return func_it->second;
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B),
+            function.get_first_lexeme(),
+            "Cannot declare native symbol '{}' for '{}'",
+            {function.get_mangled_name(), function.get_fq_name()});
+    }
+
     if (function.get_mangled_name().empty()) {
         if (function.get_fq_name().empty()) {
             if (auto anc = function.ancestor<named_element>()) {
@@ -1516,9 +1488,17 @@ void implementation_generator::visit_function(function &function) {
     // declaration on-demand for template instantiations reachable only now.
     llvm::Function* func = ensure_function_declared(function);
 
+    auto previous_function = std::exchange(_current_function, function.shared_as<model::function>());
+    auto current_function_guard = k::make_scope_exit([&]() {
+        _current_function = std::move(previous_function);
+    });
     begin_function_debug_scope(function, func);
     auto debug_scope_guard = k::make_scope_exit([&]() {
         end_function_debug_scope();
+    });
+    auto previous_caught_metadata = std::exchange(_caught_exception_metadata, {});
+    auto caught_metadata_guard = k::make_scope_exit([&]() {
+        _caught_exception_metadata = std::move(previous_caught_metadata);
     });
 
     // Step 2: Create entry basic block and reset per-function state
@@ -1539,8 +1519,11 @@ void implementation_generator::visit_function(function &function) {
     _constructor_member_dtor_flags.clear();
     _constructor_initialized_members.clear();
     _lpad_depth_counter = 0;
+    _function_cleanup_depth = 0;
+    _pending_return_result.reset();
     while (!_cleanup_blocks.empty()) _cleanup_blocks.pop();
     while (!_cleanup_vars_stack.empty()) _cleanup_vars_stack.pop();
+    while (!_cleanup_scope_depth_stack.empty()) _cleanup_scope_depth_stack.pop();
     while (!_owner_params_stack.empty()) _owner_params_stack.pop();
     while (!_struct_params_stack.empty()) _struct_params_stack.pop();
     while (!_cleanup_lpad_stack.empty()) _cleanup_lpad_stack.pop();
@@ -1568,56 +1551,59 @@ void implementation_generator::visit_function(function &function) {
         if (blk) {
             std::shared_ptr<variable_statement> nrvo_var;
             bool nrvo_eligible = true;
-            std::function<void(const k::model::block&)> scan_returns;
-            scan_returns = [&](const k::model::block& b) {
-                for (auto& stmt : b.get_statements()) {
-                    if (auto ret = std::dynamic_pointer_cast<return_statement>(stmt)) {
-                        if (auto expr = ret->get_expression()) {
-                            // Check if expression is a symbol_expression referring to a local variable_statement
-                            auto sym = std::dynamic_pointer_cast<symbol_expression>(expr);
-                            if (!sym) {
-                                // Could be wrapped in a load_value_expression or cast
-                                if (auto lv = std::dynamic_pointer_cast<load_value_expression>(expr))
-                                    sym = std::dynamic_pointer_cast<symbol_expression>(lv->sub_expr());
-                            }
-                            if (sym && sym->is_variable_def()) {
-                                auto var_def = sym->get_variable_def();
-                                auto var_stmt = std::dynamic_pointer_cast<variable_statement>(var_def);
-                                if (var_stmt && type::is_struct(var_stmt->get_type())) {
-                                    if (!nrvo_var) {
-                                        nrvo_var = var_stmt;
-                                    } else if (nrvo_var != var_stmt) {
-                                        nrvo_eligible = false; // different variables in different returns
-                                    }
-                                } else {
-                                    nrvo_eligible = false;
+            std::function<void(const std::shared_ptr<k::model::statement>&)> scan_returns;
+            scan_returns = [&](const std::shared_ptr<k::model::statement>& stmt) {
+                if (!stmt) return;
+                if (auto ret = std::dynamic_pointer_cast<return_statement>(stmt)) {
+                    if (auto expr = ret->get_expression()) {
+                        // Check if expression is a symbol_expression referring to a local variable_statement
+                        auto sym = std::dynamic_pointer_cast<symbol_expression>(expr);
+                        if (!sym) {
+                            // Could be wrapped in a load_value_expression or cast
+                            if (auto lv = std::dynamic_pointer_cast<load_value_expression>(expr))
+                                sym = std::dynamic_pointer_cast<symbol_expression>(lv->sub_expr());
+                        }
+                        if (sym && sym->is_variable_def()) {
+                            auto var_def = sym->get_variable_def();
+                            auto var_stmt = std::dynamic_pointer_cast<variable_statement>(var_def);
+                            if (var_stmt && type::is_struct(var_stmt->get_type())) {
+                                if (!nrvo_var) {
+                                    nrvo_var = var_stmt;
+                                } else if (nrvo_var != var_stmt) {
+                                    nrvo_eligible = false; // different variables in different returns
                                 }
                             } else {
                                 nrvo_eligible = false;
                             }
+                        } else {
+                            nrvo_eligible = false;
                         }
                     }
-                    // Recurse into nested blocks (if-else, while, for bodies)
-                    if (auto sub_block = std::dynamic_pointer_cast<k::model::block>(stmt)) {
-                        scan_returns(*sub_block);
+                    return;
+                }
+                // Every nested statement kind must be visited: a return hidden in an
+                // unvisited body would write into the sret slot aliased by the candidate,
+                // which the candidate's cleanup would then destroy.
+                if (auto sub_block = std::dynamic_pointer_cast<k::model::block>(stmt)) {
+                    for (auto& nested : sub_block->get_statements()) scan_returns(nested);
+                } else if (auto if_stmt = std::dynamic_pointer_cast<if_else_statement>(stmt)) {
+                    scan_returns(if_stmt->get_then_stmt());
+                    scan_returns(if_stmt->get_else_stmt());
+                } else if (auto while_stmt = std::dynamic_pointer_cast<while_statement>(stmt)) {
+                    scan_returns(while_stmt->get_nested_stmt());
+                } else if (auto for_stmt = std::dynamic_pointer_cast<for_statement>(stmt)) {
+                    scan_returns(for_stmt->get_nested_stmt());
+                } else if (auto foreach_stmt = std::dynamic_pointer_cast<foreach_statement>(stmt)) {
+                    scan_returns(foreach_stmt->get_nested_stmt());
+                } else if (auto try_stmt = std::dynamic_pointer_cast<try_catch_statement>(stmt)) {
+                    scan_returns(try_stmt->get_try_body());
+                    for (auto& clause : try_stmt->get_catch_clauses()) {
+                        if (clause) scan_returns(clause->get_body());
                     }
-                    if (auto if_stmt = std::dynamic_pointer_cast<if_else_statement>(stmt)) {
-                        if (auto then_b = std::dynamic_pointer_cast<k::model::block>(if_stmt->get_then_stmt()))
-                            scan_returns(*then_b);
-                        if (auto else_b = std::dynamic_pointer_cast<k::model::block>(if_stmt->get_else_stmt()))
-                            scan_returns(*else_b);
-                    }
-                    if (auto while_stmt = std::dynamic_pointer_cast<while_statement>(stmt)) {
-                        if (auto body = std::dynamic_pointer_cast<k::model::block>(while_stmt->get_nested_stmt()))
-                            scan_returns(*body);
-                    }
-                    if (auto for_stmt = std::dynamic_pointer_cast<for_statement>(stmt)) {
-                        if (auto body = std::dynamic_pointer_cast<k::model::block>(for_stmt->get_nested_stmt()))
-                            scan_returns(*body);
-                    }
+                    scan_returns(try_stmt->get_finally_body());
                 }
             };
-            scan_returns(*blk);
+            scan_returns(blk);
             if (nrvo_eligible && nrvo_var) {
                 _nrvo_candidate = nrvo_var;
             }
@@ -1704,7 +1690,10 @@ void implementation_generator::visit_function(function &function) {
             if (type::is_reference(pt) || type::is_pointer(pt) || type::is_link(pt)
                 || type::is_view(pt) || type::is_owner(pt)) continue;
             if (auto st_type = std::dynamic_pointer_cast<struct_type>(pt)) {
-                if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
+                auto agg = st_type->get_struct();
+                auto un = agg ? nullptr : find_union_by_struct_type(_unit.get_root_namespace(), st_type);
+                if ((agg && agg->get_destructor())
+                    || (un && un->has_nontrivial_destructor_alternative())) {
                     struct_params.push_back(param);
                     auto* flag = _builder->CreateAlloca(
                         llvm::Type::getInt1Ty(_context->llvm_context()), nullptr,
@@ -1833,6 +1822,7 @@ void implementation_generator::visit_function(function &function) {
         func_ctx.catch_exc_sel_alloca = nullptr;
         func_ctx.depth = ++_lpad_depth_counter;
         _cleanup_lpad_stack.push(func_ctx);
+        _function_cleanup_depth = func_ctx.depth;
     }
 
     // Step 7: Visit the function body block
@@ -1846,6 +1836,18 @@ void implementation_generator::visit_function(function &function) {
     // Step 9: For destructors: emit cleanup (member/base destructor calls)
     // Destructor: member and base destructor calls
     emit_destructor_cleanup(function);
+
+    // Keep the function cleanup handler active while a fallthrough return
+    // destroys parameters. A completed named result still belongs to this
+    // frame if one of those destructors throws.
+    if (_builder->GetInsertBlock() && !_builder->GetInsertBlock()->getTerminator()
+        && (!_owner_params_stack.empty() || !_struct_params_stack.empty())) {
+        auto result = function.get_named_return_var();
+        const bool protect_result = _sret_ptr && result && _dtor_flags.count(result);
+        call_argument_cleanup_scope guard(*this, protect_result);
+        guard.track_variable(result);
+        emit_active_parameter_cleanup("exit_param");
+    }
 
     // Emit function-level cleanup landing pad (for owner/struct params) if set up
     if (has_func_level_cleanup && !_cleanup_lpad_stack.empty()) {
@@ -1876,8 +1878,10 @@ void implementation_generator::visit_function(function &function) {
         func->insert(func->end(), func_ctx.cleanup_code_bb);
         _builder->SetInsertPoint(func_ctx.cleanup_code_bb);
 
+        auto pending_metadata = save_pending_exception_metadata();
         emit_constructor_unwind_cleanup(function);
         emit_active_parameter_cleanup("func_unwind_param");
+        restore_pending_exception_metadata(pending_metadata);
 
         // Resume unwinding
         auto* resume_ptr = _builder->CreateLoad(ptr_ty, _exc_ptr_slot, "func_resume_ptr");
@@ -1936,8 +1940,7 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
     //      have overwritten with their own vtables.
     // This matches C++ constructor dispatch semantics for the complete object.
 
-    // For non-static inner struct constructors: store the __parent__ parameter
-    // (first explicit parameter, type Outer&) into the __parent__ field (LLVM struct field index 0).
+    // For non-static inner struct constructors, store the enclosing-instance reference.
     if (st->is_inner()) {
         auto parent_param_model = ctor->get_parameter("__parent__");
         if (parent_param_model) {
@@ -1949,11 +1952,17 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
                 auto outer_ref_llvm_type = _context->get_llvm_type(
                     st->get_enclosing_structure()->get_struct_type()->get_reference());
                 auto parent_ptr_val = _builder->CreateLoad(outer_ref_llvm_type, parent_param_alloca, "parent_ref_val");
-                // GEP to __parent__ field (field index 0)
+                auto parent_field = st->get_struct_type()->get_member("__parent__");
+                if (!parent_field) {
+                    throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01E),
+                        function.get_first_lexeme(),
+                        "Internal error: inner aggregate '{}' has no enclosing-instance field",
+                        {st->get_fq_name()});
+                }
                 auto parent_field_ptr = _builder->CreateStructGEP(
                     _context->get_llvm_type(st->get_struct_type()),
                     this_ptr,
-                    0,
+                    (unsigned)parent_field->index,
                     "this_parent_field_ptr"
                 );
                 _builder->CreateStore(parent_ptr_val, parent_field_ptr);
@@ -1973,19 +1982,21 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
                 auto other_ptr = _builder->CreateLoad(other_ref_type, other_alloca_it->second, "other_ref");
                 auto st_llvm_type = _context->get_llvm_type(st->get_struct_type());
 
-                // Copy each field by field index using GEP + memcpy approach:
-                // We use a simple aggregate load/store (only valid for simple types).
-                // For structs with nested struct members, we'd need to call their copy ctors —
-                // but since we only generate this for trivially-copyable cases,
-                // a bitwise copy (memcpy semantics) is correct.
-                // Use llvm.memcpy intrinsic: copy sizeof(Struct) bytes from other to this.
-                auto& dl = _context->_module->getDataLayout();
-                uint64_t size = dl.getTypeAllocSize(st_llvm_type);
-                _builder->CreateMemCpy(
-                    this_ptr, llvm::MaybeAlign(),
-                    other_ptr, llvm::MaybeAlign(),
-                    _builder->getInt64(size)
-                );
+                if (!emit_scalar_union_wrapper_copy(this_ptr, other_ptr, st, false, false)) {
+                    auto& dl = _context->_module->getDataLayout();
+                    uint64_t size = dl.getTypeAllocSize(st_llvm_type);
+                    _builder->CreateMemCpy(
+                        this_ptr, llvm::MaybeAlign(),
+                        other_ptr, llvm::MaybeAlign(),
+                        _builder->getInt64(size)
+                    );
+                    if (ctor->is_memberwise_copy()) {
+                        emit_memberwise_copy_fields(st, this_ptr, other_ptr);
+                        if (auto kl = std::dynamic_pointer_cast<klass>(st); kl && kl->has_vtable()) {
+                            emit_vptr_store(*_builder, *kl, this_ptr, _context);
+                        }
+                    }
+                }
             }
         }
         // No user block to visit for a generated copy constructor — return immediately.
@@ -2070,6 +2081,80 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
 }
 
 /**
+ * Finish a synthesized memberwise copy: the whole object was already copied bytewise, so
+ * every base or member that has its own copy constructor is re-initialised in place
+ * (zeroed, then copy-constructed from the source) to replace the aliased bytes.
+ */
+void implementation_generator::emit_memberwise_copy_fields(const std::shared_ptr<aggregate>& st,
+                                                           llvm::Value* dest, llvm::Value* source) {
+    auto st_type = st->get_struct_type();
+    auto st_llvm = _context->get_llvm_type(st_type);
+
+    std::function<void(const std::shared_ptr<type>&, llvm::Value*, llvm::Value*)> copy_value;
+    copy_value = [&](const std::shared_ptr<type>& t, llvm::Value* d, llvm::Value* s) {
+        auto nt = type::canonical(type::remove_const(t));
+        if (member_copy_kind_of(nt) != member_copy_kind::constructed) return;
+        if (auto arr = std::dynamic_pointer_cast<sized_array_type>(nt)) {
+            auto* arr_type = arr->get_llvm_struct_type();
+            auto* data_type = arr->get_llvm_data_array_type();
+            auto* dst_data = _builder->CreateStructGEP(arr_type, d, sized_array_type::FIELD_DATA, "mwc_dst_data");
+            auto* src_data = _builder->CreateStructGEP(arr_type, s, sized_array_type::FIELD_DATA, "mwc_src_data");
+            auto* fn = _builder->GetInsertBlock()->getParent();
+            auto* entry = _builder->GetInsertBlock();
+            auto* test = llvm::BasicBlock::Create(**_context, "mwc_test", fn);
+            auto* body = llvm::BasicBlock::Create(**_context, "mwc_elem", fn);
+            auto* done = llvm::BasicBlock::Create(**_context, "mwc_done", fn);
+            _builder->CreateBr(test);
+            _builder->SetInsertPoint(test);
+            auto* index = _builder->CreatePHI(_builder->getInt32Ty(), 2, "mwc_index");
+            index->addIncoming(_builder->getInt32(0), entry);
+            _builder->CreateCondBr(_builder->CreateICmpULT(index, _builder->getInt32((uint32_t)arr->get_size())),
+                                   body, done);
+            _builder->SetInsertPoint(body);
+            auto* dst_elem = _builder->CreateInBoundsGEP(data_type, dst_data, {_builder->getInt32(0), index});
+            auto* src_elem = _builder->CreateInBoundsGEP(data_type, src_data, {_builder->getInt32(0), index});
+            copy_value(arr->get_subtype(), dst_elem, src_elem);
+            auto* next = _builder->CreateAdd(index, _builder->getInt32(1), "mwc_next");
+            index->addIncoming(next, _builder->GetInsertBlock());
+            _builder->CreateBr(test);
+            _builder->SetInsertPoint(done);
+            return;
+        }
+        auto member_type = std::dynamic_pointer_cast<struct_type>(nt);
+        auto agg = member_type ? member_type->get_struct() : nullptr;
+        auto copy = agg ? agg->get_copy_constructor() : nullptr;
+        if (!copy) return;
+        auto it = _context->_functions.find(copy->shared_as<function>());
+        if (it == _context->_functions.end()) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F031), {},
+                "LLVM declaration not found for the copy constructor of member type '{}'",
+                {nt->to_string()});
+        }
+        _builder->CreateStore(llvm::Constant::getNullValue(_context->get_llvm_type(member_type)), d);
+        create_call_or_invoke(it->second->getFunctionType(), it->second, {d, s});
+    };
+
+    auto copy_field = [&](const std::string& field_name, const std::shared_ptr<type>& field_type) {
+        auto field = st_type->get_member(field_name);
+        if (!field) return;
+        auto* d = _builder->CreateStructGEP(st_llvm, dest, (unsigned)field->index, "mwc_dst_" + field_name);
+        auto* s = _builder->CreateStructGEP(st_llvm, source, (unsigned)field->index, "mwc_src_" + field_name);
+        copy_value(field_type, d, s);
+    };
+
+    for (const auto& bs : st->get_bases()) {
+        if (bs.base && bs.base->get_struct_type()) {
+            copy_field("__base_" + bs.sanitised_name() + "__", bs.base->get_struct_type());
+        }
+    }
+    for (const auto& entry : st->variables()) {
+        auto mv = std::dynamic_pointer_cast<member_variable_definition>(entry.second);
+        if (!mv || entry.first.rfind("__", 0) == 0) continue;
+        copy_field(entry.first, mv->get_type());
+    }
+}
+
+/**
  * Emit compiler-generated copy assignment operator (operator=) memberwise copy.
  *
  * Steps:
@@ -2108,14 +2193,40 @@ bool implementation_generator::emit_copy_assignment_operator(function& function,
             auto other_ref_type = _context->get_llvm_type(st->get_struct_type()->get_reference());
             auto other_ptr = _builder->CreateLoad(other_ref_type, other_alloca_it->second, "other_ref");
             auto st_llvm_type = _context->get_llvm_type(st->get_struct_type());
-            // Memberwise copy using memcpy
-            auto& dl = _context->_module->getDataLayout();
-            uint64_t size = dl.getTypeAllocSize(st_llvm_type);
-            _builder->CreateMemCpy(
-                this_ptr, llvm::MaybeAlign(),
-                other_ptr, llvm::MaybeAlign(),
-                _builder->getInt64(size)
-            );
+            auto copy_ctor = st->get_copy_constructor();
+            if (copy_ctor && copy_ctor->is_memberwise_copy()) {
+                // Resource-owning members: destroy the old value, then copy-construct in place.
+                auto copy_it = _context->_functions.find(copy_ctor->shared_as<model::function>());
+                if (copy_it == _context->_functions.end()) {
+                    throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F031),
+                        function.get_first_lexeme(),
+                        "LLVM declaration not found for the copy constructor of type '{}'",
+                        {st->get_struct_type()->to_string()});
+                }
+                auto* assign_fn = _builder->GetInsertBlock()->getParent();
+                auto* copy_bb = llvm::BasicBlock::Create(**_context, "assign_copy", assign_fn);
+                auto* done_bb = llvm::BasicBlock::Create(**_context, "assign_done", assign_fn);
+                _builder->CreateCondBr(_builder->CreateICmpNE(this_ptr, other_ptr), copy_bb, done_bb);
+                _builder->SetInsertPoint(copy_bb);
+                if (auto dtor = st->get_destructor()) {
+                    auto dtor_it = _context->_functions.find(dtor->shared_as<model::function>());
+                    if (dtor_it != _context->_functions.end()) {
+                        create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {this_ptr});
+                    }
+                }
+                _builder->CreateStore(llvm::Constant::getNullValue(st_llvm_type), this_ptr);
+                create_call_or_invoke(copy_it->second->getFunctionType(), copy_it->second, {this_ptr, other_ptr});
+                _builder->CreateBr(done_bb);
+                _builder->SetInsertPoint(done_bb);
+            } else if (!emit_scalar_union_wrapper_copy(this_ptr, other_ptr, st, true, true)) {
+                auto& dl = _context->_module->getDataLayout();
+                uint64_t size = dl.getTypeAllocSize(st_llvm_type);
+                _builder->CreateMemCpy(
+                    this_ptr, llvm::MaybeAlign(),
+                    other_ptr, llvm::MaybeAlign(),
+                    _builder->getInt64(size)
+                );
+            }
         }
     }
     // Return this (ref to struct)
@@ -2513,15 +2624,6 @@ void implementation_generator::emit_destructor_cleanup(function& function) {
 void implementation_generator::emit_function_return_epilogue(function& function, llvm::Function* func, bool use_sret) {
     const bool needs_fallthrough_epilogue =
         (_builder->GetInsertBlock() != nullptr) && (_builder->GetInsertBlock()->getTerminator() == nullptr);
-
-    // Step 1: Emit owner parameter cleanup (null the caller's owner after move)
-    // Force adding a terminator as last instruction guard (will be eliminated if unreachable).
-    // Before that, emit cleanup for owner-typed parameters (fall-through exit path).
-    // For functions with an explicit return statement, this code is unreachable and will be
-    // removed by optimize_function_dead_inst_elimination.
-    if (needs_fallthrough_epilogue && (!_owner_params_stack.empty() || !_struct_params_stack.empty())) {
-        emit_active_parameter_cleanup("exit_param");
-    }
 
     if (!_owner_params_stack.empty()) {
         _owner_params_stack.pop();

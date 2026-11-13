@@ -30,6 +30,103 @@
 #include "../src/model/mangler.hpp"
 
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/GlobalVariable.h>
+
+#include <algorithm>
+#include <cerrno>
+#include <exception>
+#include <sys/wait.h>
+#include <unistd.h>
+
+TEST_CASE("Imported exception aliases enforce call contracts",
+          "[gen][exceptions][contract][import][alias][regression]") {
+    TmpKdi lib(R"K(
+        module alias_call_contract;
+        public class Failure : public Exception {}
+        public typedef FailureAlias : Failure;
+        public struct Value {
+            Value() throws(Failure) {}
+        }
+        public work() throws(Failure) {}
+    )K", true);
+    auto metadata = kdi::kdi_read_cbor_file(lib.kdi_path);
+    auto value = std::find_if(metadata.unit.root_ns.aggregates.begin(),
+        metadata.unit.root_ns.aggregates.end(),
+        [](const auto& entry) { return entry.name == "Value"; });
+    REQUIRE(value != metadata.unit.root_ns.aggregates.end());
+    auto ctor = std::find_if(value->constructors.begin(), value->constructors.end(),
+        [](const auto& entry) { return entry.params.empty(); });
+    REQUIRE(ctor != value->constructors.end());
+    ctor->throws_spec = std::vector<kdi::kdi_type>{
+        kdi::kdi_type::make_alias("alias_call_contract::FailureAlias")};
+    auto work = std::find_if(metadata.unit.root_ns.functions.begin(), metadata.unit.root_ns.functions.end(),
+        [](const auto& entry) { return entry.name == "work"; });
+    REQUIRE(work != metadata.unit.root_ns.functions.end());
+    work->throws_spec = {kdi::kdi_type::make_alias("alias_call_contract::FailureAlias")};
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, lib.kdi_path));
+
+    auto make_compiler = [&]() {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("alias_call_contract", lib.kdi_path);
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        compiler->set_file_resolver(resolver);
+        return compiler;
+    };
+    auto declared = make_compiler();
+    REQUIRE_NOTHROW(declared->parse_source("alias_call_declared.k", R"K(
+        module alias_call_declared;
+        import alias_call_contract;
+        use() throws(alias_call_contract::Failure) {
+            alias_call_contract::work();
+            value: alias_call_contract::Value;
+        }
+    )K", false, false));
+    auto ns = declared->get_unit()->get_root_namespace()->get_child_namespace("alias_call_contract");
+    REQUIRE(ns);
+    auto imported_work = ns->get_function("work");
+    auto imported_value = ns->get_aggregate("Value");
+    auto imported_alias = ns->get_alias("FailureAlias");
+    auto imported_failure = ns->get_aggregate("Failure");
+    REQUIRE(imported_work);
+    REQUIRE(imported_value);
+    REQUIRE(imported_alias);
+    REQUIRE(imported_failure);
+    REQUIRE(imported_work->get_throws_spec().size() == 1);
+    REQUIRE_FALSE(imported_value->constructors().empty());
+    REQUIRE(imported_value->constructors()[0]->get_throws_spec().size() == 1);
+    auto alias = imported_alias->get_declared_type();
+    REQUIRE(std::dynamic_pointer_cast<k::model::alias_type>(alias));
+    CHECK(imported_work->get_throws_spec()[0] == alias);
+    CHECK(imported_value->constructors()[0]->get_throws_spec()[0] == alias);
+    CHECK_FALSE(k::model::type::are_equal(alias, imported_failure->get_struct_type()));
+
+    auto unhandled = Catch::Matchers::Predicate<k::log::compiler_error>(
+        [](const auto& error) {
+            return error.get_diagnostic().message.find("neither caught nor declared") != std::string::npos;
+        }, "rejects an unhandled aliased exception");
+    REQUIRE_THROWS_MATCHES(make_compiler()->parse_source("alias_call_rejected.k", R"K(
+        module alias_call_rejected;
+        import alias_call_contract;
+        use() throws() { alias_call_contract::work(); }
+    )K", false, false), k::log::compiler_error, unhandled);
+    REQUIRE_THROWS_MATCHES(make_compiler()->parse_source("alias_ctor_rejected.k", R"K(
+        module alias_ctor_rejected;
+        import alias_call_contract;
+        use() throws() { value: alias_call_contract::Value; }
+    )K", false, false), k::log::compiler_error, unhandled);
+    REQUIRE_NOTHROW(make_compiler()->parse_source("alias_call_caught.k", R"K(
+        module alias_call_caught;
+        import alias_call_contract;
+        use() throws() {
+            try {
+                alias_call_contract::work();
+                value: alias_call_contract::Value;
+            } catch (error: alias_call_contract::Failure&) {}
+        }
+    )K", false, false));
+}
 
 TEST_CASE("Exception layout: imported chain and cause addresses match the final DataLayout",
           "[gen][exceptions][exception-layout][import][regression]") {
@@ -557,6 +654,117 @@ TEST_CASE("Exception: by-value argument copies unwind before callee entry and cl
     }
 }
 
+TEST_CASE("Owner reassignment cleans the incoming value when destruction throws",
+          "[gen][exceptions][owner][assignment][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module owner_reassignment_unwind;
+        oldDrops: int = 0;
+        incomingDrops: int = 0;
+
+        struct Probe {
+            id: int;
+            Probe(value: int): id(value) {}
+            ~Probe() {
+                if (id == 1) { ++oldDrops; throw FatalError(718); }
+                ++incomingDrops;
+            }
+        }
+
+        moved(): int {
+            oldDrops = 0;
+            incomingDrops = 0;
+            target: Probe! = new Probe(1);
+            source: Probe! = new Probe(2);
+            caught: bool = false;
+            try { target = source; }
+            catch (e: FatalError&) { caught = e.getCode() == 718; }
+            return caught && target == null && source == null &&
+                oldDrops == 1 && incomingDrops == 1 ? 42 : -1;
+        }
+
+        temporary(): int {
+            oldDrops = 0;
+            incomingDrops = 0;
+            target: Probe! = new Probe(1);
+            caught: bool = false;
+            try { target = new Probe(2); }
+            catch (e: FatalError&) { caught = e.getCode() == 718; }
+            return caught && target == null &&
+                oldDrops == 1 && incomingDrops == 1 ? 42 : -1;
+        }
+
+        failedSource(): Probe! { throw FatalError(719); }
+
+        sourceThrows(): int {
+            oldDrops = 0;
+            incomingDrops = 0;
+            target: Probe! = new Probe(2);
+            caught: bool = false;
+            try { target = failedSource(); }
+            catch (e: FatalError&) { caught = e.getCode() == 719; }
+            if (!caught || target == null || incomingDrops != 0) return -1;
+            target = null;
+            return incomingDrops == 1 ? 42 : -2;
+        }
+
+        successful(): int {
+            oldDrops = 0;
+            incomingDrops = 0;
+            target: Probe! = new Probe(2);
+            source: Probe! = new Probe(3);
+            target = source;
+            if (source != null || target == null || incomingDrops != 1) return -1;
+            target = target;
+            if (target == null || incomingDrops != 1) return -2;
+            target = null;
+            return target == null && incomingDrops == 2 ? 42 : -3;
+        }
+    )SRC");
+    REQUIRE(jit);
+    for (const auto* name : {"moved", "temporary", "sourceThrows", "successful"}) {
+        INFO(name);
+        auto run = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(run);
+        int result = 0;
+        REQUIRE_NOTHROW(result = run());
+        CHECK(result == 42);
+    }
+}
+
+TEST_CASE("Owner reassignment unwinds an upcast incoming owner",
+          "[gen][exceptions][owner][assignment][upcast][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module owner_reassignment_upcast_unwind;
+        baseDrops: int = 0;
+        derivedDrops: int = 0;
+        class Base {
+            id: int;
+            Base(value: int): id(value) {}
+            ~Base() {
+                ++baseDrops;
+                if (id == 1) throw FatalError(718);
+            }
+        }
+        class Derived : public Base {
+            Derived(): Base(2) {}
+            ~Derived() { ++derivedDrops; }
+        }
+        test(): int {
+            target: Base! = new Base(1);
+            source: Derived! = new Derived();
+            caught: bool = false;
+            try { target = source; }
+            catch (e: FatalError&) { caught = e.getCode() == 718; }
+            return caught && target == null && source == null &&
+                baseDrops == 2 && derivedDrops == 1 ? 42 : -1;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(run);
+    CHECK(run() == 42);
+}
+
 TEST_CASE("Exception: throwing destruction clears moved owners and reaches the local handler",
           "[gen][exceptions][owner][lambda][destructor-throw][regression]") {
     auto jit = gen_jit(R"SRC(
@@ -638,6 +846,59 @@ TEST_CASE("Exception: throwing destruction clears moved owners and reaches the l
         REQUIRE_NOTHROW(result = run());
         CHECK(result == 42);
     }
+}
+
+TEST_CASE("Constructor return preserves finally and cleanup before virtual dispatch",
+          "[gen][exceptions][finally][constructor-return][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module constructor_return_cleanup;
+        order : int = 0;
+        wholeDrops : int = 0;
+        struct Guard {
+            id : int;
+            Guard(value : int) : id(value) {}
+            ~Guard() { order = order * 10 + id; }
+        }
+        class Base {
+            value() : int { return 0; }
+        }
+        class Derived : public Base {
+            member : Guard;
+            Derived(mode : int) : member(1) {
+                local : Guard(2);
+                try {
+                    if (mode == 0) return;
+                } finally {
+                    order = order * 10 + 3;
+                }
+                if (mode == 2) throw Exception(923);
+            }
+            override value() : int { return 42; }
+            ~Derived() { ++wholeDrops; }
+        }
+        test(mode : int) : int {
+            order = 0;
+            wholeDrops = 0;
+            result : int = 0;
+            try {
+                value : Derived(mode);
+                base : Base& = value;
+                result = base.value();
+            } catch (e : Throwable&) {
+                result = e.getCode();
+            }
+            if (mode == 2) {
+                return result == 923 && order == 321 && wholeDrops == 0 ? 1 : 0;
+            }
+            return result == 42 && order == 321 && wholeDrops == 1 ? 1 : 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)(int)>("test");
+    REQUIRE(test);
+    CHECK(test(0) == 1);
+    CHECK(test(1) == 1);
+    CHECK(test(2) == 1);
 }
 
 TEST_CASE("Exception: failed constructors unwind only completed members in reverse order",
@@ -2314,6 +2575,112 @@ TEST_CASE("Exception: bare throw rethrows to caller", "[gen][exceptions][rethrow
     REQUIRE(fn() == 7);
 }
 
+TEST_CASE("Exception: rethrow restores the caught type after nested cleanup failures",
+          "[gen][exceptions][rethrow][nested][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module rethrow_nested_cleanup;
+        class Primary : public Exception {
+        public:
+            Primary() : Exception(41) {}
+        }
+        class Cleanup : public Exception {
+        public:
+            Cleanup() : Exception(82) {}
+        }
+        class Replacement : public Exception {
+        public:
+            Replacement() : Exception(93) {}
+        }
+        failCleanup() throws(Throwable) { throw Cleanup(); }
+        rethrowPrimary(mode : int) throws(Throwable) {
+            try {
+                throw Primary();
+            } catch (original : Throwable&) {
+                try {
+                    failCleanup();
+                } catch (ignored : Cleanup&) {}
+                if (mode == 1) throw Replacement();
+                throw;
+            }
+        }
+        rethrowNoArgs() throws(Throwable) {
+            try {
+                throw Primary();
+            } catch (original : Throwable&) {
+                try {
+                    failCleanup();
+                } catch (ignored : Cleanup&) {}
+                throw;
+            }
+        }
+        rethrowInFinally() throws(Throwable) {
+            try {
+                throw Primary();
+            } catch (original : Throwable&) {
+                try {
+                    throw Cleanup();
+                } catch (ignored : Cleanup&) {
+                    return;
+                } finally {
+                    throw;
+                }
+            }
+        }
+        test(mode : int) : int {
+            result : int = 0;
+            try {
+                rethrowPrimary(mode);
+            } catch (wrong : Cleanup&) {
+                result = -1;
+            } catch (primary : Primary&) {
+                result = primary.getCode();
+            } catch (replacement : Replacement&) {
+                result = replacement.getCode();
+            } catch (other : Throwable&) {
+                result = -2;
+            }
+            return result;
+        }
+        testFinally() : int {
+            result : int = 0;
+            try {
+                rethrowInFinally();
+            } catch (wrong : Cleanup&) {
+                result = -1;
+            } catch (primary : Primary&) {
+                result = primary.getCode();
+            } catch (other : Throwable&) {
+                result = -2;
+            }
+            return result;
+        }
+        testNoArgs() : int {
+            result : int = 0;
+            try {
+                rethrowNoArgs();
+            } catch (wrong : Cleanup&) {
+                result = -1;
+            } catch (primary : Primary&) {
+                result = primary.getCode();
+            } catch (other : Throwable&) {
+                result = -2;
+            }
+            return result;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int (*)(int)>("test");
+    REQUIRE(test);
+    CHECK(test(0) == 41);
+    CHECK(test(1) == 93);
+    auto test_no_args = jit->lookup_symbol<int (*)()>("testNoArgs");
+    REQUIRE(test_no_args);
+    CHECK(test_no_args() == 41);
+    auto test_finally = jit->lookup_symbol<int (*)()>("testFinally");
+    REQUIRE(test_finally);
+    CHECK(test_finally() == 41);
+}
+
 TEST_CASE("Exception: bare throw outside catch block fails compilation", "[gen][exceptions][rethrow][resolution]") {
     // A bare 'throw;' that is not inside a catch block should produce a compile-time error.
     REQUIRE_THROWS_AS(gen_jit_throws(R"(
@@ -3598,6 +3965,857 @@ TEST_CASE("Exception unwinding: intermediate frame locals cleaned before outer c
     if (!res.err.empty()) INFO("stderr: " << res.err);
     // The middle frame local must be destroyed before control reaches the outer catch.
     REQUIRE(res.exit_code == 1);
+}
+
+TEST_CASE("Exception unwinding: factory finally propagates to caller with live owners",
+          "[gen][exceptions][unwinding][finally][owner][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module exception_after_finally_factory;
+
+        finallyCount : int = 0;
+        insideDrops : int = 0;
+        keyDrops : int = 0;
+        resultDrops : int = 0;
+        failedTransfers : int = 0;
+
+        struct Guard {
+            ~Guard() { ++insideDrops; }
+        }
+        class BaseFailure : public Exception {
+            BaseFailure(code : int) : Exception(code) {}
+        }
+        class OperationFailure : public BaseFailure {
+            OperationFailure() : BaseFailure(604) {}
+        }
+        class Key {
+        public:
+            value : int;
+            Key() : value(1) {}
+            ~Key() { ++keyDrops; }
+        }
+        class Result {
+            ~Result() { ++resultDrops; }
+        }
+
+        failingArgument() : int throws(OperationFailure) {
+            throw OperationFailure();
+        }
+        consume(owner : Key!, value : int) {
+            if (value == 0) delete owner;
+        }
+
+        factory(algorithm : const String&, key : const Key&, mode : int)
+                : Result! throws(BaseFailure) {
+            encoded : unsigned byte[]! = algorithm.toUtf8();
+            valid : bool = true;
+            try {
+                if (encoded.size == 0u || key.value == 0) valid = false;
+                if (mode == 1) throw OperationFailure();
+                if (mode == 5) consume(new Key(), failingArgument());
+                {
+                    guard : Guard;
+                    if (mode == 2) throw OperationFailure();
+                }
+            } finally {
+                delete encoded;
+                ++finallyCount;
+            }
+            if (!valid) return null;
+            if (mode == 3) throw OperationFailure();
+            transferred : bool = false;
+            try {
+                result : Result! = new Result();
+                transferred = true;
+                return result;
+            } finally {
+                if (!transferred) ++failedTransfers;
+            }
+        }
+
+        test(mode : int) : int {
+            finallyCount = 0;
+            insideDrops = 0;
+            keyDrops = 0;
+            resultDrops = 0;
+            failedTransfers = 0;
+            caught : int = 0;
+            try {
+                raw : unsigned byte[]! = new unsigned byte[16u];
+                key : Key! = new Key();
+                result : Result! = factory(String("digest"), key, mode);
+                if (result == null || raw.size != 16u) return 1;
+            } catch (e : OperationFailure&) {
+                caught = e.getCode();
+            } catch (e : BaseFailure&) {
+                return 2;
+            }
+            if (finallyCount != 1 || failedTransfers != 0) return 3;
+            if (keyDrops != (mode == 5 ? 2 : 1)) return 8;
+            if (insideDrops != (mode == 1 || mode == 5 ? 0 : 1)) return 6;
+            if (mode != 0) return caught == 604 && resultDrops == 0 ? 0 : 4;
+            return caught == 0 && resultDrops == 1 ? 0 : 5;
+        }
+
+        testLocalCatch() : int {
+            finallyCount = 0;
+            insideDrops = 0;
+            caught : int = 0;
+            try {
+                try {
+                    guard : Guard;
+                    throw OperationFailure();
+                } finally {
+                    ++finallyCount;
+                }
+            } catch (e : OperationFailure&) {
+                caught = e.getCode();
+            }
+            return caught == 604 && finallyCount == 1 && insideDrops == 1 ? 0 : 7;
+        }
+
+        testLocalArgumentCatch() : int {
+            finallyCount = 0;
+            keyDrops = 0;
+            caught : int = 0;
+            try {
+                try {
+                    consume(new Key(), failingArgument());
+                } finally {
+                    ++finallyCount;
+                }
+            } catch (e : OperationFailure&) {
+                caught = e.getCode();
+            }
+            return caught == 604 && finallyCount == 1 && keyDrops == 1 ? 0 : 9;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    INFO("optimize=" << optimize);
+    auto test = jit->lookup_symbol<int (*)(int)>("test");
+    auto testLocalCatch = jit->lookup_symbol<int (*)()>("testLocalCatch");
+    auto testLocalArgumentCatch = jit->lookup_symbol<int (*)()>("testLocalArgumentCatch");
+    REQUIRE(test);
+    REQUIRE(testLocalCatch);
+    REQUIRE(testLocalArgumentCatch);
+
+    for (int mode : {1, 2, 3, 0, 4, 5, 6}) {
+        INFO("mode=" << mode);
+        const pid_t child = fork();
+        REQUIRE(child >= 0);
+        if (child == 0) {
+            alarm(10);
+            _exit(mode == 4 ? testLocalCatch()
+                            : mode == 6 ? testLocalArgumentCatch() : test(mode));
+        }
+        int status = 0;
+        pid_t waited;
+        do {
+            waited = waitpid(child, &status, 0);
+        } while (waited < 0 && errno == EINTR);
+        REQUIRE(waited == child);
+        INFO("child status=" << status);
+        REQUIRE(WIFEXITED(status));
+        CHECK(WEXITSTATUS(status) == 0);
+    }
+}
+
+namespace {
+
+void check_bounded_exception_probe(int (*probe)()) {
+    const pid_t child = fork();
+    REQUIRE(child >= 0);
+    if (child == 0) {
+        alarm(10);
+        _exit(probe());
+    }
+    int status = 0;
+    pid_t waited;
+    do {
+        waited = waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    REQUIRE(waited == child);
+    INFO("child status=" << status);
+    CHECK(WIFEXITED(status));
+    if (WIFEXITED(status)) CHECK(WEXITSTATUS(status) == 0);
+}
+
+}
+
+TEST_CASE("Exception unwinding: displaced pending exceptions release their objects",
+          "[gen][exceptions][finally][lifetime][regression]") {
+    const bool optimize = GENERATE(false, true);
+    CAPTURE(optimize);
+    auto comp = compile_model_with_stdlib(R"K(
+        module pending_exception_lifetime;
+        outerDrops: int = 0;
+        primaryDrops: int = 0;
+        cleanupDrops: int = 0;
+        replacementDrops: int = 0;
+        class Outer : public FatalError {
+        public:
+            Outer() : FatalError(41) {}
+        }
+        class Primary : public FatalError {
+        public:
+            Primary() : FatalError(42) {}
+        }
+        class Cleanup : public FatalError {
+        public:
+            Cleanup(cause: Throwable?) : FatalError(43, cause) {}
+        }
+        class Replacement : public FatalError {
+        public:
+            Replacement(cause: Throwable?) : FatalError(44, cause) {}
+        }
+        struct Guard {
+            cause: Throwable?;
+            Guard(value: Throwable?) : cause(value) {}
+            ~Guard() { throw Cleanup(cause); }
+        }
+        replace(cause: Throwable?): int {
+            try { throw Primary(); }
+            catch (e: Primary&) {
+                guard: Guard(e);
+                return -1;
+            } finally { throw Replacement(cause); }
+            return -2;
+        }
+        replaceInOuter(): int {
+            try {
+                try { throw Outer(); }
+                catch (outer: Outer&) {
+                    try { replace(outer); }
+                    catch (e: Replacement&) {
+                        cause: Throwable* = e.getCause();
+                        if (e.getCode() != 44 || cause == null || cause->getCode() != 41) return 1;
+                    }
+                }
+            } catch (wrong: Throwable&) { return 2; }
+            return 0;
+        }
+        propagate(): int {
+            try {
+                try { throw Primary(); }
+                catch (e: Primary&) {
+                    guard: Guard(e);
+                    return 3;
+                } finally {}
+            } catch (e: Cleanup&) {
+                cause: Throwable* = e.getCause();
+                return e.getCode() == 43 && cause != null && cause->getCode() == 42 ? 0 : 4;
+            }
+            return 5;
+        }
+        handledInsideFinally(): int {
+            try {
+                try { throw Primary(); }
+                catch (e: Primary&) {
+                    guard: Guard(e);
+                    return 15;
+                } finally {
+                    try { throw Replacement(null); }
+                    catch (ignored: Replacement&) {}
+                }
+            } catch (e: Cleanup&) {
+                cause: Throwable* = e.getCause();
+                return e.getCode() == 43 && cause != null && cause->getCode() == 42 ? 0 : 16;
+            }
+            return 17;
+        }
+        suppressReturn(): int {
+            try { throw Primary(); }
+            catch (e: Primary&) {
+                guard: Guard(e);
+                return 6;
+            } finally { return 0; }
+            return 7;
+        }
+        suppressLoop(mode: int): int {
+            i: int = 0;
+            while (i < 1) {
+                ++i;
+                try { throw Primary(); }
+                catch (e: Primary&) {
+                    guard: Guard(e);
+                    return 8;
+                } finally {
+                    if (mode == 0) break;
+                    continue;
+                }
+            }
+            return 0;
+        }
+        unmatched(): int {
+            try {
+                try { throw Cleanup(null); }
+                finally { throw Replacement(null); }
+            } catch (e: Replacement&) { return e.getCode() == 44 ? 0 : 9; }
+            return 10;
+        }
+        rethrowOuter(): int {
+            try {
+                try { throw Outer(); }
+                catch (outer: Outer&) {
+                    try { throw Primary(); }
+                    catch (e: Primary&) {
+                        guard: Guard(e);
+                        return 11;
+                    } finally { throw; }
+                }
+            } catch (e: Outer&) { return e.getCode() == 41 ? 0 : 12; }
+            catch (wrong: Throwable&) { return 13; }
+            return 14;
+        }
+        breakExit(): int { return suppressLoop(0); }
+        continueExit(): int { return suppressLoop(1); }
+    )K");
+    REQUIRE(comp);
+    auto& mod = comp->get_context_for_test()->module();
+    auto* i32 = llvm::Type::getInt32Ty(mod.getContext());
+    struct counter_mapping { const char* exception; const char* counter; };
+    for (const auto& mapping : {
+             counter_mapping{"Outer", "outerDrops"}, counter_mapping{"Primary", "primaryDrops"},
+             counter_mapping{"Cleanup", "cleanupDrops"}, counter_mapping{"Replacement", "replacementDrops"}}) {
+        auto agg = find_aggregate(comp, mapping.exception);
+        REQUIRE(agg);
+        auto* dtor = mod.getFunction("__k_exc_dtor_" + k::model::mangler::mangle_rtti(agg->get_name()));
+        REQUIRE(dtor);
+        auto* counter = mod.getNamedGlobal(comp->get_element_mangled_name(mapping.counter));
+        REQUIRE(counter);
+        REQUIRE(counter->getValueType() == i32);
+        llvm::IRBuilder<> builder(&dtor->getEntryBlock(), dtor->getEntryBlock().begin());
+        auto* count = builder.CreateLoad(i32, counter);
+        builder.CreateStore(builder.CreateAdd(count, llvm::ConstantInt::get(i32, 1)), counter);
+    }
+    if (optimize) comp->optimize_gen_code();
+    REQUIRE(comp->verify_gen_code());
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto* outer = jit->lookup_symbol<int*>("outerDrops");
+    auto* primary = jit->lookup_symbol<int*>("primaryDrops");
+    auto* cleanup = jit->lookup_symbol<int*>("cleanupDrops");
+    auto* replacement = jit->lookup_symbol<int*>("replacementDrops");
+    REQUIRE(outer);
+    REQUIRE(primary);
+    REQUIRE(cleanup);
+    REQUIRE(replacement);
+    struct probe { const char* name; int outer; int primary; int cleanup; int replacement; };
+    for (const auto& test : {
+             probe{"replaceInOuter", 1, 1, 1, 1}, probe{"propagate", 0, 1, 1, 0},
+             probe{"handledInsideFinally", 0, 1, 1, 1},
+             probe{"suppressReturn", 0, 1, 1, 0}, probe{"breakExit", 0, 1, 1, 0},
+             probe{"continueExit", 0, 1, 1, 0}, probe{"unmatched", 0, 0, 1, 1},
+             probe{"rethrowOuter", 1, 1, 1, 0}}) {
+        INFO(test.name);
+        auto fn = jit->lookup_symbol<int (*)()>(test.name);
+        REQUIRE(fn);
+        const pid_t child = fork();
+        REQUIRE(child >= 0);
+        if (child == 0) {
+            alarm(10);
+            const int baseline = std::uncaught_exceptions();
+            const int result = fn();
+            _exit(result == 0 && std::uncaught_exceptions() == baseline &&
+                  *outer == test.outer && *primary == test.primary &&
+                  *cleanup == test.cleanup && *replacement == test.replacement ? 0 : 1);
+        }
+        int status = 0;
+        pid_t waited;
+        do {
+            waited = waitpid(child, &status, 0);
+        } while (waited < 0 && errno == EINTR);
+        REQUIRE(waited == child);
+        INFO("child status=" << status);
+        REQUIRE(WIFEXITED(status));
+        CHECK(WEXITSTATUS(status) == 0);
+    }
+}
+
+TEST_CASE("Exception unwinding: catch-local cleanup crosses its catch boundary",
+          "[gen][exceptions][finally][unwinding][regression]") {
+    const bool optimize = GENERATE(false, true);
+    CAPTURE(optimize);
+    auto jit = gen_jit(R"K(
+        module catch_local_exit_cleanup;
+        order: int = 0;
+        noiseSeen: int = 0;
+        quietDrops: int = 0;
+        resultDrops: int = 0;
+        failCleanup: bool = false;
+
+        class Outer : public FatalError {
+        public:
+            Outer() : FatalError(41) {}
+        }
+        class Primary : public FatalError {
+        public:
+            Primary() : FatalError(42) {}
+        }
+        class Cleanup : public FatalError {
+        public:
+            Cleanup() : FatalError(43) {}
+        }
+        class Noise : public FatalError {
+        public:
+            Noise() : FatalError(44) {}
+        }
+        struct Guard {
+            id: int;
+            Guard(value: int) : id(value) {}
+            ~Guard() {
+                order = order * 10 + id;
+                if (id == 2 && failCleanup) throw Cleanup();
+            }
+        }
+        struct Quiet {
+            Quiet() {}
+            ~Quiet() { ++quietDrops; }
+        }
+        struct Result {
+            id: int;
+            Result(value: int) : id(value) {}
+            ~Result() { ++resultDrops; order = order * 10 + 4; }
+        }
+        reset(fail: bool) {
+            order = 0;
+            noiseSeen = 0;
+            quietDrops = 0;
+            resultDrops = 0;
+            failCleanup = fail;
+        }
+        exitCatch(mode: int): int {
+            i: int = 0;
+            while (i < 1) {
+                ++i;
+                try { throw Primary(); }
+                catch (e: Primary&) {
+                    first: Guard = Guard(1);
+                    second: Guard = Guard(2);
+                    if (mode == 0) return 17;
+                    if (mode == 2) break;
+                    if (mode == 3) continue;
+                }
+                finally {
+                    try {
+                        quiet: Quiet = Quiet();
+                        throw Noise();
+                    } catch (e: Noise&) { ++noiseSeen; }
+                    order = order * 10 + 3;
+                }
+                return 19;
+            }
+            return 21;
+        }
+        returnResult(): Result {
+            while (true) {
+                if (r: Result = Result(42); true) {
+                    try { throw Primary(); }
+                    catch (e: Primary&) {
+                        first: Guard = Guard(1);
+                        second: Guard = Guard(2);
+                        return r;
+                    }
+                    finally {
+                        try {
+                            quiet: Quiet = Quiet();
+                            throw Noise();
+                        } catch (e: Noise&) { ++noiseSeen; }
+                        order = order * 10 + 3;
+                    }
+                    return r;
+                }
+            }
+        }
+        noFinally(fail: bool): int {
+            try { throw Primary(); }
+            catch (e: Primary&) {
+                if (fail) {
+                    second: Guard = Guard(2);
+                    return 17;
+                }
+                return 17;
+            }
+            return 19;
+        }
+        throwFromCatch() {
+            try { throw Primary(); }
+            catch (e: Primary&) {
+                first: Guard = Guard(1);
+                second: Guard = Guard(2);
+                throw Cleanup();
+            }
+            finally { order = order * 10 + 3; }
+        }
+        replacingFinally(): int {
+            try { throw Primary(); }
+            catch (e: Primary&) {
+                first: Guard = Guard(1);
+                second: Guard = Guard(2);
+                return 17;
+            }
+            finally { order = order * 10 + 3; throw Noise(); }
+            return 19;
+        }
+        testExit(mode: int): int {
+            reset(true);
+            code: int = 0;
+            try { exitCatch(mode); }
+            catch (wrong: Noise&) { return 1; }
+            catch (e: Cleanup&) { code = e.getCode(); }
+            catch (wrong: Throwable&) { return 2; }
+            return code == 43 && order == 213 && noiseSeen == 1 &&
+                quietDrops == 1 ? 0 : 3;
+        }
+        testNormal(mode: int): int {
+            reset(false);
+            value: int = exitCatch(mode);
+            expected: int = mode == 0 ? 17 : (mode == 1 ? 19 : 21);
+            return value == expected && order == 213 && noiseSeen == 1 &&
+                quietDrops == 1 ? 0 : 4;
+        }
+        testNested(): int {
+            reset(true);
+            code: int = 0;
+            try {
+                try { throw Outer(); }
+                catch (outer: Outer&) {
+                    try { exitCatch(0); }
+                    catch (e: Cleanup&) { if (e.getCode() != 43) return 5; }
+                    throw;
+                }
+            } catch (e: Outer&) { code = e.getCode(); }
+            catch (wrong: Throwable&) { return 6; }
+            return code == 41 && order == 213 && noiseSeen == 1 &&
+                quietDrops == 1 ? 0 : 7;
+        }
+        testNoFinally(fail: bool): int {
+            reset(fail);
+            code: int = 0;
+            try {
+                try { throw Outer(); }
+                catch (outer: Outer&) {
+                    try {
+                        if (noFinally(fail) != 17) return 8;
+                    } catch (e: Cleanup&) { code = e.getCode(); }
+                    throw;
+                }
+            } catch (e: Outer&) {
+                if (e.getCode() != 41) return 9;
+            } catch (wrong: Throwable&) { return 10; }
+            return code == (fail ? 43 : 0) && order == (fail ? 2 : 0) ? 0 : 11;
+        }
+        testResult(): int {
+            reset(true);
+            code: int = 0;
+            try { value: Result = returnResult(); }
+            catch (wrong: Noise&) { return 12; }
+            catch (e: Cleanup&) { code = e.getCode(); }
+            catch (wrong: Throwable&) { return 13; }
+            return code == 43 && order == 2134 && resultDrops == 1 &&
+                noiseSeen == 1 && quietDrops == 1 ? 0 : 14;
+        }
+        testNormalResult(): int {
+            reset(false);
+            {
+                value: Result = returnResult();
+                if (value.id != 42 || order != 213 || resultDrops != 0) return 19;
+            }
+            return order == 2134 && resultDrops == 1 &&
+                noiseSeen == 1 && quietDrops == 1 ? 0 : 20;
+        }
+        testThrowFromCatch(): int {
+            reset(false);
+            code: int = 0;
+            try { throwFromCatch(); }
+            catch (e: Cleanup&) { code = e.getCode(); }
+            catch (wrong: Throwable&) { return 15; }
+            return code == 43 && order == 213 ? 0 : 16;
+        }
+        testReplacingFinally(): int {
+            reset(true);
+            code: int = 0;
+            try { replacingFinally(); }
+            catch (e: Noise&) { code = e.getCode(); }
+            catch (wrong: Throwable&) { return 17; }
+            return code == 44 && order == 213 ? 0 : 18;
+        }
+        failingReturn(): int { return testExit(0); }
+        failingFallthrough(): int { return testExit(1); }
+        failingBreak(): int { return testExit(2); }
+        failingContinue(): int { return testExit(3); }
+        normalReturn(): int { return testNormal(0); }
+        normalFallthrough(): int { return testNormal(1); }
+        normalBreak(): int { return testNormal(2); }
+        normalContinue(): int { return testNormal(3); }
+        noFinallyReturn(): int { return testNoFinally(false); }
+        noFinallyThrowingCleanup(): int { return testNoFinally(true); }
+    )K", false, optimize);
+    REQUIRE(jit);
+    for (const auto* name : {"failingReturn", "failingFallthrough", "failingBreak",
+                             "failingContinue", "normalReturn", "normalFallthrough",
+                             "normalBreak", "normalContinue", "testNested",
+                             "noFinallyReturn", "noFinallyThrowingCleanup", "testResult", "testNormalResult",
+                             "testThrowFromCatch", "testReplacingFinally"}) {
+        INFO(name);
+        auto test = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(test);
+        check_bounded_exception_probe(test);
+    }
+}
+
+TEST_CASE("Exception unwinding: nested finally cleans intervening scopes before catch",
+          "[gen][exceptions][finally][unwinding][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module finally_intervening_scopes;
+        order : int = 0;
+        swallowed : int = 0;
+        scramble : bool = false;
+
+        class Original : public Exception {
+            Original() : Exception(41) {}
+        }
+        class Noise : public Exception {
+            Noise() : Exception(82) {}
+        }
+
+        struct Guard {
+            id : int;
+            Guard(value : int) : id(value) {}
+            ~Guard() {
+                if (id == 2 && scramble) {
+                    try { throw Noise(); }
+                    catch (ignored : Noise&) { ++swallowed; }
+                }
+                order = order * 10 + id;
+            }
+        }
+
+        test(mode : int) : int {
+            order = 0;
+            swallowed = 0;
+            scramble = mode != 0;
+            {
+                outside : Guard(9);
+                try {
+                    outer : Guard(1);
+                    {
+                        middle : Guard! = new Guard(2);
+                        try {
+                            inner : Guard(3);
+                            throw Original();
+                        } finally {
+                            order = order * 10 + 4;
+                        }
+                    }
+                } catch (wrong : Noise&) {
+                    return 4;
+                } catch (e : Original&) {
+                    if (e.getCode() != 41 || order != 3421) return 1;
+                }
+                if (order != 3421) return 2;
+            }
+            return order == 34219 && swallowed == mode ? 0 : 3;
+        }
+        plain() : int { return test(0); }
+        nestedCleanupException() : int { return test(1); }
+        failArgument() : int throws(Original) { throw Original(); }
+        consume(value : Guard!, number : int) {}
+        argumentCleanupException() : int {
+            order = 0;
+            swallowed = 0;
+            scramble = true;
+            try {
+                try {
+                    consume(new Guard(2), failArgument());
+                } finally {
+                    order = order * 10 + 4;
+                }
+            } catch (wrong : Noise&) {
+                return 5;
+            } catch (e : Original&) {
+                if (e.getCode() != 41) return 6;
+            }
+            return order == 24 && swallowed == 1 ? 0 : 7;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    INFO("optimize=" << optimize);
+    for (const auto* name : {"plain", "nestedCleanupException", "argumentCleanupException"}) {
+        INFO(name);
+        auto test = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(test);
+        check_bounded_exception_probe(test);
+    }
+}
+
+TEST_CASE("Exception unwinding: finally preserves pending type or propagates replacement",
+          "[gen][exceptions][finally][metadata][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module finally_pending_exception_metadata;
+        cleanups : int = 0;
+
+        class Primary : public Exception {
+            Primary() : Exception(41) {}
+        }
+        class Secondary : public Exception {
+            Secondary() : Exception(82) {}
+        }
+        class Replacement : public Exception {
+            Replacement() : Exception(93) {}
+        }
+
+        fail(mode : int) throws(Exception) {
+            try {
+                throw Primary();
+            } finally {
+                try {
+                    throw Secondary();
+                } catch (ignored : Secondary&) {
+                    ++cleanups;
+                }
+                if (mode != 0) throw Replacement();
+            }
+        }
+        test(mode : int) : int {
+            cleanups = 0;
+            code : int = 0;
+            try {
+                fail(mode);
+            } catch (wrong : Secondary&) {
+                code = 82;
+            } catch (original : Primary&) {
+                code = original.getCode();
+            } catch (replacement : Replacement&) {
+                code = replacement.getCode();
+            } catch (other : Exception&) {
+                code = -1;
+            }
+            if (cleanups != 1) return 1;
+            return code == (mode == 0 ? 41 : 93) ? 0 : 2;
+        }
+        original() : int { return test(0); }
+        replacement() : int { return test(1); }
+        nestedFail() throws(Exception) {
+            try {
+                try { throw Primary(); }
+                finally { ++cleanups; }
+            } finally { ++cleanups; }
+        }
+        nestedFinally() : int {
+            cleanups = 0;
+            code : int = 0;
+            try { nestedFail(); }
+            catch (e : Primary&) { code = e.getCode(); }
+            catch (e : Exception&) { code = -1; }
+            return cleanups == 2 && code == 41 ? 0 : 3;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    INFO("optimize=" << optimize);
+    for (const auto* name : {"original", "replacement", "nestedFinally"}) {
+        INFO(name);
+        auto test = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(test);
+        check_bounded_exception_probe(test);
+    }
+}
+
+TEST_CASE("Exception unwinding: constructor finally cleans completed members",
+          "[gen][exceptions][finally][constructor-members][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module finally_failed_constructor_members;
+        order : int = 0;
+        memberDrops : int = 0;
+        wholeDrops : int = 0;
+        parameterDrops : int = 0;
+        parameterExceptions : int = 0;
+        disturbParameter : bool = false;
+
+        class Failure : public Exception {
+            Failure() : Exception(923) {}
+        }
+        class Noise : public Exception {
+            Noise() : Exception(82) {}
+        }
+        struct Parameter {
+            ~Parameter() {
+                if (disturbParameter) {
+                    try { throw Noise(); }
+                    catch (ignored : Noise&) { ++parameterExceptions; }
+                }
+                ++parameterDrops;
+            }
+        }
+        struct Member {
+            id : int;
+            Member(value : int) : id(value) {}
+            ~Member() {
+                ++memberDrops;
+                order = order * 10 + id;
+            }
+        }
+        struct Holder {
+            first : Member;
+            second : Member;
+            Holder(fail : bool, parameter : Parameter!) : first(1), second(2) {
+                try {
+                    if (fail) throw Failure();
+                } finally {
+                    order = order * 10 + 3;
+                }
+            }
+            ~Holder() { ++wholeDrops; }
+        }
+
+        failed(mode : int) : int {
+            order = 0;
+            memberDrops = 0;
+            wholeDrops = 0;
+            parameterDrops = 0;
+            parameterExceptions = 0;
+            disturbParameter = mode != 0;
+            code : int = 0;
+            try {
+                value : Holder(true, new Parameter());
+            } catch (wrong : Noise&) {
+                return 4;
+            } catch (e : Failure&) {
+                code = e.getCode();
+            }
+            return code == 923 && order == 321 &&
+                memberDrops == 2 && wholeDrops == 0 && parameterDrops == 1 &&
+                parameterExceptions == mode ? 0 : 1;
+        }
+        failedPlain() : int { return failed(0); }
+        failedNestedParameterException() : int { return failed(1); }
+        success() : int {
+            order = 0;
+            memberDrops = 0;
+            wholeDrops = 0;
+            parameterDrops = 0;
+            parameterExceptions = 0;
+            disturbParameter = false;
+            {
+                value : Holder(false, new Parameter());
+                if (order != 3 || memberDrops != 0 || wholeDrops != 0 ||
+                    parameterDrops != 1) return 2;
+            }
+            return order == 321 && memberDrops == 2 && wholeDrops == 1 &&
+                parameterDrops == 1 ? 0 : 3;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    INFO("optimize=" << optimize);
+    for (const auto* name : {"failedPlain", "failedNestedParameterException", "success"}) {
+        INFO(name);
+        auto test = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(test);
+        check_bounded_exception_probe(test);
+    }
 }
 
 TEST_CASE("Exception unwinding: sized array elements destroyed on throw",

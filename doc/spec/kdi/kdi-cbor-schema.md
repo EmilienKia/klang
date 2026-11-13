@@ -212,7 +212,9 @@ from the type it renames. A soft alias (`alias`) is fully transparent and is
 always encoded as the type it renames.
 
 `template_param` references a template parameter by name (e.g. `T`) as it
-appears inside an uninstantiated template's own declaration.
+appears inside an uninstantiated template's own declaration. The name must
+identify a type parameter of the enclosing template, not a value parameter;
+concrete declarations must not contain `template_param`.
 
 `erased_param` is the erased stand-in of a generic type parameter: the opaque pointer
 (`byte*` at the LLVM level) that every type parameter of a `generic<...>` declaration is
@@ -230,7 +232,9 @@ instantiated with concrete arguments. Each entry in `args` is itself a full
 `Type`, so nested template-parameter references (e.g. `Node<T>` inside
 `List<T>`) are preserved structurally. Only type arguments are represented;
 a non-type (value) argument in such a nested reference falls back to a
-`void` placeholder entry.
+`void` placeholder entry. Consumers must preserve the order and recursive
+structure of the arguments; a `void` placeholder does not encode the original
+value and must not be treated as a recoverable template argument.
 
 ---
 
@@ -252,6 +256,7 @@ Param = {
   "name" : text,
   "type" : Type,
   ? "is_varargs" : bool,
+  ? "is_ffi_cstring" : bool,
   ? "default_source" : text
 }
 ```
@@ -288,6 +293,7 @@ Function = {
   "fq_name"      : text,
   "visibility"   : Visibility,
   ?"is_static"   : bool,
+  ?"is_extern"   : bool,          -- absent means false
   "return_type"  : Type,
   "params"       : array[Param],
   "mangled_name" : text,
@@ -296,6 +302,15 @@ Function = {
   ?"doc"         : DocFunction
 }
 ```
+
+`is_extern` and parameter `is_ffi_cstring` have the semantics and false
+defaults defined in the abstract schema. If present they must be booleans.
+Producers emit `is_extern`; native declarations use the exact C symbol in
+`mangled_name`, including in signature-only generic records. Old unmarked
+records do not establish native versus K classification for a changed observer
+ABI; rebuild producers and consumers together.
+Concrete native prototypes must be parseable or provably equivalent to the
+resolved signature; unprovable declarations are rejected with a diagnostic.
 
 ---
 
@@ -307,18 +322,28 @@ Method = {
   "fq_name"          : text,
   "visibility"       : Visibility,
   ?"is_static"       : bool,
+  ?"is_extern"       : bool,   -- absent means false; native methods are static
   ?"is_const_member" : bool,
   ?"is_virtual"      : bool,
   ?"is_abstract"     : bool,
   ?"is_final"        : bool,
+  ?"is_deleted"      : bool,   -- absent means false; deleted methods have no callable implementation
+  ?"is_private"      : bool,   -- private deleted method metadata; absent means false
   ?"vtable_slot"     : uint,   -- omitted when -1
   "return_type"      : Type,
   "params"           : array[Param],
-  "mangled_name"     : text,
-  "llvm_def"         : text,   -- mandatory LLVM IR prototype (with implicit 'this')
+  "mangled_name"     : text,   -- may be empty when deleted
+  "llvm_def"         : text,   -- empty for deleted methods; otherwise LLVM IR prototype
   ?"doc"             : DocFunction
 }
 ```
+
+`is_private` overrides `visibility`. Producers use `protected` as the legacy
+visibility fallback, but pre-extension 0.1 readers ignore these flags and may
+accept a deleted operation or fail during linking. Regenerate older descriptors
+and use an updated reader to enforce copy restrictions; the extension is not
+fail-closed for old readers. If present, `is_deleted` and `is_private` must be
+booleans; other values must be rejected.
 
 ---
 
@@ -330,13 +355,32 @@ Constructor = {
   ?"is_copy_constructor" : bool,
   ?"is_defaulted"        : bool,
   ?"is_deleted"          : bool,
+  ?"is_private"          : bool,   -- private deleted constructor metadata; absent means false
   "params"               : array[Param],
-  "mangled_name"         : text,     -- C1 variant
-  "mangled_name_c2"      : text,     -- C2 variant
-  "llvm_def"             : text,     -- mandatory LLVM IR prototype of C1 variant
+  "mangled_name"         : text,     -- C1 variant; may be empty when deleted
+  "mangled_name_c2"      : text,     -- C2 variant; may be empty when deleted
+  ?"throws_spec"         : array[Type], -- absent: unknown; empty: no checked exceptions
+  "llvm_def"             : text,     -- empty for deleted constructors; otherwise C1 prototype
   ?"doc"                 : DocFunction
 }
 ```
+
+Updated producers include `throws_spec` for concrete constructors with resolved
+contracts, including an empty array for an empty contract; unknown contracts
+are omitted, including when an exception type cannot be exported. A template
+non-generic template signature may omit unresolved exception types because its
+source recipe remains authoritative. Generic aggregate signatures have no
+source recipe and must preserve constructor exception types; a producer must
+reject a generic signature if it cannot export that contract. Constructor
+`is_deleted` and `is_private`, if present, must be booleans.
+Legacy descriptors without the field do not establish an empty contract.
+Regenerate their KDI and use an updated compiler to preserve constructor throws.
+The current compiler model retains legacy unknown contracts but call-contract
+checks do not reject them for ordinary calls, while union lifecycle operations
+reject unknown constructor contracts. Older readers ignore the new field; neither
+ordinary imports with an omitted contract nor older readers are exception-safe
+for a throwing constructor. The schema remains `0.1` and
+this extension is not fail-closed.
 
 ---
 
@@ -488,6 +532,8 @@ Aggregate = {
   ?"enclosing_fq_name": text,        -- fq_name of enclosing aggregate; omitted
                                      -- when not nested
   "bases"          : array[Base],
+  ?"bases_complete": bool,           -- true when `bases` lists every declared
+                                     -- direct base; absent means false
   "layout"         : array[LayoutField],
   "constructors"   : array[Constructor],
   ?"destructor"    : Destructor,
@@ -501,6 +547,13 @@ Aggregate = {
   ?"doc"           : DocBlock
 }
 ```
+
+`llvm_def` holds the aggregate's own definition first, followed by one definition
+per by-value layout dependency (one per line). The dependency lines may include the
+fat callable layout `%__k.callable = type { ptr, ptr }`, which the importer also
+supplies itself. An importer must therefore accept that definition in any bundle
+and must reject, rather than ignore, a combined set of definitions that LLVM
+refuses to parse: a partial parse leaves referenced dependencies opaque (unsized).
 
 When embedded under a generic `TemplateDef.aggregate_signature`, this payload is
 declaration-only: ABI fields such as `mangled_name` and `llvm_def` may be empty,
@@ -529,7 +582,10 @@ TemplateDef = {
 Rules:
 
 * `host_fq_name` identifies the hosting (non-template) aggregate for a public or
-  protected member template with `entity_kind = "function"`. Classic methods retain
+  protected member template. With `entity_kind = "function"` it is a member function
+  template; with `entity_kind` `struct`/`class`/`interface` it is an aggregate template
+  nested in that host (`fq_name` is `<host>::<name>`), and the importer attaches it to
+  the imported host. Classic methods retain
   their full `source` and are rebuilt in the imported host with their declared visibility.
   The host's kind remains authoritative for declaration checks (including interface
   `default` methods). Concrete classic method instances are generated locally in
@@ -549,6 +605,9 @@ Rules:
   fields/constructors/methods the same way as a regular (non-template)
   aggregate/function — with template-parameter-dependent types tagged as
   `template_param` / `generic_ref` — instead of only a raw source dump.
+  An uninstantiated classic template's native-call and CString signature fields
+  do not establish an ABI: annotations are validated on instantiation and the
+  source remains authoritative.
  Generic **aggregate** templates set `is_generic = true`, serialize an empty `source`,
   and provide `aggregate_signature`; the single erased synthesis of the aggregate is exported
   as a regular aggregate whose types use `erased_param`. Generic **function** templates set
@@ -584,6 +643,7 @@ Enum = {
   "underlying_type"     : Type,
   ?"object_type"         : Type,     -- aggregate ref for object-backed enums
   ?"object_table_symbol" : text,
+  ?"object_table_kind"   : "runtime",
   ?"base_fq_name"        : text,
   "entries"             : array[EnumEntry],
   ?"doc"                : DocBlock
@@ -606,6 +666,10 @@ Compatibility:
 
 - Integer-backed enums omit typed metadata fields.
 - Older payloads (without typed-enum fields) remain valid and must be accepted.
+- When `object_table_kind` is absent, `object_table_symbol` names the constant
+  array, including in older descriptors. The value `"runtime"` identifies a
+  no-argument accessor returning the initialized table address. Other values
+  are invalid; integer-backed enums must not carry this field.
 
 ---
 
@@ -631,3 +695,18 @@ UnionAlternative = {
   ?"is_const" : bool
 }
 ```
+
+Layout rules (importer side, schema version unchanged):
+
+- `llvm_def` is always emitted by the compiler as `%name = type { i64, [N x i8] }`
+  with `N >= 1`. The CDDL keeps it optional only for the decoder; an importer must
+  reject a union without it, with a malformed layout, with a non-`i64` header
+  (legacy 32-bit tag layout), or whose payload is smaller than a resolvable
+  alternative, and must not assume a default payload size.
+- A private union nested in an exported aggregate is exported as a layout-only
+  entry of the aggregate's `nested_unions` (`llvm_def` only, empty `alternatives`).
+  Its lifecycle is owned by the aggregate's exported destructor and copy
+  operations; importers do not create a union node for it.
+- An imported aggregate with a compiler-generated destructor and no exported copy
+  constructor holds hidden resources (private owners or unions) and is not
+  bytewise copyable.

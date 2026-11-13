@@ -155,6 +155,30 @@ The constraint refines but does not replace the `TemplateParameterKind` filter:
 - `class T : Animal` — T must be a class that is or derives from `Animal`.
 - `typename T : Comparable` — T must be any type that is or derives from `Comparable`.
 
+The bound may name an earlier type parameter. For
+`template<class Base, class T : Base>`, the argument for `T` must be or derive from
+the type supplied for `Base`.
+The compiler currently checks this dependent bound only for certain concrete local
+template uses with complete hierarchy information. Generic obligation propagation
+is not yet complete.
+
+A bound is never treated as satisfied unless it was checked:
+- A bound that does not resolve to a known aggregate (for example a misspelled name) is
+  reported as an unresolved bound (`00901`, "Template 'X' has unresolved bound 'B'")
+  when the template is instantiated or selected by a call; it never counts as satisfied.
+- Function templates enforce the bound during overload selection, for both explicit
+  and deduced arguments, including bounds declared in an imported module. A candidate whose
+  bound is violated is not viable, so a concrete overload remains selectable; when no
+  overload is viable the constraint diagnostic (`01004`) is reported.
+- An argument is rejected early only when the violation is proven. When the hierarchy
+  needed to decide is not completely known (for example an imported class chain), the
+  obligation is deferred and the instantiated template is validated with the concrete
+  arguments. An imported hierarchy counts as completely known only when its KDI
+  records the base lists as complete; older KDI files do not, so their hierarchies
+  stay unknown. A bound that names an earlier parameter of the same list
+  (`template<class B, class T : B>`) is decided against that parameter's argument at
+  every instantiation.
+
 #### 3.1.2 Default Type (Optional)
 
 After the identifier and optional constraint, `= QualifiedIdentifier` provides a default
@@ -504,10 +528,16 @@ They cannot have independent template parameter lists.
 ### 8.6 KDI Export
 
 Template definitions are exported in `.kdi` files as `kdi_template_def` entries, which
-contain the template parameter descriptors and a reconstructed K source fragment.  The
-source is emitted from the semantic model (using `k_source_emitter`) with all
-`using`-aliases resolved to fully-qualified names so that the importing module can
-re-parse and re-instantiate the template locally with new type arguments.
+contain the template parameter descriptors and a K source fragment.  The source is the
+verbatim definition text; the `using` directives (aliases, `using namespace`) of the
+enclosing scopes that the text mentions are prepended as `::`-rooted directives, so the
+importing module re-parses the unchanged body and resolves the same names the producer
+did. Nested templates, default arguments, friend declarations and member templates are
+therefore preserved. The prelude lives in the private definition namespace and is not
+visible to consumer code. A template nested in a non-template aggregate is exported as
+a separate definition whose `host_fq_name` names the hosting aggregate; the consumer
+attaches it to the imported host and places its specializations in the definition
+namespace under a host-qualified name.
 
 **Concrete instantiations** that are part of the module's public/protected API are also
 exported as regular aggregates or functions with their mangled names. A `template_origin`

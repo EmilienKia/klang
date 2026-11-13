@@ -34,6 +34,16 @@ class statement;
 namespace k::model::gen {
 
 /**
+ * Where an expression sits relative to an erased generic type parameter: @c depth is the
+ * number of addresser/array levels left above the parameter (0 = the parameter value
+ * itself), or -1 when the expression is not erased. @c param is the parameter name.
+ */
+struct erased_slot {
+    int depth = -1;
+    std::string param;
+};
+
+/**
  * Generic constraint validator — runs after model_builder.
  *
  * Validates that all declarations annotated with the 'generic' keyword satisfy
@@ -52,6 +62,11 @@ namespace k::model::gen {
  *     type is an erased generic type parameter (e.g. 'v->field', 'v.method()'
  *     with 'v : T*'). This is a syntactic check on declared types; the
  *     resolvers still reject the remaining cases.
+ *
+ *  4. A value read or written through an addresser of a type parameter ('*p = null',
+ *     'p[i]' with 'p : T*') is recorded on the function: the erased slot is
+ *     pointer-sized, so each use site must bind that parameter to a pointer-like type
+ *     (see type_reference_resolver::check_generic_pointee_access).
  *
  * Errors are reported via the logger using codes from k::diag::generic_diag.
  * A k::log::resolution_error is thrown on the first fatal violation.
@@ -94,16 +109,22 @@ private:
     std::shared_ptr<context> _context;
     unit& _unit;
 
-    /** Local scopes: name -> "declared type is an erased generic parameter behind addressers". */
-    std::vector<std::unordered_map<std::string, bool>> _scopes;
+    /** Local scopes: name -> position of the declared type relative to an erased generic parameter. */
+    std::vector<std::unordered_map<std::string, erased_slot>> _scopes;
     /** Same information for the member variables of the generic aggregate being validated. */
-    std::unordered_map<std::string, bool> _member_scope;
+    std::unordered_map<std::string, erased_slot> _member_scope;
+    /** Function whose body is being validated (receives the pointee-access record). */
+    function* _current_function = nullptr;
 
     void push_scope();
     void pop_scope();
     void declare_local(const std::string& name,
                        const std::shared_ptr<type>& t,
                        const std::unordered_set<std::string>& param_names);
+
+    /** Position of @p expr relative to an erased generic parameter (depth -1 when not erased). */
+    erased_slot erased_slot_of(const std::shared_ptr<expression>& expr,
+                               const std::unordered_set<std::string>& param_names) const;
 
     /** True when @p expr is a name/member/dereference whose declared type is an erased generic parameter. */
     bool is_erased_expression(const std::shared_ptr<expression>& expr,

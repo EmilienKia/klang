@@ -837,6 +837,85 @@ TEST_CASE("Lifecycle Cat5: Deep chaining — two struct intermediaries", "[gen][
 // Category 7: Temporaries in control flow conditions
 // =============================================================================
 
+TEST_CASE("Short-circuit cleanup destroys only evaluated temporaries",
+          "[gen][lifecycle][shortcircuit]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_short_circuit_temporary_cleanup;
+        g_dtors : int = 0;
+
+        struct Probe {
+            Probe() {}
+            ~Probe() { ++g_dtors; }
+            yes() : bool { return true; }
+        }
+
+        make() : Probe { return Probe(); }
+
+        test() : int {
+            i : int = 0;
+            while (i < 2) {
+                if (i == 0 && make().yes()) {}
+                ++i;
+            }
+            if (g_dtors != 1) return 1;
+            i = 0;
+            while (i < 2) {
+                if (i != 0 || make().yes()) {}
+                ++i;
+            }
+            if (g_dtors != 2) return 2;
+            i = 0;
+            while (i < 3) {
+                selected : bool = i < 2 ? (i == 0 && make().yes()) : false;
+                ++i;
+            }
+            if (g_dtors != 3) return 3;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
+TEST_CASE("Nested short-circuit temporaries live through the full expression",
+          "[gen][lifecycle][shortcircuit]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_nested_short_circuit_temporary_cleanup;
+        g_dtors : int = 0;
+
+        struct Probe {
+            Probe() {}
+            ~Probe() { ++g_dtors; }
+            yes() : bool { return true; }
+        }
+
+        make() : Probe { return Probe(); }
+        noDestruction() : bool { return g_dtors == 0; }
+
+        test() : int {
+            i : int = 0;
+            while (i < 3) {
+                if (i != 2 && (i == 0 || (make().yes() && noDestruction()))) {}
+                ++i;
+            }
+            if (g_dtors != 1) return 1;
+            i = 0;
+            while (i < 2) {
+                value : int = (i == 0 && make().yes()) ? 10 : 20;
+                ++i;
+            }
+            if (g_dtors != 2) return 2;
+            return 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test);
+    CHECK(test() == 0);
+}
+
 TEST_CASE("Lifecycle Cat7: Temporary struct in if-condition", "[gen][lifecycle][cat7]") {
     // if (make(x).is_valid()) — temporary created for condition,
     // must be destroyed after condition evaluation (before or after the body).
@@ -1617,6 +1696,199 @@ TEST_CASE("Lifecycle Cat8: lvalue init of non-copyable struct is rejected (site 
         test() : void {
             a : Box;
             b : Box = a;
+        }
+    )SRC", nullptr, logger);
+
+    CHECK_FALSE(ok);
+
+    bool has_type_not_copyable = false;
+    for (const auto& diag : logger.diagnostics) {
+        if (diag.code == static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE)) {
+            has_type_not_copyable = true;
+            break;
+        }
+    }
+    CHECK(has_type_not_copyable);
+}
+
+// =============================================================================
+// Category 8 (continued): implicit memberwise copy
+//
+// A struct or class that has no copy constructor but embeds a member (or base) with
+// its own copy constructor must copy that sub-object through the constructor instead
+// of duplicating its bytes (which would alias any owned resource).
+// =============================================================================
+
+TEST_CASE("Lifecycle Cat8: implicit memberwise copy of struct and class aggregates",
+          "[gen][lifecycle][cat8][value-semantics][memberwise-copy]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_lifecycle_40;
+
+        g_ctors  : int = 0;
+        g_copies : int = 0;
+        g_dtors  : int = 0;
+
+        struct Tracked {
+            Tracked()               { ++g_ctors; }
+            Tracked(other: Tracked&){ ++g_copies; }
+            ~Tracked()              { ++g_dtors; }
+        }
+
+        struct Wrapper { t : Tracked; v : int; }
+        struct Derived : Wrapper { extra : Tracked; }
+        class Holder { public: w : Wrapper; }
+
+        run() : int {
+            a : Wrapper;
+            b : Wrapper = a;
+            c : Wrapper;
+            c = b;
+            h : Holder;
+            h2 : Holder = h;
+            d : Derived;
+            e : Derived = d;
+            return 0;
+        }
+
+        test()      : int { run(); return 0; }
+        get_ctors() : int { return g_ctors;  }
+        get_copies(): int { return g_copies; }
+        get_dtors() : int { return g_dtors;  }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test       = jit->lookup_symbol<int(*)()>("test");
+    auto get_ctors  = jit->lookup_symbol<int(*)()>("get_ctors");
+    auto get_copies = jit->lookup_symbol<int(*)()>("get_copies");
+    auto get_dtors  = jit->lookup_symbol<int(*)()>("get_dtors");
+    REQUIRE(test       != nullptr);
+    REQUIRE(get_ctors  != nullptr);
+    REQUIRE(get_copies != nullptr);
+    REQUIRE(get_dtors  != nullptr);
+
+    test();
+
+    // Constructed: a, c, h, d (two members). Copied: b, c = b, h2, e (two members).
+    // Every constructed or copied member is destroyed once, including the value
+    // replaced by the assignment.
+    CHECK(get_ctors()  == 5);
+    CHECK(get_copies() == 5);
+    CHECK(get_dtors()  == 10);
+}
+
+TEST_CASE("Lifecycle Cat8: memberwise copy applies to arguments, returns, arrays and const sources",
+          "[gen][lifecycle][cat8][value-semantics][memberwise-copy]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_lifecycle_43;
+
+        g_live   : int = 0;
+        g_copies : int = 0;
+
+        struct Tracked {
+            Tracked()               { ++g_live; }
+            Tracked(other: Tracked&){ ++g_live; ++g_copies; }
+            ~Tracked()              { --g_live; }
+        }
+
+        struct Wrapper { t : Tracked; v : int; }
+        struct Outer { w : Wrapper; arr : Wrapper[2]; }
+
+        take(w: Wrapper) : int { return w.v; }
+        give() : Wrapper { r : Wrapper; r.v = 5; return r; }
+        pass(w: Wrapper&) : Wrapper { return w; }
+
+        run() : int {
+            a : Wrapper;
+            a.v = 3;
+            sum : int = take(a);
+            b : Wrapper = give();
+            c : Wrapper = pass(a);
+            k : const Wrapper = a;
+            d : Wrapper = k;
+            o : Outer;
+            p : Outer = o;
+            return sum + b.v + c.v + d.v;
+        }
+
+        test()       : int { return run(); }
+        get_live()   : int { return g_live; }
+        get_copies() : int { return g_copies; }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test       = jit->lookup_symbol<int(*)()>("test");
+    auto get_live   = jit->lookup_symbol<int(*)()>("get_live");
+    auto get_copies = jit->lookup_symbol<int(*)()>("get_copies");
+    REQUIRE(test       != nullptr);
+    REQUIRE(get_live   != nullptr);
+    REQUIRE(get_copies != nullptr);
+
+    CHECK(test() == 3 + 5 + 3 + 3);
+    // Every sub-object is destroyed exactly once: no leak and no double destruction.
+    CHECK(get_live() == 0);
+    // At least: take(a), pass(a) + return, d (const source), and the copied Outer (3 Tracked).
+    CHECK(get_copies() >= 7);
+}
+
+TEST_CASE("Lifecycle Cat8: constructor-call initializer is not an lvalue copy",
+          "[gen][lifecycle][cat8][value-semantics]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_lifecycle_41;
+
+        g_ctors : int = 0;
+        g_dtors : int = 0;
+
+        struct Box {
+            payload : int!;
+            Box()  { ++g_ctors; }
+            ~Box() { ++g_dtors; }
+        }
+
+        run() : int {
+            a : Box = Box();
+            return 0;
+        }
+
+        test()      : int { run(); return 0; }
+        get_ctors() : int { return g_ctors; }
+        get_dtors() : int { return g_dtors; }
+    )SRC");
+    REQUIRE(jit);
+
+    auto test      = jit->lookup_symbol<int(*)()>("test");
+    auto get_ctors = jit->lookup_symbol<int(*)()>("get_ctors");
+    auto get_dtors = jit->lookup_symbol<int(*)()>("get_dtors");
+    REQUIRE(test      != nullptr);
+    REQUIRE(get_ctors != nullptr);
+    REQUIRE(get_dtors != nullptr);
+
+    test();
+
+    CHECK(get_ctors() == 1);
+    CHECK(get_dtors() == 1);
+}
+
+TEST_CASE("Lifecycle Cat8: no memberwise copy when a member is not implicitly copyable",
+          "[gen][lifecycle][cat8][value-semantics][memberwise-copy][error]") {
+    test_logger logger;
+    bool ok = compile_collect_diagnostics(R"SRC(
+        module gen_lifecycle_42;
+
+        struct Tracked {
+            Tracked() {}
+            Tracked(other: Tracked&) {}
+        }
+
+        struct Pinned {
+            Pinned() {}
+            Pinned(other: Pinned&) -> delete;
+        }
+
+        struct Mixed { t : Tracked; p : Pinned; }
+
+        test() : void {
+            a : Mixed;
+            b : Mixed = a;
         }
     )SRC", nullptr, logger);
 

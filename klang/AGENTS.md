@@ -310,7 +310,7 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-frontend` | lexer/parser/file-resolver/process |
 | `klang-tests-model` | model/documentation/materializer/phase checks |
 | `klang-tests-gen-core` | general codegen + literals + variable init |
-| `klang-tests-gen-resolution` | symbol resolution, visibility, multi-source |
+| `klang-tests-gen-resolution` | symbol resolution, visibility, multi-source; CTest shards 0–1 |
 | `klang-tests-gen-extern-intrinsics` | extern C, compiler intrinsics, varargs |
 | `klang-tests-gen-functions` | callables/lambda/func-ref; CTest shards 0–2 |
 | `klang-tests-gen-control` | statements/control-flow/init-order/static ctor-dtor |
@@ -320,23 +320,23 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-arithmetic-int32-64` | 32/64-bit integer arithmetic (int32..uint64) |
 | `klang-tests-gen-arithmetic-float` | float/double/bool/incr-decr arithmetic |
 | `klang-tests-gen-operators` | operator overload/comparison/spaceship/assign |
-| `klang-tests-gen-casts` | scalar casts and indirection casts |
-| `klang-tests-gen-types-enums-unions` | enums, typed enums, and union hierarchies |
+| `klang-tests-gen-casts` | scalar casts and indirection casts; CTest shards 0–1 |
+| `klang-tests-gen-types-enums-unions` | enums, typed enums, and union hierarchies; CTest shards 0–4 |
 | `klang-tests-gen-types-const` | const semantics (`test-gen-const.cpp`) |
 | `klang-tests-gen-types-null` | null semantics (`test-gen-null-semantics.cpp`) |
 | `klang-tests-gen-types-meta-designated` | annotations and designated init (`test-gen-annotation-meta.cpp`, `test-gen-designated-init.cpp`) |
 | `klang-tests-gen-aliases` | alias/typedef/callable-alias |
 | `klang-tests-gen-classes` | class basics/inheritance/upcasts |
 | `klang-tests-gen-virtuality` | virtual/interface/override/diamond |
-| `klang-tests-gen-memory-ownership` | owner/drain/indirection |
+| `klang-tests-gen-memory-ownership` | owner/drain/indirection; CTest shards 0–1 |
 | `klang-tests-gen-arrays` | fixed/dynamic arrays and foreach |
-| `klang-tests-gen-oop-lifecycle` | lifecycle and RVO |
+| `klang-tests-gen-oop-lifecycle` | lifecycle and RVO; CTest shards 0–1 |
 | `klang-tests-gen-oop-temporary` | named return + temporary construction |
 | `klang-tests-gen-scoping` | using/friend |
 | `klang-tests-gen-templates-core` | template functions/instantiation/mangling/members; CTest shards 0–1 |
-| `klang-tests-gen-templates-deduction` | template deduction/constraints/packs/value params |
+| `klang-tests-gen-templates-deduction` | template deduction/constraints/packs/value params; CTest shards 0–4 |
 | `klang-tests-gen-generics` | generic (type-erased) declarations, restrictions, single synthesis |
-| `klang-tests-import-core` | KDI import core, namespaces, enums, transitive |
+| `klang-tests-import-core` | KDI import core, namespaces, enums, transitive; CTest shards 0–3 |
 | `klang-tests-import-templates` | KDI cross-module template instantiation; CTest shards 0–14 |
 | `klang-tests-import-interop` | KDI aliases, typedefs, callables, prod-lib |
 | `klangc-tests` | CLI/integration behavior |
@@ -345,6 +345,9 @@ Grouping policy:
 - keep thematic coherence,
 - keep per-executable runtime under timeout budget,
 - register new/redistributed files with `klang_gen_test(<target> 120 ...)`.
+- `SHARD_COUNT 5` follows the same scheme with shards `0` to `4`
+  (`gen-types-enums-unions`, `gen-templates-deduction`).
+- `SHARD_COUNT 4` likewise registers shards `0` to `3` (`import-core`).
 - `SHARD_COUNT 3` keeps heavy-suite executable names and build dependencies
   unchanged, but replaces their unsharded CTest entry with
   `<target>-shard-0`, `<target>-shard-1`, and `<target>-shard-2`.

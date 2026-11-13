@@ -215,6 +215,17 @@ add_custom_command(
     VERBATIM
 )
 
+set(PROVENANCE_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/provenance.c)
+set(PROVENANCE_OBJ ${LIBK_OUTPUT_DIR}/provenance.o)
+add_custom_command(
+    OUTPUT ${PROVENANCE_OBJ}
+    COMMAND ${CMAKE_C_COMPILER} ${FATAL_C_FLAGS}
+            -o ${PROVENANCE_OBJ} ${PROVENANCE_C}
+    DEPENDS ${PROVENANCE_C} ${CMAKE_CURRENT_SOURCE_DIR}/src/runtime/provenance.h
+    COMMENT "Compiling K lifetime provenance substrate (provenance.c)"
+    VERBATIM
+)
+
 # ── Compile the I/O C runtime helpers ─────────────────────────────────────
 set(IO_HELPERS_C   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/io_helpers.c)
 set(IO_HELPERS_OBJ ${LIBK_OUTPUT_DIR}/io_helpers.o)
@@ -736,7 +747,7 @@ add_custom_command(
 )
 
 set(C_RUNTIME_OBJS ${FATAL_OBJ} ${RTTI_OBJ} ${SYMBOL_MANGLING_OBJ} ${IO_HELPERS_OBJ} ${FILE_IO_OBJ} ${EXC_CHAIN_OBJ}
-                   ${SHARED_FFI_OBJ}
+                   ${SHARED_FFI_OBJ} ${PROVENANCE_OBJ}
                    ${BIG_INTEGER_FFI_OBJ}
                    ${TIME_OBJ} ${RUNTIME_TLS_OBJ} ${RUNTIME_THREAD_OBJ} ${THREAD_FFI_OBJ}
                    ${FUTURE_STATE_OBJ} ${FUTURE_FFI_OBJ}
@@ -846,10 +857,11 @@ endmacro()
 
 # ── Native-only FFI ABI tests ──────────────────────────────────────────────
 # Exercise the exact runtime objects without JIT or compiled K fixtures.
-set_source_files_properties(${RUNTIME_FFI_OBJ} ${FFI_FFI_OBJ}
+set_source_files_properties(${RUNTIME_FFI_OBJ} ${FFI_FFI_OBJ} ${PROVENANCE_OBJ}
     PROPERTIES GENERATED TRUE EXTERNAL_OBJECT TRUE)
 add_executable(libk-tests-ffi-native
-    tests/test-ffi-native.cpp ${RUNTIME_FFI_OBJ} ${FFI_FFI_OBJ})
+    tests/test-ffi-native.cpp tests/test-provenance-native.cpp tests/provenance-test-variant.c
+    ${RUNTIME_FFI_OBJ} ${FFI_FFI_OBJ} ${PROVENANCE_OBJ})
 target_include_directories(libk-tests-ffi-native PRIVATE src/runtime)
 target_link_libraries(libk-tests-ffi-native PRIVATE
     Catch2::Catch2WithMain PkgConfig::LIBFFI pthread dl)

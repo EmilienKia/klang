@@ -21,6 +21,8 @@
 
 #include "resolvers_common.hpp"
 
+#include <optional>
+
 namespace k::model::gen {
 
 /**
@@ -40,6 +42,41 @@ class scope_lookup {
 public:
     static bool is_definition_namespace_boundary(const element& scope);
     static bool is_imported_definition_context(const element& context);
+
+    enum class local_bound_state { deferred, missing, aggregate, verified, violated };
+    struct local_bound_result {
+        local_bound_state state = local_bound_state::deferred;
+        std::string name;
+        std::shared_ptr<aggregate> bound;
+        size_t parameter_index = 0;
+        std::vector<size_t> verified_indices;
+    };
+
+    // Conservative declaration-scope lookup of retained local bound names.
+    // Qualified names require direct source namespaces; uncertain lookups defer.
+    static local_bound_result inspect_local_constraint_bound(
+        const unit& u, const element& declaration, const tpl_info& info, size_t index,
+        const std::vector<template_argument>& args);
+
+    static std::optional<size_t> same_declaration_constraint_binder(
+        const tpl_info& info, size_t index);
+
+    // Reject only source-visible nominal arguments, not erased substitutions.
+    static bool is_local_concrete_constraint_argument(const template_argument& arg);
+
+    // Prove unrelated local source hierarchies ending in the imported k::Object.
+    static bool is_proven_unrelated_with_implicit_object(
+        const unit& u, const template_argument& arg,
+        const std::shared_ptr<aggregate>& bound);
+
+    // Prove the origin of a narrow, source-written CTAD default argument.
+    static bool has_proven_local_ctad_default(
+        const aggregate& declaration, const tpl_info& info,
+        const std::vector<template_argument>& args);
+
+    static local_bound_result analyze_local_aggregate_constraint(
+        const unit& u, const aggregate& declaration, const tpl_info& info,
+        const std::vector<template_argument>& args, const element& use_site);
     /**
      * Resolve a sibling type in an imported aggregate's defining namespace,
      * including locally synthesized specializations of imported recipes.
@@ -121,6 +158,16 @@ public:
     static std::shared_ptr<alias_definition>
     lookup_alias(std::shared_ptr<const element> elem, const k::name& name);
 
+    struct qualified_using_target {
+        std::shared_ptr<const element> scope;
+        k::name target;
+    };
+
+    // Find a directly declared using name in a qualified namespace; its target
+    // must be resolved from the returned declaration scope, not the use site.
+    static std::optional<qualified_using_target>
+    lookup_qualified_using(std::shared_ptr<const element> elem, const k::name& name);
+
     /**
      * Resolve the target type of an alias declaration and, for a strong alias
      * (typedef), build its nominal alias_type.
@@ -138,13 +185,16 @@ public:
      * the renamed type itself for a soft alias), or nullptr if it cannot be
      * resolved yet or if the alias does not denote a type.
      * Sets @p cycle when an alias cycle is detected.
+     * The early enum pass may accept a concrete aggregate before LLVM layout;
+     * this does not accept unresolved wrappers or other unresolved types.
      */
     static std::shared_ptr<type>
     materialize_alias_type(const std::shared_ptr<alias_definition>& alias,
                            const std::shared_ptr<context>& ctx,
                            const std::function<std::shared_ptr<type>(const k::name&, const element&)>& resolve_by_name,
                            bool& cycle,
-                           const std::function<std::shared_ptr<type>(const std::shared_ptr<type>&, const element&)>& resolve_chain = {});
+                           const std::function<std::shared_ptr<type>(const std::shared_ptr<type>&, const element&)>& resolve_chain = {},
+                           bool allow_unlaid_out_aggregate = false);
 
     /**
      * Resolve a use of a parameterised alias, e.g. 'Vec<int>' declared as

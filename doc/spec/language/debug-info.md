@@ -133,7 +133,7 @@ Klang assigns meaningful source locations to the IR instructions that control ex
 
 ### `if`
 
-The branch generated for an `if` statement uses the location of the `if` keyword or of the active `else` keyword when appropriate.
+The branch generated for an `if` statement uses the location of the `if` keyword or of the active `else` keyword when appropriate. The branch that leaves the `then` part to the merge block uses the `if` keyword; the one that leaves the `else` part uses the `else` keyword.
 
 ### `while`
 
@@ -168,7 +168,8 @@ In particular:
 - the `try` entry branch is associated with the `try` statement,
 - each `catch` body starts in its own catch scope,
 - nested catch propagation preserves the most specific enclosing catch location,
-- landing-pad plumbing does not displace the source location of the user-visible construct.
+- landing-pad plumbing does not displace the source location of the user-visible construct,
+- an early exit (`return`, `break`, `continue`) out of a catch body anchors the `__cxa_end_catch` call and the inlined `finally` body on the exiting statement.
 
 ---
 

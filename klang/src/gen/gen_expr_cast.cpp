@@ -415,10 +415,45 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                     {union_def->get_short_name(), target_type->to_string()});
             }
 
+            if (type::is_owner(type::remove_const(type::canonical(target_type)))) {
+                check_union_owner_extraction(sub_expr, *matches.front());
+            }
             expr.set_null_is_fatal(target_is_nonnull(target_type) || !is_address_of_union);
             return true;
         }()) {
-            // Valid union cast
+            // A value cast of an lvalue union copies its active alternative;
+            // reference and addresser casts continue to borrow its storage.
+            auto target_aggregate = std::dynamic_pointer_cast<struct_type>(
+                type::canonical(type::remove_const(target_type)));
+            const bool temporary_union =
+                std::dynamic_pointer_cast<temporary_construction_expression>(sub_expr)
+                || (!type::is_reference(source_type)
+                    && type::is_struct(type::remove_const(source_type)));
+            if (target_aggregate && target_aggregate->get_struct() && !temporary_union) {
+                auto union_type = source_type;
+                bool const_source = type::is_const(union_type);
+                if (type::is_reference(union_type)) union_type = union_type->get_subtype();
+                const_source = const_source || type::is_const(union_type);
+                union_type = type::remove_const(union_type);
+                if (type::is_pointer(union_type) || type::is_link(union_type) || type::is_view(union_type)) {
+                    union_type = union_type->get_subtype();
+                    const_source = const_source || type::is_const(union_type);
+                    union_type = type::remove_const(union_type);
+                }
+                if (auto union_st = std::dynamic_pointer_cast<struct_type>(union_type)) {
+                    if (auto union_def = find_union_by_struct_type(_unit.get_root_namespace(), union_st)) {
+                        for (const auto* alt : union_def->all_alternatives_ptrs()) {
+                            if (alt && alt->resolved_type &&
+                                type::are_equal(type::remove_const(alt->resolved_type), target_aggregate)) {
+                                const_source = const_source || alt->is_const || type::is_const(alt->resolved_type);
+                                break;
+                            }
+                        }
+                    }
+                }
+                auto loaded = adapt_union_value_copy(sub_expr, target_aggregate, const_source);
+                expr.assign(loaded);
+            }
         }
 
         // Step 2: Check for casting operator overload on the source struct type
@@ -476,9 +511,12 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
 
             // No casting operator found: fall back to ref<T> → T load
             if (type::is_reference(source_type)) {
-                auto deref = load_value_expression::make_shared(sub_expr->shared_as<expression>());
+                auto deref = adapt_reference_load_value(sub_expr->shared_as<expression>());
                 expr.assign(deref);
-                deref->set_type(source_type->get_subtype());
+            } else if (type::is_drain(source_type)
+                       && type::are_equal(type::canonical(type::remove_const(source_type->get_subtype())),
+                                          type::canonical(type::remove_const(target_type)))) {
+                expr.assign(adapt_reference_load_value(sub_expr->shared_as<expression>()));
             }
         }
     }
@@ -592,17 +630,19 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
 
                     auto en = enum_tgt->get_enumeration();
                     if (!en) return;
-                    auto* table_gv = ensure_enum_object_table_reference(en, _context);
-                    if (!table_gv) return;
-
-                    auto* arr_ty = llvm::dyn_cast<llvm::ArrayType>(table_gv->getValueType());
+                    auto* accessor = ensure_enum_object_table_accessor_reference(en, _context);
+                    auto* table_gv = accessor ? nullptr : ensure_enum_object_table_reference(en, _context);
+                    auto* arr_ty = enum_object_table_type(en, _context);
                     auto* llvm_st = arr_ty ? llvm::dyn_cast<llvm::StructType>(arr_ty->getElementType()) : nullptr;
                     auto* tgt_int_ty = llvm::dyn_cast_or_null<llvm::IntegerType>(enum_tgt->get_llvm_type());
-                    if (!arr_ty || !llvm_st || !tgt_int_ty) return;
+                    if (!arr_ty || !llvm_st || !tgt_int_ty || (!accessor && !table_gv)) return;
 
                     llvm::Value* src_ptr = _value;
                     // Symbol values for non-reference structs are addresses already; cast expressions may also provide pointers.
                     if (!src_ptr->getType()->isPointerTy()) return;
+                    llvm::Value* table_ptr = table_gv;
+                    if (accessor)
+                        table_ptr = create_call_or_invoke(accessor->getFunctionType(), accessor, {}, "enum_table");
 
                     auto* cur_fn = _builder->GetInsertBlock()->getParent();
                     auto* i1_ty = llvm::Type::getInt1Ty(_builder->getContext());
@@ -628,14 +668,14 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                         static_cast<uint64_t>(default_entry.value),
                         default_entry.value < 0);
 
-                    for (size_t i = 0; i < en->entries().size(); ++i) {
+                    for (size_t i = 0; i < arr_ty->getNumElements(); ++i) {
                         llvm::Value* indices[] = {
                             llvm::ConstantInt::get(llvm::Type::getInt64Ty(_builder->getContext()), 0),
                             llvm::ConstantInt::get(llvm::Type::getInt64Ty(_builder->getContext()), i)
                         };
                         auto* table_elem_ptr = _builder->CreateInBoundsGEP(
                             arr_ty,
-                            table_gv,
+                            table_ptr,
                             llvm::ArrayRef<llvm::Value*>(indices),
                             "enum_obj_tbl_elem");
 
@@ -723,17 +763,19 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                     expr.sub_expr()->accept(*this);
                     if (!_value) return;
 
-                    // Get the backing table global
                     auto en = enum_src->get_enumeration();
                     if (!en) return;
-                    auto* table_gv = ensure_enum_object_table_reference(en, _context);
-                    if (!table_gv) return;
-                    auto* arr_ty = llvm::dyn_cast<llvm::ArrayType>(
-                        table_gv->getValueType());
-                    if (!arr_ty) return;
+                    auto* accessor = ensure_enum_object_table_accessor_reference(en, _context);
+                    auto* table_gv = accessor ? nullptr : ensure_enum_object_table_reference(en, _context);
+                    auto* arr_ty = enum_object_table_type(en, _context);
+                    if (!arr_ty || (!accessor && !table_gv)) return;
+                    auto* index = _value;
+                    llvm::Value* table_ptr = table_gv;
+                    if (accessor)
+                        table_ptr = create_call_or_invoke(accessor->getFunctionType(), accessor, {}, "enum_table");
 
                     // Zero-extend the index to i64 for GEP
-                    auto* idx_i64 = _builder->CreateZExt(_value,
+                    auto* idx_i64 = _builder->CreateZExt(index,
                         llvm::Type::getInt64Ty(_builder->getContext()),
                         "enum_tbl_idx");
 
@@ -744,7 +786,7 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                     };
                     _value = _builder->CreateInBoundsGEP(
                         arr_ty,
-                        table_gv,
+                        table_ptr,
                         llvm::ArrayRef<llvm::Value*>(indices),
                         "enum_tbl_elem");
 
@@ -936,6 +978,9 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                     } else {
                         auto elem_llvm_type = _context->get_llvm_type(bare_tgt);
                         _value = _builder->CreateLoad(elem_llvm_type, storage_ptr, "union_cast_val");
+                        if (type::is_owner(type::remove_const(type::canonical(bare_tgt)))) {
+                            _builder->CreateStore(llvm::Constant::getNullValue(elem_llvm_type), storage_ptr);
+                        }
                     }
                     return;
                 }

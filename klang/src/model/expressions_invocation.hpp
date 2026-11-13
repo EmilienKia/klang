@@ -19,6 +19,7 @@
 #ifndef KLANG_MODEL_EXPRESSIONS_INVOCATION_HPP
 #define KLANG_MODEL_EXPRESSIONS_INVOCATION_HPP
 #include "expressions_unary.hpp"
+#include <optional>
 
 namespace k::model {
 
@@ -255,6 +256,9 @@ protected:
     /** Resolved constructor to call (set during type resolution). */
     std::shared_ptr<constructor> _constructor;
 
+    /** Selected union alternative, if this constructs a union from a payload. */
+    std::optional<size_t> _union_alternative_index;
+
     temporary_construction_expression() = default;
     temporary_construction_expression(const temporary_construction_expression&) = delete;
 
@@ -301,6 +305,7 @@ public:
         c->_constant_value = _constant_value;
         c->_constructed_type = _constructed_type;
         c->_constructor = _constructor;
+        c->_union_alternative_index = _union_alternative_index;
         std::vector<std::shared_ptr<expression>> args;
         for (auto& a : _arguments) args.push_back(a->clone());
         c->assign_arguments(args);
@@ -555,6 +560,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<callable_bind_expression> c{new callable_bind_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         c->_target = _target;
         c->_vtable_slot = _vtable_slot;
         c->_dispatch_base = _dispatch_base;

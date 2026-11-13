@@ -43,6 +43,8 @@
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/GlobalVariable.h>
+#include <deque>
+#include <stdexcept>
 #include <unordered_set>
 
 namespace k::model {
@@ -58,8 +60,11 @@ imported_function::imported_function(std::shared_ptr<element> parent,
     , _kdi_function(kdi_fn)
 {
     if (kdi_fn) {
+        if (kdi_fn->is_extern && kdi_fn->mangled_name.empty())
+            throw std::runtime_error("native imported function '" + kdi_fn->fq_name + "' has no C symbol");
         _mangled_name = kdi_fn->mangled_name;
         _is_operator  = kdi_fn->is_operator;
+        if (kdi_fn->is_extern) set_extern_c_symbol(kdi_fn->mangled_name);
     }
 }
 void imported_function::update_mangled_name() {
@@ -76,6 +81,7 @@ imported_constructor::imported_constructor(std::shared_ptr<aggregate> parent,
     : constructor(std::move(parent))
     , _kdi_ctor(kdi_ctor)
 {
+    set_throws_spec_unknown(!kdi_ctor || !kdi_ctor->throws_spec);
     if (kdi_ctor) {
         _mangled_name = kdi_ctor->mangled_name;
         if (kdi_ctor->is_copy_constructor) _is_copy_constructor = true;
@@ -126,12 +132,16 @@ imported_method::imported_method(std::shared_ptr<element> parent,
     , _kdi_method(kdi_m)
 {
     if (kdi_m) {
+        if (kdi_m->is_extern && (kdi_m->mangled_name.empty() || !kdi_m->is_static))
+            throw std::runtime_error("native imported method '" + kdi_m->fq_name + "' has no valid static C declaration");
         _mangled_name     = kdi_m->mangled_name;
+        if (kdi_m->is_extern) set_extern_c_symbol(kdi_m->mangled_name);
         _is_virtual       = kdi_m->is_virtual;
         _is_const_member  = kdi_m->is_const_member;
         _is_abstract_func = kdi_m->is_abstract;
         _is_final_func    = kdi_m->is_final;
         _is_operator      = kdi_m->is_operator;
+        if (kdi_m->is_deleted) _aliasing = function_aliasing::DELETE;
         _vtable_slot      = kdi_m->vtable_slot;
     }
 }
@@ -615,11 +625,16 @@ static void attach_params(function& fn,
                           std::shared_ptr<context> ctx)
 {
     for (const auto& kp : params) {
+        if (kp.is_ffi_cstring && !fn.is_extern())
+            throw std::runtime_error("CString parameter on non-native imported function '" + fn.get_fq_name() + "'");
         auto model_type = kdi_type_to_model_type(kp.type, owner, ctx);
         // Use an anonymous name if the KDI entry has no name
         const std::string& pname = kp.name.empty() ? "__p" : kp.name;
         auto p = fn.append_parameter(pname, model_type);
-        if (p) p->set_varargs(kp.is_varargs);
+        if (p) {
+            p->set_varargs(kp.is_varargs);
+            p->set_ffi_cstring(kp.is_ffi_cstring);
+        }
     }
 }
 
@@ -699,15 +714,25 @@ convert_template_origin_args(const kdi::kdi_template_origin& origin,
     return model_args;
 }
 
+struct imported_enum_brace_init final : k::parse::ast::brace_init_list {
+    std::deque<std::string> lexeme_storage;
+
+    imported_enum_brace_init()
+        : brace_init_list({}, true) {}
+};
+
 static std::shared_ptr<k::parse::ast::brace_init_list>
 rebuild_object_init_brace(const kdi::kdi_enum_entry& entry)
 {
     if (entry.object_init_members.empty()) return nullptr;
 
-    std::vector<std::shared_ptr<k::parse::ast::expression>> elements;
-    elements.reserve(entry.object_init_members.size());
+    auto result = std::make_shared<imported_enum_brace_init>();
+    result->elements.reserve(entry.object_init_members.size());
     for (const auto& [member_name, member_value] : entry.object_init_members) {
-        std::string lit_txt = std::to_string(member_value);
+        result->lexeme_storage.push_back(std::to_string(member_value));
+        const auto& lit_txt = result->lexeme_storage.back();
+        result->lexeme_storage.push_back(member_name);
+        const auto& name_txt = result->lexeme_storage.back();
         auto lit = std::make_shared<k::parse::ast::literal_expr>(
             lex::any_literal{lex::integer{
                 lit_txt,
@@ -718,17 +743,13 @@ rebuild_object_init_brace(const kdi::kdi_enum_entry& entry)
                 lex::LONGLONG}});
         auto designated = std::make_shared<k::parse::ast::designated_init_element>(
             lex::operator_(".", lex::operator_::DOT),
-            lex::identifier(member_name),
+            lex::identifier(name_txt),
             std::vector<lex::identifier>{},
             std::static_pointer_cast<k::parse::ast::expression>(lit));
-        elements.push_back(std::static_pointer_cast<k::parse::ast::expression>(designated));
+        result->elements.push_back(std::static_pointer_cast<k::parse::ast::expression>(designated));
     }
 
-    return std::make_shared<k::parse::ast::brace_init_list>(
-        lex::punctuator("{", lex::punctuator::BRACE_OPEN),
-        lex::punctuator("}", lex::punctuator::BRACE_CLOSE),
-        elements,
-        /*is_designated=*/true);
+    return result;
 }
 
 static std::shared_ptr<doc::doc_entity>
@@ -789,7 +810,7 @@ unit::get_or_create_imported_function(const kdi::kdi_function* kdi_fn,
     if (!kdi_fn) return nullptr;
 
     // Check cache
-    auto it = _imported_functions.find(kdi_fn->mangled_name);
+    auto it = _imported_functions.find(kdi_fn);
     if (it != _imported_functions.end()) return it->second;
 
     // Create node — parent is the root_ns (logical ownership)
@@ -829,7 +850,7 @@ unit::get_or_create_imported_function(const kdi::kdi_function* kdi_fn,
         fn->set_documentation(std::move(doc));
     }
 
-    _imported_functions[kdi_fn->mangled_name] = fn;
+    _imported_functions[kdi_fn] = fn;
     return fn;
 }
 
@@ -994,6 +1015,7 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
     // types by name (e.g. '%Counter = type { ptr, %ICounter, i32 }').
     // If we try to intern Counter before ICounter is known, LLVM creates an
     // opaque forward-reference for ICounter, leaving Counter unsized.
+    bool all_bases_materialised = true;
     for (const auto& kbase : kdi_agg->bases) {
         std::string base_fq = kbase.fq_name;
         if (base_fq.size() >= 2 && base_fq[0] == ':' && base_fq[1] == ':')
@@ -1042,8 +1064,11 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
                 bases_mut.back().base      = std::dynamic_pointer_cast<aggregate>(base_imp);
                 bases_mut.back().is_virtual = kbase.is_virtual;
             }
+        } else {
+            all_bases_materialised = false;
         }
     }
+    agg->set_imported_bases_complete(kdi_agg->bases_complete && all_bases_materialised);
 
     // ── Intern LLVM StructType (after bases, so their LLVM types are known) ─
     llvm::StructType* llvm_st = nullptr;
@@ -1173,7 +1198,8 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         auto ic = imported_constructor::make_shared(agg, &kc);
         ic->assign_name(fq_to_abs_kname(kdi_agg->fq_name.empty() ? kdi_agg->name : kdi_agg->fq_name));
         attach_params(*ic, kc.params, *this, ctx);
-        ic->set_visibility(kc.visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED);
+        ic->set_visibility(kc.is_private ? PRIVATE :
+            (kc.visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED));
         ic->set_copy_constructor(kc.is_copy_constructor);
         if (auto doc = make_function_doc(kc.doc)) {
             ic->set_documentation(std::move(doc));
@@ -1215,7 +1241,8 @@ unit::get_or_create_imported_aggregate(const k::name& fq_name,
         auto ret = kdi_type_to_model_type(km.return_type, *this, ctx);
         if (ret) im->set_return_type(ret);
         attach_params(*im, km.params, *this, ctx);
-        im->set_visibility(km.visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED);
+        im->set_visibility(km.is_private ? PRIVATE :
+            (km.visibility == kdi::kdi_visibility::public_ ? PUBLIC : PROTECTED));
         if (km.is_virtual)     { im->set_virtual(true); }
         if (km.vtable_slot >= 0) { im->set_vtable_slot(km.vtable_slot); }
         if (km.is_abstract)    { im->set_abstract_func(true); }
@@ -1366,6 +1393,12 @@ unit::get_or_create_imported_enum(const k::name& fq_name,
     if (!kdi_en) {
         return nullptr;
     }
+    if (kdi_en->object_table_kind) {
+        if (*kdi_en->object_table_kind != "runtime")
+            throw std::runtime_error("Unsupported KDI enum object_table_kind for " + lookup_key);
+        if (!kdi_en->object_type || !kdi_en->object_table_symbol || kdi_en->object_table_symbol->empty())
+            throw std::runtime_error("Invalid KDI runtime enum table metadata for " + lookup_key);
+    }
 
     // Every spelling of an imported declaration shares its nominal enum type.
     const auto canonical_name = kdi_en->fq_name.empty()
@@ -1377,6 +1410,8 @@ unit::get_or_create_imported_enum(const k::name& fq_name,
     // Create the enumeration model node
     auto root = get_root_namespace();
     auto en = enumeration::make_shared(root, kdi_en->name);
+    en->set_imported(true);
+    en->set_runtime_table(kdi_en->object_table_kind == "runtime");
     if (!kdi_en->fq_name.empty()) {
         en->assign_name(fq_to_abs_kname(kdi_en->fq_name));
     }
@@ -1405,12 +1440,23 @@ unit::get_or_create_imported_enum(const k::name& fq_name,
     }
 
     // Add all entries
+    std::unordered_set<int64_t> enum_slots;
     for (auto& kdi_entry : kdi_en->entries) {
+        const bool alias = kdi_en->object_type && !enum_slots.insert(kdi_entry.value).second;
+        const kdi::kdi_enum_entry* initializer = &kdi_entry;
+        if (kdi_en->object_type && !alias && initializer->object_init_members.empty()) {
+            for (const auto& candidate : kdi_en->entries) {
+                if (candidate.value == kdi_entry.value && !candidate.object_init_members.empty()) {
+                    initializer = &candidate;
+                    break;
+                }
+            }
+        }
         en->add_entry(
             kdi_entry.name,
             kdi_entry.value,
             kdi_entry.is_default,
-            rebuild_object_init_brace(kdi_entry));
+            rebuild_object_init_brace(*initializer), {}, false, alias);
     }
 
     // Resolve base enum (derivation)

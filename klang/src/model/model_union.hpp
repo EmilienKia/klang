@@ -22,6 +22,37 @@
 namespace k::model {
 
 /**
+ * True when a struct without a destructor still owns resources that a union must
+ * release by field: owner or owning-callable fields, reached through arrays and
+ * nested destructor-less structs. Such structs are never destroyed as values
+ * elsewhere, so only union payload cleanup observes this state.
+ */
+inline bool struct_releases_fields_without_destructor(const aggregate& agg);
+
+inline bool type_releases_fields_without_destructor(const std::shared_ptr<type>& t) {
+    auto bare = type::canonical(type::remove_const(type::canonical(t)));
+    if (!bare) return false;
+    if (type::is_owner(bare)) return true;
+    if (auto callable = std::dynamic_pointer_cast<callable_type>(bare)) return callable->is_owner();
+    if (auto array = std::dynamic_pointer_cast<sized_array_type>(bare))
+        return type_releases_fields_without_destructor(array->get_subtype());
+    if (auto st = std::dynamic_pointer_cast<struct_type>(bare)) {
+        auto agg = st->get_struct();
+        return agg && !agg->get_destructor() && struct_releases_fields_without_destructor(*agg);
+    }
+    return false;
+}
+
+inline bool struct_releases_fields_without_destructor(const aggregate& agg) {
+    if (!agg.is_struct() || agg.is_imported() || agg.get_destructor()) return false;
+    for (const auto& entry : agg.variables()) {
+        auto member = std::dynamic_pointer_cast<member_variable_definition>(entry.second);
+        if (member && type_releases_fields_without_destructor(member->get_type())) return true;
+    }
+    return false;
+}
+
+/**
  * Describes a single alternative (member) within a union definition.
  */
 struct union_alternative {
@@ -276,10 +307,16 @@ public:
      */
     bool has_nontrivial_destructor_alternative() const {
         for (const auto* alt_ptr : all_alternatives_ptrs()) {
-            if (auto st = std::dynamic_pointer_cast<struct_type>(alt_ptr->resolved_type)) {
+            auto alt_type = type::canonical(type::remove_const(type::canonical(alt_ptr->resolved_type)));
+            if (type::is_owner(alt_type) || type::is_sized_array(alt_type)) return true;
+            if (auto callable = std::dynamic_pointer_cast<callable_type>(alt_type)) {
+                if (callable->is_owner()) return true;
+            }
+            if (auto st = std::dynamic_pointer_cast<struct_type>(alt_type)) {
                 if (auto agg = st->get_struct()) {
-                    if (agg->get_destructor()) return true;
-                }
+                    if (agg->get_destructor() || struct_releases_fields_without_destructor(*agg))
+                        return true;
+                } else return true;
             }
         }
         return false;

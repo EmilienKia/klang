@@ -18,11 +18,15 @@
 
 #include <catch2/catch_all.hpp>
 
+#include <algorithm>
+#include <dlfcn.h>
 #include <llvm/IR/DerivedTypes.h>
 
 #include "../src/errors.hpp"
 #include "../src/model/expressions.hpp"
 #include "../src/model/mangler.hpp"
+#include "../src/model/model_builder.hpp"
+#include "../src/model/tools/kdi_exporter.hpp"
 #include "helpers.hpp"
 
 using namespace k::parse;
@@ -1428,6 +1432,61 @@ TEST_CASE("Typed enum — parser parses class-backed implicit entries", "[parser
     CHECK_FALSE(decl->entries[2]->has_explicit_initializer());
 }
 
+TEST_CASE("Typed enum — model preserves empty constructor initializer",
+          "[gen][enum][typed][initializer][regression]") {
+    auto compiler = compile_model(R"(
+        module k;
+        struct Marker { value : int; }
+        enum Base : Marker { FIRST; EMPTY(); NEXT; }
+        enum Derived : Base { LAST(); }
+    )");
+    REQUIRE(compiler);
+    auto base = find_enum(compiler, "Base");
+    auto derived = find_enum(compiler, "Derived");
+    REQUIRE(base);
+    REQUIRE(derived);
+    REQUIRE(base->entries().size() == 3);
+    REQUIRE(derived->entries().size() == 4);
+    CHECK_FALSE(base->entries()[0].has_paren_init);
+    CHECK(base->entries()[1].has_paren_init);
+    CHECK(base->entries()[1].ctor_args.empty());
+    CHECK_FALSE(base->entries()[1].is_implicit_increment);
+    CHECK(base->entries()[2].is_implicit_increment);
+    CHECK(derived->entries()[1].has_paren_init);
+    CHECK(derived->entries()[3].has_paren_init);
+    REQUIRE(base->entries()[1].ast_entry);
+    CHECK(std::string{base->entries()[1].ast_entry->name.content} == "EMPTY");
+}
+
+TEST_CASE("Typed enum — empty initializer does not increment the preceding value",
+          "[gen][enum][typed][initializer][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_empty_initializer;
+        struct Marker { value : int; }
+        enum E : Marker { FIRST{.value = 7}; EMPTY(); NEXT; }
+        read_empty() : int { value : const Marker& = E::EMPTY; return value.value; }
+        read_next() : int { value : const Marker& = E::NEXT; return value.value; }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("read_empty")() == 0);
+    CHECK(jit->lookup_symbol<int(*)()>("read_next")() == 1);
+}
+
+TEST_CASE("Typed enum — object entry rejects integer value initializer",
+          "[gen][enum][typed][initializer][regression]") {
+    try {
+        gen_jit_throws(R"(
+            module enum_object_integer_initializer;
+            struct Marker { value : int; }
+            enum E : Marker { INVALID = 7; }
+        )");
+        FAIL("Expected an object-backed initializer error");
+    } catch (const k::log::compiler_error& error) {
+        CHECK(error.get_diagnostic().code
+              == static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_OBJECT_VALUE_INITIALIZER));
+    }
+}
+
 TEST_CASE("Typed enum — explicit integer underlying keeps classic behavior", "[gen][enum][typed][expected]") {
     auto jit = gen_jit(R"(
         module gen_enum_40;
@@ -1483,6 +1542,24 @@ TEST_CASE("Typed enum — object-backed zero-init entry", "[gen][enum][typed][ex
     CHECK(jit->lookup_symbol<int(*)()>("test")() == 0);
 }
 
+TEST_CASE("Typed enum — forward alias does not increment the first backing slot",
+          "[gen][enum][typed][initializer][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_first_alias;
+        struct Value { number : int; }
+        enum Base : Value { ALIAS = FIRST; FIRST; SECOND; }
+        enum Derived : Base { THIRD; }
+        test() : int {
+            a : const Value& = Derived::ALIAS;
+            b : const Value& = Derived::SECOND;
+            c : const Value& = Derived::THIRD;
+            return a.number + b.number * 10 + c.number + Derived::THIRD;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("test")() == 14);
+}
+
 TEST_CASE("Typed enum — class-backed implicit auto-increment values", "[gen][enum][typed][expected]") {
     auto jit = gen_jit(R"(
         module gen_enum_43;
@@ -1493,15 +1570,42 @@ TEST_CASE("Typed enum — class-backed implicit auto-increment values", "[gen][e
             FIRST;
             SECOND;
             THIRD;
+            RESET();
+            AFTER_RESET;
         }
         get_first() : int { return Kind::FIRST; }
         get_second() : int { return Kind::SECOND; }
         get_third() : int { return Kind::THIRD; }
+        get_second_id() : int {
+            marker : const Marker& = Kind::SECOND;
+            return marker.id;
+        }
+        get_third_id() : int {
+            marker : const Marker& = Kind::THIRD;
+            return marker.id;
+        }
+        get_second_hash() : int {
+            marker : const Marker& = Kind::SECOND;
+            return marker.hash();
+        }
+        get_reset_id() : int {
+            marker : const Marker& = Kind::RESET;
+            return marker.id;
+        }
+        get_after_reset_id() : int {
+            marker : const Marker& = Kind::AFTER_RESET;
+            return marker.id;
+        }
     )");
     REQUIRE(jit);
     CHECK(jit->lookup_symbol<int(*)()>("get_first")() == 0);
     CHECK(jit->lookup_symbol<int(*)()>("get_second")() == 1);
     CHECK(jit->lookup_symbol<int(*)()>("get_third")() == 2);
+    CHECK(jit->lookup_symbol<int(*)()>("get_second_id")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("get_third_id")() == 2);
+    CHECK(jit->lookup_symbol<int(*)()>("get_second_hash")() == 0);
+    CHECK(jit->lookup_symbol<int(*)()>("get_reset_id")() == 0);
+    CHECK(jit->lookup_symbol<int(*)()>("get_after_reset_id")() == 1);
 }
 
 TEST_CASE("Typed enum — class-backed implicit ++ from previous value", "[gen][enum][typed][expected]") {
@@ -1531,6 +1635,37 @@ TEST_CASE("Typed enum — class-backed implicit ++ from previous value", "[gen][
     CHECK(jit->lookup_symbol<int(*)()>("get_twelve_value")() == 12);
 }
 
+TEST_CASE("Typed enum — implicit entries do not call trivial backing constructors",
+          "[gen][enum][typed][initializer][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_implicit_constructor;
+        struct Value {
+            number : int;
+            Value() : number(5) {}
+            Value(n : int) : number(n) {}
+        }
+        enum E : Value { FIRST; SECOND; }
+        first() : int { value : const Value& = E::FIRST; return value.number; }
+        second() : int { value : const Value& = E::SECOND; return value.number; }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("first")() == 0);
+    CHECK(jit->lookup_symbol<int(*)()>("second")() == 1);
+}
+
+TEST_CASE("Typed enum — implicit entries preserve trivial struct bases",
+          "[gen][enum][typed][initializer][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_trivial_base;
+        struct Base { x : int; }
+        struct Value : Base { y : int; }
+        enum E : Value { FIRST{.y = 7}; SECOND; }
+        second() : int { value : const Value& = E::SECOND; return value.y; }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("second")() == 8);
+}
+
 TEST_CASE("Typed enum — enum entry to const underlying reference", "[gen][enum][typed][expected]") {
     auto jit = gen_jit(R"(
         module gen_enum_45;
@@ -1549,6 +1684,410 @@ TEST_CASE("Typed enum — enum entry to const underlying reference", "[gen][enum
     )");
     REQUIRE(jit);
     CHECK(jit->lookup_symbol<int(*)()>("sum_right")() == 1);
+}
+
+TEST_CASE("Typed enum — backing references accept enum values and references",
+          "[gen][enum][typed][conversion][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_backing_argument;
+        struct Value { number : int; }
+        alias ValueAlias : Value;
+        enum E : Value {
+            FIRST{.number = 17};
+            SECOND{.number = 42};
+        }
+        enum Integer { ZERO; ONE; }
+        calls : int = 0;
+        read(value : const Value&) : int { return value.number; }
+        read_alias(value : const ValueAlias&) : int { return value.number; }
+        read_enum(value : E&) : int { return value; }
+        read_integer(value : int) : int { return value; }
+        choose(value : E) : int { return 100; }
+        choose(value : const Value&) : int { return 200; }
+        make() : E { ++calls; return E::SECOND; }
+        from_ref(value : E&) : int { return read(value); }
+        from_const_ref(value : const E&) : int { return read(value); }
+        struct Holder {
+            value : E = E::SECOND;
+            const read_value() : int { return read(value); }
+        }
+        test() : int {
+            value : E = E::FIRST;
+            ref : E& = value;
+            cref : const E& = value;
+            integer : Integer = Integer::ONE;
+            backing : const Value& = cref;
+            holder : Holder();
+            result : int = read(E::FIRST) + read(make()) + read(value) + read(ref)
+                + read(cref) + from_ref(value) + from_const_ref(value)
+                + backing.number + holder.read_value() + choose(value)
+                + read_enum(value) + read_integer(integer) + read_alias(ref);
+            if (calls != 1) return -1;
+            value = E::SECOND;
+            if (read(ref) != 42 || read(cref) != 42) return -2;
+            return result;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("test")() == 321);
+}
+
+TEST_CASE("Typed enum — backing reference conversions reject incompatible targets",
+          "[gen][enum][typed][conversion][error][regression]") {
+    SECTION("mutable backing reference") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"(
+            module enum_mutable_backing_argument;
+            struct Value { number : int; }
+            enum E : Value { FIRST{.number = 17}; }
+            mutate(value : Value&) {}
+            test() { value : E = E::FIRST; mutate(value); }
+        )"), k::log::compiler_error);
+    }
+    SECTION("mutable backing reference from enum entry") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"(
+            module enum_mutable_backing_entry;
+            struct Value { number : int; }
+            enum E : Value { FIRST{.number = 17}; }
+            mutate(value : Value&) {}
+            test() { mutate(E::FIRST); }
+        )"), k::log::compiler_error);
+    }
+    SECTION("mutable backing reference variable") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"(
+            module enum_mutable_backing_variable;
+            struct Value { number : int; }
+            enum E : Value { FIRST{.number = 17}; }
+            test() { value : Value& = E::FIRST; }
+        )"), k::log::compiler_error);
+    }
+    SECTION("unrelated aggregate") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"(
+            module enum_wrong_backing_argument;
+            struct Value { number : int; }
+            struct Other { number : int; }
+            enum E : Value { FIRST{.number = 17}; }
+            read(value : const Other&) {}
+            test() { value : E = E::FIRST; read(value); }
+        )"), k::log::compiler_error);
+    }
+    SECTION("integer-backed enum") {
+        REQUIRE_THROWS_AS(gen_jit_throws(R"(
+            module integer_enum_backing_argument;
+            struct Value { number : int; }
+            enum E { FIRST; }
+            read(value : const Value&) {}
+            test() { value : E = E::FIRST; read(value); }
+        )"), k::log::compiler_error);
+    }
+}
+
+TEST_CASE("Typed enum — aggregate alias chains preserve backing table references",
+          "[gen][enum][typed][alias][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_aggregate_alias;
+        namespace api {
+            alias PointAlias : values::Point;
+            alias Backing : PointAlias;
+            enum Direction : Backing {
+                FIRST{.x = 17};
+                SECOND{.x = 42};
+            }
+            namespace values {
+                struct Point { x: int; }
+            }
+        }
+        get_index() : int { return api::Direction::SECOND; }
+        get_first() : int {
+            p: const api::PointAlias& = api::Direction::FIRST;
+            return p.x;
+        }
+        get_second() : int {
+            p: const api::values::Point& = api::Direction::SECOND;
+            return p.x;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("get_index")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("get_first")() == 17);
+    CHECK(jit->lookup_symbol<int(*)()>("get_second")() == 42);
+}
+
+TEST_CASE("Typed enum — aliases to imported aggregates preserve backing references",
+          "[gen][enum][typed][alias][import][regression]") {
+    constexpr std::string_view producer = R"(
+        module enum_alias_source;
+        struct Point { x: int; }
+        alias ExportedPoint : Point;
+        enum State { START = 3; }
+    )";
+    constexpr std::string_view consumer = R"(
+        module enum_alias_consumer;
+        import enum_alias_source;
+        alias PointAlias : enum_alias_source::Point;
+        alias Backing : PointAlias;
+        alias BarePoint : Point;
+        enum Direct : Point {
+            VALUE{.x = 31};
+        }
+        enum BareAlias : BarePoint {
+            VALUE{.x = 37};
+        }
+        enum Extended : State { END = 4; }
+        namespace local {
+            enum Point { START = 7; }
+            enum Derived : Point { END = 8; }
+        }
+        enum Direction : Backing {
+            FIRST{.x = 17};
+            SECOND{.x = 42};
+        }
+        enum Other : enum_alias_source::ExportedPoint {
+            VALUE{.x = 23};
+        }
+        main() : int {
+            first: const PointAlias& = Direction::FIRST;
+            second: const enum_alias_source::Point& = Direction::SECOND;
+            other: const enum_alias_source::Point& = Other::VALUE;
+            direct: const Point& = Direct::VALUE;
+            bare: const BarePoint& = BareAlias::VALUE;
+            if (first.x != 17 || second.x != 42 || other.x != 23) return 1;
+            if (Direction::SECOND != 1) return 2;
+            if (direct.x != 31 || bare.x != 37) return 3;
+            if (Extended::START != 3 || local::Derived::START != 7) return 4;
+            return 42;
+        }
+    )";
+    auto result = build_exec_with_lib(producer, consumer);
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
+}
+
+TEST_CASE("Typed enum — a namespace does not resolve as an imported aggregate base",
+          "[gen][enum][typed][import][regression]") {
+    TmpKdi lib(R"(
+        module enum_namespace_source;
+        struct Point { x: int; }
+    )");
+    auto compiler = k::compiler::create();
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("enum_namespace_source", lib.kdi_path);
+    compiler->set_file_resolver(resolver);
+    try {
+        compiler->parse_source("enum_namespace_consumer.k", R"(
+            module enum_namespace_consumer;
+            import enum_namespace_source;
+            namespace Point {}
+            enum E : Point { VALUE{.x = 42}; }
+        )");
+        FAIL("Expected an invalid enum base error");
+    } catch (const k::log::compiler_error& error) {
+        CHECK(error.get_diagnostic().code
+              == static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_ENTRY_NOT_FOUND));
+    }
+}
+
+TEST_CASE("Typed enum — aggregate alias target follows a using declaration",
+          "[gen][enum][typed][alias][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_alias_using;
+        using Selected = values::Point;
+        alias Backing : Selected;
+        enum E : Backing { VALUE{.x = 42}; }
+        namespace values { struct Point { x: int; } }
+        read() : int {
+            p: const values::Point& = E::VALUE;
+            return p.x;
+        }
+    )");
+    REQUIRE(jit);
+    CHECK(jit->lookup_symbol<int(*)()>("read")() == 42);
+}
+
+TEST_CASE("Typed enum — synthetic imported aggregate scopes are not namespaces",
+          "[gen][enum][typed][alias][import][regression]") {
+    TmpKdi lib(R"(
+        module enum_alias_fake_source;
+        struct Point { x: int; }
+    )");
+    test_logger logger;
+    k::source source{R"(
+        module enum_alias_fake_consumer;
+        import enum_alias_fake_source;
+        alias Backing : enum_alias_fake_source::Point;
+        enum E : Backing { VALUE{.x = 42}; }
+    )"};
+    k::parse::parser parser(logger, source);
+    auto ast = parser.parse_unit();
+    REQUIRE(ast);
+    auto context = k::model::context::create();
+    auto unit = k::model::unit::create(context);
+    k::model::model_builder::visit(logger, context, *ast, *unit);
+    k::path_lookup_file_resolver files;
+    files.add_explicit_path("enum_alias_fake_source", lib.kdi_path);
+    k::model::kdi_importer importer(*unit, files, logger);
+    importer.import_all();
+    importer.materialise_all(context);
+    auto imported_scope = unit->get_root_namespace()->get_child_namespace("enum_alias_fake_source");
+    REQUIRE(imported_scope);
+    auto point = imported_scope->get_aggregate("Point");
+    REQUIRE(point);
+    auto synthetic_scope = imported_scope->get_child_namespace("Point");
+    REQUIRE_FALSE(synthetic_scope->is_declared_namespace());
+
+    k::model::gen::symbol_resolver symbols(logger, context, *unit);
+    REQUIRE_NOTHROW(symbols.resolve());
+    auto en = unit->get_root_namespace()->get_enum("E");
+    REQUIRE(en);
+    CHECK(en->get_object_type() == point->get_struct_type());
+}
+
+TEST_CASE("Typed enum — aliases prefer imported aggregates over serialized lookup scopes",
+          "[gen][enum][typed][alias][import][regression]") {
+    auto producer = compile_model(R"(
+        module enum_alias_serialized_source;
+        struct Point { x: int; }
+    )");
+    REQUIRE(producer);
+    k::model::kdi_builder builder(*producer->get_context_for_test());
+    producer->get_unit()->accept(builder);
+    auto metadata = builder.take();
+    metadata.header.dependencies.clear();
+    bool has_point_scope = false;
+    for (const auto& child : metadata.unit.root_ns.namespaces) {
+        if (child.name == "Point") has_point_scope = true;
+    }
+    if (!has_point_scope) {
+        kdi::kdi_namespace synthetic;
+        synthetic.name = "Point";
+        synthetic.fq_name = "::enum_alias_serialized_source::Point";
+        metadata.unit.root_ns.namespaces.push_back(std::move(synthetic));
+    }
+    auto path = std::filesystem::current_path() / "enum_alias_serialized_source_fixture.kdi";
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); }
+    } cleanup{path};
+    REQUIRE(kdi::kdi_write_cbor_file(metadata, path.string()));
+
+    test_logger logger;
+    k::source source{R"(
+        module enum_alias_serialized_consumer;
+        import enum_alias_serialized_source;
+        alias Qualified : enum_alias_serialized_source::Point;
+        alias Rooted : ::enum_alias_serialized_source::Point;
+        enum First : Qualified { VALUE{.x = 17}; }
+        enum Second : Rooted { VALUE{.x = 42}; }
+        namespace client {
+            alias Backing : enum_alias_serialized_source::Point;
+            enum Third : Backing { VALUE{.x = 23}; }
+        }
+    )"};
+    k::parse::parser parser(logger, source);
+    auto ast = parser.parse_unit();
+    REQUIRE(ast);
+    auto context = k::model::context::create();
+    auto unit = k::model::unit::create(context);
+    k::model::model_builder::visit(logger, context, *ast, *unit);
+    k::path_lookup_file_resolver files;
+    files.add_explicit_path("enum_alias_serialized_source", path.string());
+    k::model::kdi_importer importer(*unit, files, logger);
+    importer.import_all();
+    importer.materialise_all(context);
+
+    auto imported_scope = unit->get_root_namespace()->get_child_namespace("enum_alias_serialized_source");
+    auto point = imported_scope->get_aggregate("Point");
+    auto synthetic_scope = imported_scope->get_child_namespace("Point");
+    REQUIRE(point);
+    REQUIRE(synthetic_scope->is_declared_namespace());
+    REQUIRE_FALSE(synthetic_scope->is_source_declared_namespace());
+
+    k::model::gen::symbol_resolver symbols(logger, context, *unit);
+    REQUIRE_NOTHROW(symbols.resolve());
+    auto root = unit->get_root_namespace();
+    for (const auto& en : {root->get_enum("First"), root->get_enum("Second"),
+                           root->get_child_namespace("client")->get_enum("Third")}) {
+        REQUIRE(en);
+        CHECK(en->get_object_type() == point->get_struct_type());
+    }
+}
+
+TEST_CASE("Typed enum — cyclic aggregate aliases retain the alias cycle diagnostic",
+          "[gen][enum][typed][alias][regression]") {
+    try {
+        gen_jit_throws(R"(
+            module enum_alias_cycle;
+            alias A : B;
+            alias B : A;
+            enum E : A { VALUE; }
+        )");
+        FAIL("Expected an alias cycle error");
+    } catch (const k::log::compiler_error& error) {
+        CHECK(error.get_diagnostic().code
+              == static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_CYCLE));
+    }
+}
+
+TEST_CASE("Typed enum — namespace alias targets remain invalid",
+          "[gen][enum][typed][alias][regression]") {
+    try {
+        gen_jit_throws(R"(
+            module enum_alias_namespace;
+            namespace values { struct Point { x: int; } }
+            alias Backing : values;
+            enum E : Backing { VALUE; }
+        )");
+        FAIL("Expected a namespace alias error");
+    } catch (const k::log::compiler_error& error) {
+        CHECK(error.get_diagnostic().code
+              == static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_NAMESPACE_TARGET));
+    }
+}
+
+TEST_CASE("Typed enum — imported namespaces cannot be alias targets",
+          "[gen][enum][typed][alias][import][regression]") {
+    TmpKdi lib(R"(
+        module enum_alias_namespace_source;
+        struct Point { x: int; }
+        namespace values { struct Marker { x: int; } }
+    )");
+    for (auto source : {
+        R"(
+            module enum_alias_namespace_consumer;
+            import enum_alias_namespace_source;
+            alias Backing : enum_alias_namespace_source::values;
+            enum E : Backing { VALUE; }
+        )",
+        R"(
+            module enum_alias_namespace_consumer;
+            import enum_alias_namespace_source;
+            namespace enum_alias_namespace_source::Point {}
+            alias Backing : enum_alias_namespace_source::Point;
+            enum E : Backing { VALUE; }
+        )",
+        R"(
+            module enum_alias_namespace_consumer;
+            import enum_alias_namespace_source;
+            typedef Backing : ::enum_alias_namespace_source::values;
+        )",
+        R"(
+            module enum_alias_namespace_consumer;
+            import enum_alias_namespace_source;
+            namespace enum_alias_namespace_source::Point::Nested {}
+            alias Backing : ::enum_alias_namespace_source::Point;
+        )"
+    }) {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_explicit_path("enum_alias_namespace_source", lib.kdi_path);
+        compiler->set_file_resolver(resolver);
+        try {
+            compiler->parse_source("enum_alias_namespace_consumer.k", source);
+            FAIL("Expected a namespace alias error");
+        } catch (const k::log::compiler_error& error) {
+            CHECK(error.get_diagnostic().code
+                  == static_cast<unsigned int>(k::diag::alias_diag::ERR_ALIAS_NAMESPACE_TARGET));
+        }
+    }
 }
 
 TEST_CASE("Typed enum — object to enum conversion and soft-fail in if", "[gen][enum][typed][expected]") {
@@ -1601,23 +2140,243 @@ TEST_CASE("Typed enum — object to enum conversion hard-fails outside if", "[ge
     REQUIRE(res.exit_code != 0);
 }
 
-TEST_CASE("Typed enum — constructor entry args initialize backing object", "[gen][enum][typed][expected]") {
+TEST_CASE("Typed enum — reverse lookup visits each aliased slot once",
+          "[gen][enum][typed][alias][regression]") {
     auto jit = gen_jit(R"(
-        module gen_enum_48;
-        struct Point {
-            x: int;
-            y: int;
+        module enum_alias_reverse_lookup;
+        comparisons : int = 0;
+        struct S {
+            a : int;
+            equals(other : S&) : bool {
+                comparisons = comparisons + 1;
+                return a == other.a;
+            }
         }
-        enum Dir : Point {
-            UP(0, 1);
+        enum E : S {
+            FIRST{.a = 1};
+            FIRST_ALIAS = FIRST;
+            SECOND{.a = 2};
+            SECOND_ALIAS = SECOND;
         }
-        get_y() : int {
-            p : const Point& = Dir::UP;
-            return p.y;
+        match_alias() : int {
+            comparisons = 0;
+            s : S{.a = 2};
+            e : E = s;
+            ref : const S& = E::SECOND_ALIAS;
+            return comparisons * 100 + e * 10 + ref.a;
+        }
+        miss_alias() : int {
+            comparisons = 0;
+            s : S{.a = 99};
+            if (e : E = s) {
+                return -1;
+            } else {
+                return comparisons;
+            }
         }
     )");
     REQUIRE(jit);
-    CHECK(jit->lookup_symbol<int(*)()>("get_y")() == 1);
+    CHECK(jit->lookup_symbol<int(*)()>("match_alias")() == 212);
+    CHECK(jit->lookup_symbol<int(*)()>("miss_alias")() == 2);
+}
+
+TEST_CASE("Typed enum — constructor arguments cannot stand in for fields",
+          "[gen][enum][typed][initializer][regression]") {
+    REQUIRE_THROWS(gen_jit_throws(R"(
+        module k;
+        struct Point { x : int; y : int; }
+        enum Dir : Point { UP(0, 1); }
+    )"));
+}
+
+TEST_CASE("Typed enum — constructor resolution retains adapted arguments",
+          "[gen][enum][typed][initializer][regression]") {
+    auto compiler = k::compiler::create();
+    try {
+        compiler->parse_source("enum_constructor_resolution.k", R"K(
+            module k;
+            enum Token { ZERO; }
+            struct Value {
+                Value(number : long, token : Token = Token::ZERO) {}
+            }
+            enum Derived : Base { SECOND(2); }
+            enum Base : Value { FIRST(1); }
+        )K");
+        FAIL("Runtime table construction must not be silently synthesized");
+    } catch (const k::log::compiler_error& error) {
+        REQUIRE(error.get_diagnostic().code == static_cast<unsigned int>(
+            k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER));
+    }
+    auto base = find_enum(compiler, "Base");
+    auto derived = find_enum(compiler, "Derived");
+    REQUIRE(base);
+    REQUIRE(derived);
+    REQUIRE(base->entries().size() == 1);
+    REQUIRE(derived->entries().size() == 2);
+    const auto& first = base->entries()[0];
+    const auto& second = derived->entries()[1];
+    REQUIRE(first.resolved_constructor);
+    REQUIRE(second.resolved_constructor == first.resolved_constructor);
+    CHECK(derived->entries()[0].resolved_constructor == first.resolved_constructor);
+    REQUIRE(first.ctor_args.size() == 1);
+    REQUIRE(first.adapted_ctor_args.size() == 2);
+    CHECK(first.adapted_ctor_args[0] != first.ctor_args[0]);
+    CHECK(k::model::type::are_equal(first.adapted_ctor_args[0]->get_type(),
+                                   first.resolved_constructor->parameters()[0]->get_type()));
+    CHECK(first.adapted_ctor_args[0]->parent<k::model::element>() == base);
+    CHECK(first.adapted_ctor_args[1]->parent<k::model::element>()
+          == first.resolved_constructor->parameters()[1]);
+    CHECK(derived->entries()[0].adapted_ctor_args[0] == first.adapted_ctor_args[0]);
+}
+
+TEST_CASE("Typed enum — resolves constructor overloads in declaration scope",
+          "[gen][enum][typed][initializer][regression]") {
+    auto compiler = k::compiler::create();
+    try {
+        compiler->parse_source("enum_constructor_overload.k", R"K(
+            module k;
+            namespace outer {
+                seed : int = 4;
+                struct Value {
+                    Value(number : int) {}
+                    Value(number : long) {}
+                }
+                enum E : Value { INT(seed); LONG(1L); }
+            }
+        )K");
+        FAIL("Runtime table construction must not be silently synthesized");
+    } catch (const k::log::compiler_error& error) {
+        REQUIRE(error.get_diagnostic().code == static_cast<unsigned int>(
+            k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER));
+    }
+    auto root = compiler->get_unit()->get_root_namespace();
+    auto outer = root->get_child_namespace("outer");
+    REQUIRE(outer);
+    auto en = outer->get_enum("E");
+    REQUIRE(en);
+    REQUIRE(en->entries().size() == 2);
+    REQUIRE(en->entries()[0].resolved_constructor);
+    REQUIRE(en->entries()[1].resolved_constructor);
+    CHECK(en->entries()[0].resolved_constructor != en->entries()[1].resolved_constructor);
+    CHECK(en->entries()[0].ctor_args[0]->ancestor<k::model::enumeration>() == en);
+}
+
+TEST_CASE("Typed enum — constructor and implicit initializer failures diagnose",
+          "[gen][enum][typed][initializer][regression]") {
+    std::string_view source;
+    std::string_view expected_message;
+    unsigned int expected;
+    SECTION("missing zero-argument constructor") {
+        source = R"(module k; struct Value { Value(v : int) {} } enum E : Value { BAD(); })";
+        expected = static_cast<unsigned int>(k::diag::symbol_diag::ERR_STATIC_CTOR_INIT_FAILED);
+        expected_message = "No constructor found";
+    }
+    SECTION("wrong argument count") {
+        source = R"(module k; struct Value { Value(v : int) {} } enum E : Value { BAD(1, 2); })";
+        expected = static_cast<unsigned int>(k::diag::symbol_diag::ERR_STATIC_CTOR_INIT_FAILED);
+        expected_message = "No constructor found";
+    }
+    SECTION("wrong argument type") {
+        source = R"(module k; struct Value { Value(v : int) {} } enum E : Value { BAD(null); })";
+        expected = static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS);
+        expected_message = "No viable constructor";
+    }
+    SECTION("private constructor") {
+        source = R"(module k; class Value { private Value(v : int) {} } enum E : Value { BAD(1); })";
+        expected = static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_CTOR_VISIBILITY_MISMATCH);
+        expected_message = "constructor of struct";
+    }
+    SECTION("ambiguous overloads") {
+        source = R"(module k;
+            value : short = 1;
+            struct Value { Value(v : int) {} Value(v : long) {} }
+            enum E : Value { BAD(value); })";
+        expected = static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS);
+        expected_message = "Ambiguous constructor";
+    }
+    SECTION("nontrivial implicit entry") {
+        source = R"(module k; struct Value { ~Value() {} } enum E : Value { BAD; })";
+        expected = static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER);
+        expected_message = "Implicit entry";
+    }
+    SECTION("implicit increment with a nontrivial destructor") {
+        source = R"(module k; struct Value { v : int; ~Value() {} }
+                    enum E : Value { FIRST{.v = 1}; BAD; })";
+        expected = static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER);
+        expected_message = "Implicit entry 'BAD' requires a trivially copyable backing type";
+    }
+    SECTION("implicit entry with a runtime-constructed base") {
+        source = R"(module k;
+                    struct Base { x : int; Base() : x(5) {} }
+                    struct Value : Base { y : int; }
+                    enum E : Value { BAD; })";
+        expected = static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER);
+        expected_message = "Implicit entry 'BAD' requires a trivially copyable backing type";
+    }
+    SECTION("implicit increment without an integer field") {
+        source = R"(module k; struct Value { p : int*; } enum E : Value { FIRST; BAD; })";
+        expected = static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER);
+        expected_message = "implicit increment requires an integer field";
+    }
+    SECTION("nonliteral designated entry") {
+        source = R"(module k; number : int = 2; struct Value { v : int; }
+                    enum E : Value { BAD{.v = number}; })";
+        expected = static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER);
+        expected_message = "designated field value is not an integer literal";
+    }
+    SECTION("designated entry after runtime constructor") {
+        source = R"(module k; struct Value { id : int; Value(v : int) : id(v) {} }
+                    enum E : Value { FIRST(1); BAD{.id = 2}; })";
+        expected = static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER);
+        expected_message = "Enum entry 'BAD' cannot mix designated initialization with runtime constructors";
+    }
+    SECTION("designated entry before runtime constructor") {
+        source = R"(module k; struct Value { id : int; Value(v : int) : id(v) {} }
+                    enum E : Value { BAD{.id = 2}; ALIAS = BAD; FIRST(1); })";
+        expected = static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER);
+        expected_message = "Enum entry 'BAD' cannot mix designated initialization with runtime constructors";
+    }
+    SECTION("designated entry after zero-argument runtime constructor") {
+        source = R"(module k; struct Value { id : int; Value() : id(3) {} }
+                    enum E : Value { FIRST(); BAD{.id = 2}; })";
+        expected = static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER);
+        expected_message = "Enum entry 'BAD' cannot mix designated initialization with runtime constructors";
+    }
+    SECTION("mixed entries in a derived declaration") {
+        source = R"(module k; struct Value { id : int; Value(v : int) : id(v) {} }
+                    enum Base : Value { FIRST{.id = 1}; }
+                    enum Derived : Base { SECOND(2); BAD{.id = 3}; })";
+        expected = static_cast<unsigned int>(k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER);
+        expected_message = "Enum entry 'BAD' cannot mix designated initialization with runtime constructors";
+    }
+    test_logger logger;
+    REQUIRE_FALSE(compile_collect_diagnostics(source, nullptr, logger));
+    REQUIRE_FALSE(logger.diagnostics.empty());
+    CHECK(logger.diagnostics.back().code == expected);
+    CHECK(k::log::format_diagnostic_message(logger.diagnostics.back()).find(expected_message)
+          != std::string::npos);
+}
+
+TEST_CASE("Typed enum — mixed local initializers on an imported base diagnose",
+          "[gen][enum][typed][initializer][import][regression]") {
+    TmpKdi lib(R"(
+        module enum_mixed_source;
+        struct Value { id : int; Value(v : int) : id(v) {} }
+        enum Base : Value { FIRST(1); }
+    )");
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_explicit_path("enum_mixed_source", lib.kdi_path);
+    test_logger logger;
+    REQUIRE_FALSE(compile_collect_diagnostics(R"(
+        module enum_mixed_consumer;
+        import enum_mixed_source;
+        enum Derived : enum_mixed_source::Base { SECOND(2); BAD{.id = 3}; }
+    )", resolver, logger));
+    REQUIRE_FALSE(logger.diagnostics.empty());
+    CHECK(logger.diagnostics.back().code == static_cast<unsigned int>(
+        k::diag::structure_diag::ERR_ENUM_UNSUPPORTED_INITIALIZER));
+    CHECK(k::log::format_diagnostic_message(logger.diagnostics.back()).find(
+        "Enum entry 'BAD' cannot mix designated initialization with runtime constructors") != std::string::npos);
 }
 
 TEST_CASE("Typed enum — alias shares backing object slot", "[gen][enum][typed][expected]") {
@@ -1637,6 +2396,441 @@ TEST_CASE("Typed enum — alias shares backing object slot", "[gen][enum][typed]
     )");
     REQUIRE(jit);
     CHECK(jit->lookup_symbol<int(*)()>("read_alias")() == 10);
+}
+
+TEST_CASE("Enum visibility specifiers override visibility groups", "[gen][enum][visibility][regression]") {
+    auto compiler = compile_model(R"K(
+        module k;
+        enum Default { VALUE; }
+        private:
+        enum GroupPrivate { VALUE; }
+        public enum ExplicitPublic { VALUE; }
+        protected enum ExplicitProtected { VALUE; }
+        public:
+        private enum ExplicitPrivate { VALUE; }
+        enum GroupPublic { VALUE; }
+    )K");
+    REQUIRE(compiler);
+    auto root = compiler->get_unit()->get_root_namespace();
+    const std::pair<const char*, k::model::visibility> cases[] = {
+        {"Default", k::model::PUBLIC},
+        {"GroupPrivate", k::model::PRIVATE},
+        {"ExplicitPublic", k::model::PUBLIC},
+        {"ExplicitProtected", k::model::PROTECTED},
+        {"ExplicitPrivate", k::model::PRIVATE},
+        {"GroupPublic", k::model::PUBLIC},
+    };
+    for (const auto& [name, expected] : cases) {
+        INFO(name);
+        auto en = root->get_enum(name);
+        REQUIRE(en);
+        CHECK(en->get_visibility() == expected);
+    }
+}
+
+TEST_CASE("Typed enum — String backing constructs literal entries once",
+          "[gen][enum][typed][runtime][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_runtime_string;
+        alias Text : String;
+        enum Label : String {
+            HELLO("hello");
+            HELLO_ALIAS = HELLO;
+            EMPTY("");
+            AGAIN("hello");
+        }
+        enum AliasedLabel : Text {
+            HELLO("hello");
+        }
+        lengths() : int {
+            a : const String& = Label::HELLO;
+            b : const String& = Label::HELLO_ALIAS;
+            c : const String& = Label::EMPTY;
+            d : const String& = Label::AGAIN;
+            e : const String& = AliasedLabel::HELLO;
+            return a.size() * 10000 + b.size() * 1000 + c.size() * 100 + d.size() * 10 + e.size();
+        }
+    )");
+    REQUIRE(jit);
+    auto lengths = jit->lookup_symbol<int(*)()>("lengths");
+    REQUIRE(lengths);
+    CHECK(lengths() == 55055);
+    CHECK(lengths() == 55055);
+}
+
+TEST_CASE("Typed enum — JIT imports initialized runtime backing through its accessor",
+          "[gen][enum][typed][runtime][import][regression]") {
+    namespace fs = std::filesystem;
+    struct Artifacts {
+        fs::path path;
+        ~Artifacts() {
+            std::error_code error;
+            fs::remove_all(path, error);
+        }
+    } artifacts;
+    static std::atomic<unsigned> sequence{0};
+    while (artifacts.path.empty()) {
+        auto candidate = fs::current_path() /
+            (".klang-enum-runtime-jit-" + std::to_string(++sequence));
+        if (fs::create_directory(candidate)) artifacts.path = std::move(candidate);
+    }
+
+    REQUIRE(ensure_libk_loaded());
+    auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+    resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+    resolver->add_search_dir(artifacts.path.string());
+    auto producer = k::compiler::create(make_pic_target_machine());
+    producer->set_file_resolver(resolver);
+    producer->parse_source("enum-runtime-producer.k", R"K(
+        module enumruntimejit;
+        private:
+        public enum Label : String { ALIAS = FIRST; FIRST("one"); SECOND("second"); }
+        public:
+        private enum Secret : String { VALUE("inside"); }
+        constructions : int = 0;
+        public struct Value {
+            id : int;
+            Value(v : int) : id(v) { constructions += 1; }
+            equals(other : Value&) : bool { return id == other.id; }
+        }
+        public enum Number : Value { FIRST(10); SECOND(20); }
+        public struct Point { x : int; }
+        public enum Constant : Point { FIRST{.x = 7}; SECOND{.x = 9}; }
+        public count() : int { return constructions; }
+        public hiddenSize() : int {
+            value : const String& = Secret::VALUE;
+            return value.size();
+        }
+    )K", false, false);
+    REQUIRE_FALSE(producer->has_compilation_error());
+    auto secret = producer->get_unit()->get_root_namespace()->get_enum("Secret");
+    REQUIRE(secret);
+    auto private_accessor = secret->get_table_symbol();
+    REQUIRE(private_accessor.ends_with(".get"));
+    auto library = artifacts.path / "libenumruntimejit.so";
+    REQUIRE(producer->gen_shared_library(library.string()));
+    auto kdi_path = library;
+    kdi_path.replace_extension(".kdi");
+    resolver->add_explicit_path("enumruntimejit", kdi_path);
+
+    auto metadata = kdi::kdi_read_cbor_file(kdi_path.string());
+    auto find_enum = [&](const char* name) -> const kdi::kdi_enum* {
+        const auto& enums = metadata.unit.root_ns.enums;
+        auto it = std::find_if(enums.begin(), enums.end(),
+            [&](const auto& en) { return en.name == name; });
+        return it == enums.end() ? nullptr : &*it;
+    };
+    auto* label = find_enum("Label");
+    auto* constant = find_enum("Constant");
+    REQUIRE(label);
+    REQUIRE(label->object_table_symbol);
+    REQUIRE(constant);
+    REQUIRE(constant->object_table_symbol);
+    CHECK_FALSE(find_enum("Secret"));
+    CHECK(label->object_table_kind == "runtime");
+    CHECK_FALSE(constant->object_table_kind);
+    CHECK(label->object_table_symbol->ends_with(".get"));
+    CHECK_FALSE(constant->object_table_symbol->ends_with(".get"));
+
+    struct SharedLibrary {
+        void* handle;
+        ~SharedLibrary() { if (handle) dlclose(handle); }
+    } loaded{dlopen(library.c_str(), RTLD_NOW | RTLD_GLOBAL)};
+    const char* load_error = loaded.handle ? nullptr : dlerror();
+    INFO("dlopen error: " << (load_error ? load_error : ""));
+    REQUIRE(loaded.handle);
+    REQUIRE(dlsym(loaded.handle, label->object_table_symbol->c_str()));
+    REQUIRE(dlsym(loaded.handle, constant->object_table_symbol->c_str()));
+    auto runtime_storage = label->object_table_symbol->substr(
+        0, label->object_table_symbol->size() - std::string(".get").size());
+    CHECK_FALSE(dlsym(loaded.handle, runtime_storage.c_str()));
+    CHECK_FALSE(dlsym(loaded.handle, (runtime_storage + ".guard").c_str()));
+    CHECK_FALSE(dlsym(loaded.handle, (runtime_storage + ".count").c_str()));
+    CHECK_FALSE(dlsym(loaded.handle, (runtime_storage + ".destroy").c_str()));
+    CHECK_FALSE(dlsym(loaded.handle, private_accessor.c_str()));
+
+    auto consumer = k::compiler::create();
+    consumer->set_file_resolver(resolver);
+    consumer->parse_source("enum-runtime-consumer.k", R"K(
+        module enumruntimeconsumer;
+        import enumruntimejit;
+        enum Extended : enumruntimejit::Label { MORE("longer"); SAME = MORE; }
+        enum Further : Extended { LAST("end"); }
+        run() : int {
+            a : const String& = enumruntimejit::Label::FIRST;
+            b : const String& = enumruntimejit::Label::ALIAS;
+            c : const String& = enumruntimejit::Label::SECOND;
+            n : const enumruntimejit::Value& = enumruntimejit::Number::SECOND;
+            p : const enumruntimejit::Point& = enumruntimejit::Constant::SECOND;
+            return a.size() + b.size() + c.size() + n.id + p.x + enumruntimejit::hiddenSize();
+        }
+        reverse() : int {
+            value : enumruntimejit::Value(20);
+            result : enumruntimejit::Number = value;
+            return result;
+        }
+        count() : int { return enumruntimejit::count(); }
+        derived() : int {
+            a : const String& = Extended::FIRST;
+            b : const String& = Extended::ALIAS;
+            c : const String& = Further::SECOND;
+            d : const String& = Further::SAME;
+            e : const String& = Further::LAST;
+            return a.size() + b.size() + c.size() + d.size() + e.size() + Further::LAST;
+        }
+    )K", false, false);
+    REQUIRE_FALSE(consumer->has_compilation_error());
+    auto jit = consumer->to_jit();
+    REQUIRE(jit);
+    auto run = jit->lookup_symbol<int(*)()>("run");
+    auto reverse = jit->lookup_symbol<int(*)()>("reverse");
+    auto count = jit->lookup_symbol<int(*)()>("count");
+    auto derived = jit->lookup_symbol<int(*)()>("derived");
+    REQUIRE(run);
+    REQUIRE(reverse);
+    REQUIRE(count);
+    REQUIRE(derived);
+    CHECK(count() == 0);
+    CHECK(reverse() == 1);
+    CHECK(count() == 3);
+    CHECK(run() == 47);
+    CHECK(count() == 3);
+    CHECK(run() == 47);
+    CHECK(count() == 3);
+    CHECK(derived() == 24);
+    CHECK(derived() == 24);
+    jit->finalize_runtime();
+}
+
+TEST_CASE("Typed enum — runtime table destroys unique slots in reverse order",
+          "[gen][enum][typed][runtime][lifecycle][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_runtime_lifecycle;
+        constructions : int = 0;
+        destructions : int = 0;
+        order : int = 0;
+        struct Value {
+            id : int;
+            Value(v : int) : id(v) { constructions += 1; }
+            ~Value() { destructions += 1; order = order * 10 + id; }
+        }
+        enum E : Value {
+            FIRST(1);
+            ALIAS = FIRST;
+            SECOND(2);
+            THIRD(3);
+        }
+        use() : int {
+            a : const Value& = E::FIRST;
+            b : const Value& = E::ALIAS;
+            c : const Value& = E::THIRD;
+            return a.id + b.id + c.id;
+        }
+    )");
+    REQUIRE(jit);
+    auto constructions = jit->lookup_symbol<int*>("constructions");
+    auto destructions = jit->lookup_symbol<int*>("destructions");
+    auto order = jit->lookup_symbol<int*>("order");
+    auto use = jit->lookup_symbol<int(*)()>("use");
+    REQUIRE(constructions);
+    REQUIRE(destructions);
+    REQUIRE(order);
+    REQUIRE(use);
+    CHECK(*constructions == 0);
+    CHECK(use() == 5);
+    CHECK(use() == 5);
+    CHECK(*constructions == 3);
+    CHECK(*destructions == 0);
+    jit->finalize_runtime();
+    CHECK(*destructions == 3);
+    CHECK(*order == 321);
+}
+
+TEST_CASE("Typed enum — derived tables copy inherited entries and own their lifetimes",
+          "[gen][enum][typed][runtime][lifecycle][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_runtime_derived;
+        copies : int = 0;
+        drops : int = 0;
+        struct Value {
+            id : int;
+            Value(v : int) : id(v) {}
+            Value(other : const Value&) : id(other.id) { copies += 1; }
+            ~Value() { drops += 1; }
+        }
+        enum Base : Value { FIRST(1); ALIAS = FIRST; SECOND(2); }
+        enum Derived : Base { THIRD(3); AGAIN = FIRST; }
+        enum Labels : String { FIRST("one"); ALIAS = FIRST; }
+        enum MoreLabels : Labels { SECOND("two"); }
+        use() : int {
+            a : const Value& = Derived::ALIAS;
+            b : const Value& = Derived::THIRD;
+            c : const String& = MoreLabels::ALIAS;
+            d : const String& = MoreLabels::SECOND;
+            return a.id + b.id + c.size() + d.size();
+        }
+    )");
+    REQUIRE(jit);
+    auto copies = jit->lookup_symbol<int*>("copies");
+    auto drops = jit->lookup_symbol<int*>("drops");
+    auto use = jit->lookup_symbol<int(*)()>("use");
+    REQUIRE(copies);
+    REQUIRE(drops);
+    REQUIRE(use);
+    CHECK(use() == 10);
+    CHECK(use() == 10);
+    CHECK(*copies == 2);
+    CHECK(*drops == 0);
+    jit->finalize_runtime();
+    CHECK(*drops == 5);
+}
+
+TEST_CASE("Typed enum — derived runtime tables retain separately initialized entries",
+          "[gen][enum][typed][runtime][initializer][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_runtime_mixed_derivation;
+        struct Value {
+            id : int;
+            Value(v : int) : id(v) {}
+        }
+        enum ConstantBase : Value { FIRST{.id = 17}; NEXT; }
+        enum ConstructorDerived : ConstantBase { THIRD(31); }
+        enum RuntimeBase : Value { FIRST(4); }
+        enum DesignatedDerived : RuntimeBase { SECOND{.id = 9}; THIRD; }
+        read() : int {
+            a : const Value& = ConstructorDerived::FIRST;
+            b : const Value& = ConstructorDerived::NEXT;
+            c : const Value& = ConstructorDerived::THIRD;
+            d : const Value& = DesignatedDerived::FIRST;
+            e : const Value& = DesignatedDerived::SECOND;
+            f : const Value& = DesignatedDerived::THIRD;
+            return a.id + b.id + c.id + d.id + e.id + f.id;
+        }
+    )");
+    REQUIRE(jit);
+    auto read = jit->lookup_symbol<int(*)()>("read");
+    REQUIRE(read);
+    CHECK(read() == 89);
+}
+
+TEST_CASE("Typed enum — failed table construction rolls back and can retry",
+          "[gen][enum][typed][runtime][lifecycle][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_runtime_rollback;
+        attempts : int = 0;
+        destructions : int = 0;
+        fail : bool = true;
+        struct Value {
+            id : int;
+            Value(v : int) : id(v) {
+                attempts += 1;
+                if (v == 2 && fail) throw Exception(924);
+            }
+            ~Value() { destructions += 1; }
+        }
+        enum E : Value { FIRST(1); SECOND(2); }
+        access() : int {
+            try {
+                value : const Value& = E::SECOND;
+                return value.id;
+            } catch (e : Throwable&) { return e.getCode(); }
+        }
+        retry() : int { fail = false; return access(); }
+    )");
+    REQUIRE(jit);
+    auto attempts = jit->lookup_symbol<int*>("attempts");
+    auto destructions = jit->lookup_symbol<int*>("destructions");
+    auto access = jit->lookup_symbol<int(*)()>("access");
+    auto retry = jit->lookup_symbol<int(*)()>("retry");
+    REQUIRE(attempts);
+    REQUIRE(destructions);
+    REQUIRE(access);
+    REQUIRE(retry);
+    CHECK(access() == 924);
+    CHECK(*attempts == 2);
+    CHECK(*destructions == 1);
+    CHECK(retry() == 2);
+    CHECK(*attempts == 4);
+    jit->finalize_runtime();
+    CHECK(*destructions == 3);
+}
+
+TEST_CASE("Typed enum — reverse lookup initializes a runtime table",
+          "[gen][enum][typed][runtime][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_runtime_reverse;
+        struct Value {
+            id : int;
+            Value(v : int) : id(v) {}
+            equals(other : Value&) : bool { return id == other.id; }
+        }
+        enum E : Value { FIRST(1); SAME = FIRST; SECOND(2); }
+        lookup() : int {
+            value : Value(2);
+            result : E = value;
+            return result;
+        }
+    )");
+    REQUIRE(jit);
+    auto lookup = jit->lookup_symbol<int(*)()>("lookup");
+    REQUIRE(lookup);
+    CHECK(lookup() == 1);
+}
+
+TEST_CASE("Typed enum — rollback preserves the constructor failure",
+          "[gen][enum][typed][runtime][lifecycle][regression]") {
+    auto jit = gen_jit(R"(
+        module enum_runtime_rollback_throw;
+        drops : int = 0;
+        struct Value {
+            id : int;
+            Value(v : int) : id(v) { if (v == 2) throw Exception(924); }
+            ~Value() { drops += 1; throw Exception(925); }
+        }
+        enum E : Value { FIRST(1); SECOND(2); }
+        access() : int {
+            try {
+                value : const Value& = E::SECOND;
+                return value.id;
+            } catch (e : Throwable&) { return e.getCode(); }
+        }
+    )");
+    REQUIRE(jit);
+    auto access = jit->lookup_symbol<int(*)()>("access");
+    auto drops = jit->lookup_symbol<int*>("drops");
+    REQUIRE(access);
+    REQUIRE(drops);
+    CHECK(access() == 924);
+    CHECK(*drops == 1);
+    jit->finalize_runtime();
+    CHECK(*drops == 1);
+}
+
+TEST_CASE("Typed enum — unsupported runtime table initializers are diagnosed",
+          "[gen][enum][typed][runtime][regression]") {
+    SECTION("mixed designated and constructor entries") {
+        REQUIRE_THROWS(gen_jit_throws(R"(
+            module k;
+            struct Value { id : int; Value(v : int) : id(v) {} }
+            enum E : Value { FIRST(1); SECOND{.id = 2}; }
+        )"));
+    }
+    SECTION("nonliteral constructor argument") {
+        REQUIRE_THROWS(gen_jit_throws(R"(
+            module k;
+            seed : int = 1;
+            struct Value { Value(v : int) {} }
+            enum E : Value { FIRST(seed); }
+        )"));
+    }
+    SECTION("noncopyable inherited runtime entry") {
+        REQUIRE_THROWS(gen_jit_throws(R"(
+            module k;
+            struct Value { Value(v : int) {} ~Value() {} }
+            enum Base : Value { FIRST(1); }
+            enum Derived : Base { SECOND(2); }
+        )"));
+    }
 }
 
 TEST_CASE("Typed enum — object to enum conversion requires equality", "[gen][enum][typed][expected]") {

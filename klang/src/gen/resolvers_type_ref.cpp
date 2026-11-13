@@ -24,6 +24,7 @@
 #include "gen_helpers.hpp"
 #include "gen_intrinsics.hpp"
 #include "gen_callable_helpers.hpp"
+#include "ffi_validation.hpp"
 #include "../model/imported.hpp"
 #include "../model/statements.hpp"
 #include "../model/expressions.hpp"
@@ -33,6 +34,7 @@
 #include "../model/constant_evaluator.hpp"
 #include "../model/tools/kdi_type_converter.hpp"
 #include "../common/operator_names.hpp"
+#include "../common/llvm_scope_exit.hpp"
 #include "../parse/ast.hpp"
 #include <kdi.hpp>
 #include <llvm/IR/DerivedTypes.h>
@@ -130,11 +132,10 @@ std::shared_ptr<type> build_model_type_from_kdi_signature(const kdi::kdi_type& s
     }
 
     ctx->push_template_param_scope(param_names);
-    auto guard = std::unique_ptr<void, std::function<void(void*)>>(
-        nullptr,
-        [&](void*) { ctx->pop_template_param_scope(); });
+    auto guard = k::make_scope_exit([&] { ctx->pop_template_param_scope(); });
 
-    return k::model::kdi_type_to_model_type(sig_type, owner, ctx);
+    return k::model::kdi_type_to_model_type(
+        sig_type, owner, ctx, kdi_type_conversion::template_signature);
 }
 
 } // namespace
@@ -213,7 +214,7 @@ void type_reference_resolver::check_function_visibility(const function& func, co
     }
 }
 
-void type_reference_resolver::check_constructor_visibility(const constructor& ctor, const element& /*access_site*/) {
+void type_reference_resolver::check_constructor_visibility(const constructor& ctor, const element& access_site) {
     auto vis = ctor.get_visibility();
     if (vis == PUBLIC) return;
 
@@ -222,6 +223,14 @@ void type_reference_resolver::check_constructor_visibility(const constructor& ct
 
     if (scope_lookup::is_struct_member_accessible(vis, *owner_agg, owner_agg, _function_stack)) return;
     if (scope_lookup::is_friend_of(*owner_agg, _function_stack, _unit)) return;
+    if (dynamic_cast<const enumeration*>(&access_site)) {
+        for (auto scope = access_site.parent<element>(); scope; scope = scope->parent<element>()) {
+            auto enclosing = std::dynamic_pointer_cast<const aggregate>(scope);
+            if (!enclosing) continue;
+            if (enclosing == owner_agg || (vis == PROTECTED && enclosing->is_derived_from(owner_agg)))
+                return;
+        }
+    }
 
     throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_FUNC_CTOR_VISIBILITY_MISMATCH), ctor.get_ast_function_decl() ? lex::opt_any_lexeme{lex::any_lexeme{ctor.get_ast_function_decl()->name}} : lex::opt_any_lexeme{},
         "{} constructor of struct '{}' is not accessible here; "
@@ -375,6 +384,128 @@ type_reference_resolver::resolve_type_from_root(const k::name& name_without_pref
     }
 
     return {};
+}
+
+bool type_reference_resolver::validate_function_template_constraints(
+    const function& declaration, const std::vector<template_argument>& args,
+    size_t& error_index, std::string& error_kind, bool* proven_bound_violation,
+    bool legacy_generic_rules, std::shared_ptr<type>* proven_bound)
+{
+    if (proven_bound_violation) *proven_bound_violation = false;
+    if (proven_bound) proven_bound->reset();
+    const auto* info = declaration.get_tpl_info();
+    if (!info) return false;
+
+    // Works on a copy: shared template state keeps its written bounds.
+    auto resolve_written_bounds = [&](std::vector<template_param_descriptor>& params) {
+        for (size_t i = 0; i < params.size(); ++i) {
+            auto& param = params[i];
+            if (!param.constraint_type || type::is_resolved(param.constraint_type)) continue;
+            k::name written;
+            if (!is_independent_written_bound(params, i, &written)) continue;
+            auto resolved = resolve_type_by_name(written, declaration);
+            if (resolved && type::is_resolved(resolved)) param.constraint_type = resolved;
+        }
+    };
+    // An undecided plain-name bound fails closed; dependent bounds are replayed
+    // when the instantiation is resolved with concrete arguments.
+    auto evaluate = [&](std::vector<template_param_descriptor> params) {
+        resolve_written_bounds(params);
+        tpl_info checked;
+        checked.is_generic = legacy_generic_rules && info->is_generic;
+        checked.params = std::move(params);
+        auto verdict = evaluate_template_arg_constraints(checked, args);
+        if (verdict.is_invalid()) {
+            error_index = verdict.error_index;
+            error_kind = verdict.error_kind;
+            return false;
+        }
+        k::name written;
+        if (verdict.is_unproven_bound()
+            && is_independent_written_bound(checked.params, verdict.error_index, &written)) {
+            error_index = verdict.error_index;
+            error_kind = "unresolved bound '" + written.to_string() + "'";
+            return false;
+        }
+        return true;
+    };
+
+    // The lexical declaration-scope proof needs a concrete source declaration
+    // and call site: erased substitutions and imported recipes do not retain
+    // enough provenance for it.
+    bool lexical_proof = !(info->is_generic || info->is_imported_signature_only
+        || !info->origin_module_ns_fq.empty() || info->private_definition_scope
+        || declaration.get_template_definition_scope()
+        || declaration.is_instantiation() || dynamic_cast<const imported_function*>(&declaration)
+        || !declaration.get_ast_function_decl()
+        || scope_lookup::is_imported_definition_context(declaration)
+        || _function_stack.empty() || info->params.size() != args.size()
+        || std::any_of(info->params.begin(), info->params.end(),
+                       [](const auto& p) { return p.is_pack; }));
+    if (lexical_proof) {
+        for (const auto& caller : _function_stack) {
+            if (!caller || caller->is_instantiation() || caller->is_template()
+                || !caller->get_ast_function_decl()) { lexical_proof = false; break; }
+            for (auto owner = caller->get_owner(); owner; owner = owner->ancestor<aggregate>())
+                if (owner->is_template() || owner->is_instantiation() || owner->is_imported())
+                    lexical_proof = false;
+        }
+    }
+    if (lexical_proof) {
+        for (auto owner = declaration.get_owner(); owner; owner = owner->ancestor<aggregate>())
+            if (owner->is_template() || owner->is_instantiation() || owner->is_imported()
+                || !owner->get_ast_aggregate_decl()) lexical_proof = false;
+    }
+
+    auto params = bind_same_list_dependent_bounds(*info, args);
+    resolve_written_bounds(params);
+    for (size_t i = 0; i < params.size() && i < args.size(); ++i) {
+        if (params[i].is_pack || !params[i].is_type_param() || !params[i].constraint_type
+            || !scope_lookup::is_local_concrete_constraint_argument(args[i])) continue;
+        std::shared_ptr<aggregate> bound;
+        if (lexical_proof) {
+            auto resolution = scope_lookup::inspect_local_constraint_bound(
+                _unit, declaration, *info, i, args);
+            if (resolution.state == scope_lookup::local_bound_state::missing) {
+                error_index = i;
+                error_kind = "unresolved bound '" + resolution.name + "'";
+                return false;
+            }
+            if (resolution.state == scope_lookup::local_bound_state::aggregate)
+                bound = resolution.bound;
+        }
+        if (!bound) {
+            auto resolved = std::dynamic_pointer_cast<struct_type>(
+                type::remove_const(params[i].constraint_type));
+            bound = resolved ? resolved->get_struct() : nullptr;
+            if (!bound || bound->is_template() || !bound->get_struct_type()
+                || bound->get_struct_type()->get_struct() != bound) continue;
+        }
+
+        tpl_info one;
+        one.binder_scope = info->binder_scope;
+        one.params.push_back(info->params[i]);
+        one.params[0].constraint_type = bound->get_struct_type();
+        one.params[0].constraint_source_type =
+            generic_source_type::capture(bound->get_struct_type(), {});
+        auto evidence = analyze_template_arg_constraints(
+            one, {args[i]}, {generic_source_type::capture(args[i].type_arg, {})});
+        if (evidence.checks.size() == 1
+            && ((evidence.state == constraint_analysis_state::invalid
+                 && evidence.checks[0].reason == constraint_analysis_reason::constraint)
+                || (evidence.state == constraint_analysis_state::deferred
+                    && evidence.checks[0].reason == constraint_analysis_reason::incomplete_hierarchy
+                    && scope_lookup::is_proven_unrelated_with_implicit_object(_unit, args[i], bound)))) {
+            error_index = i;
+            error_kind = "constraint";
+            if (proven_bound_violation) *proven_bound_violation = true;
+            if (proven_bound) *proven_bound = bound->get_struct_type();
+            return false;
+        }
+        if (evidence.state == constraint_analysis_state::verified)
+            params[i].constraint_type.reset();
+    }
+    return evaluate(std::move(params));
 }
 
 /**
@@ -956,6 +1087,174 @@ type_reference_resolver::find_generic_usage_for_site(const variable_definition* 
     return &it->second;
 }
 
+bool type_reference_resolver::check_imported_generic_constructor_contract(
+    const function& called_func, const lex::opt_any_lexeme& lexeme, const element* use_site)
+{
+    auto selected = dynamic_cast<const imported_constructor*>(&called_func);
+    auto owner = selected ? selected->get_owner() : nullptr;
+    if (!owner) return false;
+
+    const generic_constructor_usage* usage = nullptr;
+    if (use_site) {
+        auto it = _generic_constructor_usages.find(use_site);
+        if (it != _generic_constructor_usages.end() && it->second.definition
+            && template_instantiator::find_imported_generic_synthesis(
+                *it->second.definition, _unit, _context) == owner) {
+            usage = &it->second;
+        }
+    }
+    if (!usage && use_site) {
+        auto variable = dynamic_cast<const variable_definition*>(use_site);
+        auto declared = variable
+            ? std::dynamic_pointer_cast<unresolved_type>(variable->get_declared_template_type())
+            : nullptr;
+        auto definition_scope = declared ? declared->get_definition_namespace() : nullptr;
+        if (declared && (!definition_scope
+            || scope_lookup::enclosing_namespace(*use_site) == definition_scope)) {
+            auto original = find_template_aggregate(declared->type_id(), *use_site);
+            if (original && original->is_generic() && original->get_tpl_info()
+                && original->get_tpl_info()->is_imported_signature_only
+                && template_instantiator::find_imported_generic_synthesis(
+                    *original, _unit, _context) == owner) {
+                try_instantiate_template_type(declared, *use_site);
+                auto it = _generic_constructor_usages.find(use_site);
+                if (it != _generic_constructor_usages.end() && it->second.definition == original) {
+                    usage = &it->second;
+                }
+            }
+        }
+    }
+
+    auto definition = usage ? usage->definition
+        : find_template_aggregate(k::name::from(owner->get_fq_name()), called_func);
+    auto* ti = definition ? definition->get_tpl_info() : nullptr;
+    if (!ti || !ti->is_generic || !ti->is_imported_signature_only) {
+        auto fq = owner->get_fq_name();
+        if (fq.size() >= 2 && fq[0] == ':' && fq[1] == ':') fq = fq.substr(2);
+        const auto* metadata = find_imported_kdi_template_def(_unit, fq);
+        if (metadata && metadata->is_generic && metadata->aggregate_signature) {
+            throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND),
+                lexeme, "Cannot check imported generic constructor contract for '{}': "
+                        "its original signature is unavailable", {owner->get_fq_name()});
+        }
+        return false;
+    }
+
+    const auto fail = [&](const std::string& reason) {
+        const auto name = definition->get_fq_name().empty()
+            ? owner->get_fq_name() : definition->get_fq_name();
+        throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND),
+            lexeme, "Cannot check imported generic constructor contract for '{}': {}",
+            {name, reason});
+    };
+    if (template_instantiator::find_imported_generic_synthesis(*definition, _unit, _context) != owner) {
+        fail("the selected constructor does not belong to its erased synthesis");
+        return true;
+    }
+
+    type_substitution_map erased;
+    auto byte = _context->from_type(primitive_type::BYTE);
+    if (!byte) {
+        fail("the erased parameter type is unavailable");
+        return true;
+    }
+    for (const auto& param : ti->params) {
+        if (param.is_type_param()) erased[param.name] = byte->get_erased_param();
+    }
+
+    std::shared_ptr<constructor> signature;
+    bool uncertain = false;
+    for (const auto& candidate : definition->constructors()) {
+        if (!candidate || candidate->parameters().size() != selected->parameters().size()) continue;
+        bool matches = true;
+        bool candidate_uncertain = false;
+        for (size_t i = 0; i < candidate->parameters().size(); ++i) {
+            const auto& original = candidate->parameters()[i];
+            const auto& concrete = selected->parameters()[i];
+            if (!original || !concrete || original->is_varargs() != concrete->is_varargs()) {
+                matches = false;
+                break;
+            }
+            auto expected = substitute_type(original->get_type(), erased);
+            auto actual = type::canonical(concrete->get_type());
+            if (!actual || type::contains_unresolved(actual)) {
+                candidate_uncertain = true;
+                continue;
+            }
+            if (expected
+                && ((type::is_reference(expected) && !type::is_reference(actual))
+                    || (type::is_pointer(expected) && !type::is_pointer(actual))
+                    || (type::is_link(expected) && !type::is_link(actual))
+                    || (type::is_view(expected) && !type::is_view(actual))
+                    || (type::is_owner(expected) && !type::is_owner(actual))
+                    || (type::is_drain(expected) && !type::is_drain(actual))
+                    || (type::is_array(expected) && !type::is_array(actual))
+                    || (type::is_primitive(expected) && !type::is_primitive(actual)))) {
+                matches = false;
+                break;
+            }
+            expected = resolve_type_chain(expected, definition.get());
+            if (!expected || type::contains_unresolved(expected)) {
+                candidate_uncertain = true;
+                continue;
+            }
+            if (!type::are_equal(type::canonical(expected), actual)) {
+                matches = false;
+                break;
+            }
+        }
+        if (!matches) continue;
+        if (candidate_uncertain) {
+            uncertain = true;
+            continue;
+        }
+        if (signature) {
+            fail("more than one original signature has the selected erased parameter types");
+            return true;
+        }
+        signature = candidate;
+    }
+    // No declared constructor matches: the selected overload is compiler-generated and
+    // carries no exception contract.
+    if (!uncertain && !signature) return false;
+    if (uncertain || !signature) {
+        fail("the selected erased overload cannot be associated with one original signature");
+        return true;
+    }
+    if (signature->is_throws_spec_unknown()
+        || (!signature->get_throws_spec_raw().empty()
+            && signature->get_throws_spec_raw().size() != signature->get_throws_spec().size())) {
+        fail("its exception contract is unavailable in the KDI");
+        return true;
+    }
+
+    std::vector<std::shared_ptr<type>> exceptions;
+    for (const auto& declared : signature->get_throws_spec()) {
+        if (!usage && type::contains_template_placeholder(declared)) {
+            fail("the concrete template arguments were not retained at this use");
+            return true;
+        }
+        auto specialized = usage ? substitute_type(declared, usage->bindings.type_bindings) : declared;
+        auto resolved = resolve_type_chain(specialized, definition.get());
+        auto exception = resolved && !type::contains_unresolved(resolved)
+            ? get_exception_aggregate(type::canonical(resolved)) : nullptr;
+        auto root = _unit.get_root_namespace();
+        auto k_ns = root ? root->get_child_namespace("k") : nullptr;
+        auto throwable = k_ns ? k_ns->get_aggregate("Throwable") : nullptr;
+        if (!throwable) {
+            throwable = _unit.get_or_create_imported_aggregate(k::name(false, {"k", "Throwable"}), _context);
+        }
+        if (!exception || !throwable
+            || (exception != throwable && !exception->is_derived_from(throwable))) {
+            fail("an exception type could not be resolved with the concrete template arguments");
+            return true;
+        }
+        exceptions.push_back(std::move(resolved));
+    }
+    check_call_exception_types(called_func, exceptions, lexeme);
+    return true;
+}
+
 const tpl_info::generic_usage_descriptor*
 type_reference_resolver::find_generic_usage_for_receiver(const std::shared_ptr<expression>& receiver) const
 {
@@ -994,23 +1293,16 @@ type_reference_resolver::find_generic_usage_for_receiver(const std::shared_ptr<e
     return nullptr;
 }
 
-void type_reference_resolver::check_generic_call_arguments(
-    const function& called_func,
-    const std::shared_ptr<expression>& receiver_expr,
-    const std::vector<std::shared_ptr<expression>>& args,
-    const lex::opt_any_lexeme& lexeme)
+const tpl_info::generic_usage_descriptor*
+type_reference_resolver::find_generic_qualifier_usage(const element* site) const
 {
-    if (!receiver_expr || called_func.parameters().empty()) return;
+    auto it = _generic_qualifier_usages.find(site);
+    return it == _generic_qualifier_usages.end() ? nullptr : &it->second;
+}
 
-    const auto* usage = find_generic_usage_for_receiver(receiver_expr);
-    if (!usage || usage->type_bindings.empty()) return;
-
-    type_substitution_map subst;
-    for (const auto& kv : usage->type_bindings) {
-        if (kv.second) subst[kv.first] = kv.second;
-    }
-    if (subst.empty()) return;
-
+std::vector<std::shared_ptr<type>>
+type_reference_resolver::declared_generic_param_types(const function& called_func)
+{
     // Declared (unspecialised) parameter types: from the source for a local generic,
     // from the KDI signature for an imported one.
     std::vector<std::shared_ptr<type>> declared(called_func.parameters().size());
@@ -1038,18 +1330,68 @@ void type_reference_resolver::check_generic_call_arguments(
                     for (size_t i = 0; i < declared.size(); ++i) {
                         declared[i] = build_model_type_from_kdi_signature(
                             method_sig.params[i].type, *tdef, _unit, _context);
+                        set_type_definition_namespace(
+                            declared[i], std::const_pointer_cast<ns>(called_func.ancestor<ns>()));
                     }
                     break;
                 }
             }
         }
     }
+    return declared;
+}
+
+void type_reference_resolver::check_generic_pointee_access(
+    const function& called_func,
+    const tpl_info::generic_usage_descriptor& usage,
+    const lex::opt_any_lexeme& lexeme)
+{
+    for (const auto& name : called_func.get_generic_pointee_value_params()) {
+        auto bound = usage.type_bindings.find(name);
+        if (bound == usage.type_bindings.end() || !bound->second) continue;
+        auto inner = type::canonical(bound->second);
+        while (inner && type::is_const(inner)) inner = type::canonical(inner->get_subtype());
+        if (!inner || type::is_erased_param(inner) || type::is_pointer(inner) || type::is_link(inner)
+            || type::is_view(inner) || type::is_reference(inner)) continue;
+        throw_error(static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_POINTEE_ACCESS_ON_NON_POINTER),
+            lexeme,
+            "Cannot write through generic type parameter '{}' bound to '{}': the erased body of '{}' "
+            "assigns a pointer-sized value through an addresser of it, which needs a pointer-like "
+            "type argument",
+            {name, bound->second->to_string(), called_func.get_short_name()});
+    }
+}
+
+void type_reference_resolver::check_generic_call_arguments(
+    const function& called_func,
+    const std::shared_ptr<expression>& receiver_expr,
+    const std::vector<std::shared_ptr<expression>>& args,
+    const lex::opt_any_lexeme& lexeme,
+    const tpl_info::generic_usage_descriptor* usage_override)
+{
+    if (!receiver_expr && !usage_override) return;
+
+    const auto* usage = usage_override ? usage_override : find_generic_usage_for_receiver(receiver_expr);
+    if (!usage || usage->type_bindings.empty()) return;
+
+    check_generic_pointee_access(called_func, *usage, lexeme);
+    if (called_func.parameters().empty()) return;
+
+    type_substitution_map subst;
+    for (const auto& kv : usage->type_bindings) {
+        if (kv.second) subst[kv.first] = kv.second;
+    }
+    if (subst.empty()) return;
+
+    validate_generic_cstring_contract(called_func, *usage);
+
+    const auto declared = declared_generic_param_types(called_func);
 
     for (size_t i = 0; i < declared.size() && i < args.size(); ++i) {
         if (!declared[i] || !args[i]) continue;
         auto specialized = substitute_type(declared[i], subst);
         if (!specialized) continue;
-        auto resolved = _context->resolve_type(specialized);
+        auto resolved = resolve_type_chain(specialized, &called_func);
         if (!resolved) resolved = specialized;
         if (type::contains_unresolved(resolved) || !type::is_resolved(resolved)) continue;
         if (compute_cast_weight(args[i], resolved) == CAST_IMPOSSIBLE) {
@@ -1066,11 +1408,12 @@ void type_reference_resolver::check_generic_call_arguments(
 std::shared_ptr<type>
 type_reference_resolver::resolve_generic_call_return_type(
     const function& called_func,
-    const std::shared_ptr<expression>& receiver_expr)
+    const std::shared_ptr<expression>& receiver_expr,
+    const tpl_info::generic_usage_descriptor* usage_override)
 {
-    if (!called_func.has_return_type() || !receiver_expr) return {};
+    if (!called_func.has_return_type() || (!receiver_expr && !usage_override)) return {};
 
-    const auto* usage = find_generic_usage_for_receiver(receiver_expr);
+    const auto* usage = usage_override ? usage_override : find_generic_usage_for_receiver(receiver_expr);
     if (!usage || usage->type_bindings.empty()) return {};
 
     std::shared_ptr<type> declared_ret;
@@ -1100,6 +1443,8 @@ type_reference_resolver::resolve_generic_call_return_type(
                         && method_sig.params.size() == called_func.parameters().size()) {
                         declared_ret = build_model_type_from_kdi_signature(
                             method_sig.return_type, *tdef, _unit, _context);
+                        set_type_definition_namespace(
+                            declared_ret, std::const_pointer_cast<ns>(called_func.ancestor<ns>()));
                         if (declared_ret) break;
                     }
                 }
@@ -1113,6 +1458,8 @@ type_reference_resolver::resolve_generic_call_return_type(
                 if (tdef->function_signature) {
                     declared_ret = build_model_type_from_kdi_signature(
                         tdef->function_signature->return_type, *tdef, _unit, _context);
+                    set_type_definition_namespace(
+                        declared_ret, std::const_pointer_cast<ns>(called_func.ancestor<ns>()));
                 }
             }
         }
@@ -1129,10 +1476,78 @@ type_reference_resolver::resolve_generic_call_return_type(
     auto specialized = substitute_type(declared_ret, subst);
     if (!specialized) return {};
 
-    auto resolved = _context->resolve_type(specialized);
+    auto resolved = resolve_type_chain(specialized, &called_func);
     if (!resolved) resolved = specialized;
     if (!resolved || type::contains_unresolved(resolved) || !type::is_resolved(resolved)) return {};
     return resolved;
+}
+
+bool type_reference_resolver::concrete_generic_param_types(
+    const function& called_func,
+    const tpl_info::generic_usage_descriptor& usage,
+    std::vector<std::shared_ptr<type>>& params)
+{
+    type_substitution_map subst;
+    for (const auto& kv : usage.type_bindings) {
+        if (kv.second) subst[kv.first] = kv.second;
+    }
+    if (subst.empty()) return false;
+
+    const auto declared = declared_generic_param_types(called_func);
+    std::vector<std::shared_ptr<type>> concrete(declared.size());
+    for (size_t i = 0; i < declared.size(); ++i) {
+        if (!declared[i]) return false;
+        auto specialized = substitute_type(declared[i], subst);
+        auto resolved = specialized ? resolve_type_chain(specialized, &called_func) : nullptr;
+        if (!resolved) resolved = specialized;
+        if (!resolved || type::contains_unresolved(resolved) || !type::is_resolved(resolved)) return false;
+        concrete[i] = resolved;
+    }
+    params = std::move(concrete);
+    return true;
+}
+
+void type_reference_resolver::validate_generic_cstring_contract(
+    const function& called_func,
+    const tpl_info::generic_usage_descriptor& usage)
+{
+    if (!called_func.is_extern() || !called_func.is_member()) return;
+    const auto& params = called_func.parameters();
+    if (std::none_of(params.begin(), params.end(), [](const auto& p) { return p && p->is_ffi_cstring(); }))
+        return;
+
+    std::vector<std::shared_ptr<type>> concrete;
+    const bool resolved = concrete_generic_param_types(called_func, usage, concrete);
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (!params[i] || !params[i]->is_ffi_cstring()) continue;
+        if (!resolved) {
+            throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_TYPE_UNRESOLVED),
+                lex::opt_any_lexeme{},
+                "@ffi::CString on parameter '{}' of '{}': cannot validate the concrete element type "
+                "for these generic arguments",
+                {params[i]->get_short_name(), called_func.get_short_name()});
+        }
+        validate_ffi_cstring_parameter(*this, called_func, *params[i], concrete[i]);
+    }
+}
+
+bool type_reference_resolver::concrete_generic_signature(
+    const function& called_func,
+    const tpl_info::generic_usage_descriptor& usage,
+    std::vector<std::shared_ptr<type>>& params,
+    std::shared_ptr<type>& return_type)
+{
+    std::vector<std::shared_ptr<type>> concrete;
+    if (!concrete_generic_param_types(called_func, usage, concrete)) return false;
+
+    std::shared_ptr<type> ret;
+    if (called_func.has_return_type()) {
+        ret = resolve_generic_call_return_type(called_func, nullptr, &usage);
+        if (!ret) return false;
+    }
+    params = std::move(concrete);
+    return_type = std::move(ret);
+    return true;
 }
 
 // ── Template instantiation from type reference ──────────────────────────────
@@ -1305,7 +1720,62 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
                 "Imported generic '" + tpl_agg->get_short_name() + "' has no exported synthesis in its KDI; "
                 "rebuild the library with the current compiler");
         }
+        const auto same_cstring_contract = [](const function& left, const function& right) {
+            if (!left.is_extern() || !right.is_extern()
+                || left.get_short_name() != right.get_short_name()
+                || left.get_mangled_name() != right.get_mangled_name()
+                || left.parameters().size() != right.parameters().size()) return false;
+            for (size_t i = 0; i < left.parameters().size(); ++i)
+                if (left.parameters()[i]->is_ffi_cstring() != right.parameters()[i]->is_ffi_cstring())
+                    return false;
+            return true;
+        };
+        const auto requires_cstring_contract = [](const function& fn) {
+            return fn.is_extern() && std::any_of(fn.parameters().begin(), fn.parameters().end(),
+                [](const auto& param) { return param->is_ffi_cstring(); });
+        };
+        for (const auto& child : synthesis->get_children()) {
+            auto method = std::dynamic_pointer_cast<function>(child);
+            if (!method || !requires_cstring_contract(*method)) continue;
+            auto signatures = tpl_agg->get_functions(method->get_short_name());
+            if (std::none_of(signatures.begin(), signatures.end(), [&](const auto& signature) {
+                    return signature && same_cstring_contract(*signature, *method);
+                })) {
+                throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_TYPE_UNRESOLVED),
+                    lex::opt_any_lexeme{},
+                    "Cannot validate CString contract for imported generic method '{}': "
+                    "its signature and erased synthesis disagree", {method->get_fq_name()});
+            }
+        }
+        const auto subst = template_instantiator::build_substitution_map_public(*ti, model_args);
+        for (const auto& child : tpl_agg->get_children()) {
+            auto method = std::dynamic_pointer_cast<function>(child);
+            if (!method) continue;
+            if (requires_cstring_contract(*method)) {
+                auto candidates = synthesis->get_functions(method->get_short_name());
+                if (std::none_of(candidates.begin(), candidates.end(), [&](const auto& candidate) {
+                        return candidate && same_cstring_contract(*method, *candidate);
+                    })) {
+                    throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_TYPE_UNRESOLVED),
+                        lex::opt_any_lexeme{},
+                        "Cannot validate CString contract for imported generic method '{}': "
+                        "its signature and erased synthesis disagree", {method->get_fq_name()});
+                }
+            }
+            for (const auto& param : method->parameters()) {
+                if (!param->is_ffi_cstring() || param->is_ffi_cstring_type_validated()) continue;
+                auto specialized = substitute_type(param->get_type(), subst);
+                auto resolved = resolve_type_chain(specialized, method.get());
+                validate_ffi_cstring_parameter(*this, *method, *param,
+                    resolved ? resolved : specialized);
+            }
+        }
         record_generic_usage(*ti, model_args);
+        _generic_constructor_usages[&context_elem] = {
+            tpl_agg, build_generic_usage_descriptor(*ti, model_args)};
+        if (dynamic_cast<const expression*>(&context_elem)) {
+            _generic_qualifier_usages[&context_elem] = build_generic_usage_descriptor(*ti, model_args);
+        }
         if (auto site_var = dynamic_cast<const variable_definition*>(&context_elem)) {
             _generic_usage_by_site[site_var] = build_generic_usage_descriptor(*ti, model_args);
         }
@@ -1319,6 +1789,9 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
             const auto key = build_instantiation_key(model_args);
             ti->instantiations[key] = concrete_agg;
             record_generic_usage(*ti, model_args);
+            if (dynamic_cast<const expression*>(&context_elem)) {
+                _generic_qualifier_usages[&context_elem] = build_generic_usage_descriptor(*ti, model_args);
+            }
             if (auto site_var = dynamic_cast<const variable_definition*>(&context_elem)) {
                 _generic_usage_by_site[site_var] = build_generic_usage_descriptor(*ti, model_args);
             }
@@ -1340,6 +1813,7 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
     template_instantiator::inject_constructor_member_inits(concrete_agg);
 
     if (concrete_agg->get_struct_type()) {
+        template_instantiator::prepare_inner_aggregates(concrete_agg);
         resolve_instantiated_aggregate(*concrete_agg);
         return concrete_agg->get_struct_type();
     }
@@ -1347,6 +1821,8 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
     std::string origin_ns_fq = (ti && !ti->origin_module_ns_fq.empty())
                                ? ti->origin_module_ns_fq
                                : (parent_ns_ptr ? parent_ns_ptr->get_fq_name() : std::string{});
+    auto enclosing_aggregate = concrete_agg->parent<aggregate>();
+    if (enclosing_aggregate) origin_ns_fq = enclosing_aggregate->get_fq_name();
     const std::string inst_key = unit::make_instantiation_registry_key(
         origin_ns_fq, concrete_agg->get_short_name());
     std::shared_ptr<struct_type> st_type;
@@ -1354,12 +1830,16 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
         st_type = existing;
         st_type->reassign_aggregate(concrete_agg->shared_as<aggregate>());
     } else {
+        auto type_name = enclosing_aggregate && !concrete_agg->get_fq_name().empty()
+            ? concrete_agg->get_name().without_root_prefix().to_string()
+            : concrete_agg->get_short_name();
         st_type = std::shared_ptr<struct_type>{
-            new struct_type(concrete_agg->get_short_name(), concrete_agg->shared_as<aggregate>())};
+            new struct_type(type_name, concrete_agg->shared_as<aggregate>())};
         _context->add_struct(st_type);
         _unit.register_instantiation_struct_type(inst_key, st_type);
     }
     concrete_agg->set_struct_type(st_type);
+    template_instantiator::prepare_inner_aggregates(concrete_agg);
 
     for (auto& child : concrete_agg->get_children()) {
         if (auto fn = std::dynamic_pointer_cast<function>(child)) {
@@ -1380,7 +1860,7 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
     }
     for (auto& child : concrete_agg->get_children()) {
         auto nested = std::dynamic_pointer_cast<aggregate>(child);
-        if (!nested) continue;
+        if (!nested || nested->is_template()) continue;
         if (!nested->get_struct_type()) {
             auto nested_st_type = std::make_shared<struct_type>(
                 nested->get_short_name(), nested->shared_as<aggregate>());
@@ -1454,7 +1934,7 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
     if (tpl_agg) {
         for (auto& tpl_child : tpl_agg->get_children()) {
             auto tpl_nested = std::dynamic_pointer_cast<aggregate>(tpl_child);
-            if (!tpl_nested) continue;
+            if (!tpl_nested || tpl_nested->is_template()) continue;
             for (auto& conc_child : concrete_agg->get_children()) {
                 auto conc_nested = std::dynamic_pointer_cast<aggregate>(conc_child);
                 if (!conc_nested) continue;
@@ -1536,9 +2016,10 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
     };
 
     auto resolve_member_vars = [&](aggregate& agg) {
-        for (auto& child : agg.get_children()) {
+        const auto children = agg.get_children();
+        for (const auto& child : children) {
             auto mv = std::dynamic_pointer_cast<member_variable_definition>(child);
-            if (!mv) continue;
+            if (!mv || mv->get_short_name() == "__parent__") continue;
             auto var_type = mv->get_type();
             if (!var_type) continue;
             auto remapped = remap_nested_type(var_type);
@@ -1555,15 +2036,19 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
         }
     };
     resolve_member_vars(*concrete_agg);
-    for (auto& child : concrete_agg->get_children()) {
+    // Resolving a member can instantiate another child of concrete_agg.
+    const auto nested_children = concrete_agg->get_children();
+    for (const auto& child : nested_children) {
         if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
-            resolve_member_vars(*nested);
+            if (!nested->is_template()) resolve_member_vars(*nested);
         }
     }
 
     std::unordered_set<struct_type*> in_progress;
-    for (auto& child : concrete_agg->get_children()) {
+    const auto layout_children = concrete_agg->get_children();
+    for (const auto& child : layout_children) {
         if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
+            if (nested->is_template()) continue;
             if (auto nst = nested->get_struct_type()) {
                 _context->resolve_struct_type(nst, in_progress);
             }
@@ -1587,12 +2072,69 @@ type_reference_resolver::ctad_resolution_result type_reference_resolver::resolve
         return result;
     }
 
+    auto* template_info = tpl_agg->get_tpl_info();
+    const bool imported_generic = template_info && template_info->is_generic
+        && template_info->is_imported_signature_only;
+    bool committed_usage = false;
+    auto clear_failed_usage = k::make_scope_exit([&] {
+        if (!imported_generic || committed_usage) return;
+        _generic_constructor_usages.erase(&context_elem);
+        if (auto site = dynamic_cast<const variable_definition*>(&context_elem))
+            _generic_usage_by_site.erase(site);
+    });
+    auto commit_usage = [&](const std::vector<template_argument>& args) {
+        if (!imported_generic) return;
+        auto bindings = build_generic_usage_descriptor(*template_info, args);
+        _generic_constructor_usages[&context_elem] = {tpl_agg, bindings};
+        if (auto site = dynamic_cast<const variable_definition*>(&context_elem))
+            _generic_usage_by_site[site] = std::move(bindings);
+        committed_usage = true;
+    };
+
     std::vector<std::shared_ptr<type>> arg_types;
     for (auto& a : args) {
         arg_types.push_back(a ? a->get_type() : nullptr);
     }
 
-    auto deduction_res = deduce_aggregate_ctad_candidates(*tpl_agg, arg_types);
+    auto deduction_res = deduce_aggregate_ctad_candidates(
+        *tpl_agg, arg_types, [&](const std::vector<template_argument>& candidate_args,
+                                ctad_guide_kind guide) {
+            auto params = template_info->params;
+            bool proven_arguments = false;
+            if (!template_info->is_generic && guide == ctad_guide_kind::copy
+                && arg_types.size() == 1 && arg_types[0]) {
+                auto input = type::canonical(type::remove_const(arg_types[0]));
+                if (type::is_reference(input))
+                    input = type::canonical(type::remove_const(input->get_subtype()));
+                auto st = std::dynamic_pointer_cast<struct_type>(input);
+                auto instance = st ? st->get_struct() : nullptr;
+                proven_arguments = instance && instance->get_tpl_definition() == tpl_agg
+                    && candidate_args.size() == template_info->params.size()
+                    && std::all_of(candidate_args.begin(), candidate_args.end(),
+                                   scope_lookup::is_local_concrete_constraint_argument);
+            } else if (!template_info->is_generic) {
+                const bool no_defaults = std::none_of(
+                    template_info->params.begin(), template_info->params.end(),
+                    [](const auto& param) {
+                        return param.default_type || param.default_value.has_value()
+                            || param.default_value_expr;
+                    });
+                proven_arguments = (guide == ctad_guide_kind::constructor && no_defaults)
+                    || scope_lookup::has_proven_local_ctad_default(
+                           *tpl_agg, *template_info, candidate_args);
+            }
+            if (proven_arguments) {
+                auto local_bound = scope_lookup::analyze_local_aggregate_constraint(
+                    _unit, *tpl_agg, *template_info, candidate_args, context_elem);
+                // Let the resolver reject these candidates and retain missing-bound diagnostics.
+                if (local_bound.state == scope_lookup::local_bound_state::missing
+                    || local_bound.state == scope_lookup::local_bound_state::violated) return true;
+                for (auto i : local_bound.verified_indices) params[i].constraint_type.reset();
+            }
+            // An undecided bound is not a violation here: the candidate reaches
+            // the instantiation check, which fails closed with its diagnostic.
+            return !evaluate_template_arg_constraints(params, candidate_args).is_invalid();
+        });
     if (!deduction_res.success || deduction_res.candidates.empty()) {
         result.success = false;
         result.failure_reason = deduction_res.failure_reason;
@@ -1611,8 +2153,16 @@ type_reference_resolver::ctad_resolution_result type_reference_resolver::resolve
     };
 
     std::vector<CandidateMatch> viable_matches;
+    std::string missing_bound;
 
     for (const auto& cand : deduction_res.candidates) {
+        auto local_bound = scope_lookup::analyze_local_aggregate_constraint(
+            _unit, *tpl_agg, *template_info, cand.deduced_args, context_elem);
+        if (local_bound.state == scope_lookup::local_bound_state::missing) {
+            if (missing_bound.empty()) missing_bound = local_bound.name;
+            continue;
+        }
+        if (local_bound.state == scope_lookup::local_bound_state::violated) continue;
         auto concrete_st_raw = instantiate_template_aggregate(
             tpl_agg, cand.deduced_args, context_elem);
         auto concrete_st = std::dynamic_pointer_cast<struct_type>(concrete_st_raw);
@@ -1687,7 +2237,9 @@ type_reference_resolver::ctad_resolution_result type_reference_resolver::resolve
 
     if (viable_matches.empty()) {
         result.success = false;
-        result.failure_reason = "No viable constructor found for deduced template arguments";
+        result.failure_reason = missing_bound.empty()
+            ? "No viable constructor found for deduced template arguments"
+            : "unresolved template bound '" + missing_bound + "'";
         return result;
     }
 
@@ -1695,6 +2247,17 @@ type_reference_resolver::ctad_resolution_result type_reference_resolver::resolve
     // Prefer copy guide if exact match
     for (const auto& vm : viable_matches) {
         if (vm.is_copy_guide) {
+            if (imported_generic) {
+                for (const auto& other : viable_matches) {
+                    if (other.is_copy_guide
+                        && build_instantiation_key(other.deduced_args)
+                            != build_instantiation_key(vm.deduced_args)) {
+                        result.failure_reason = "Ambiguous generic copy deduction for '" +
+                            tpl_agg->get_short_name() + "'";
+                        return result;
+                    }
+                }
+            }
             result.success = true;
             result.concrete_aggregate = vm.concrete_agg;
             result.concrete_struct_type = vm.concrete_st;
@@ -1702,6 +2265,7 @@ type_reference_resolver::ctad_resolution_result type_reference_resolver::resolve
             result.deduced_args = vm.deduced_args;
             result.adapted_args = vm.adapted_args;
             result.is_copy_guide = true;
+            commit_usage(vm.deduced_args);
             return result;
         }
     }
@@ -1719,7 +2283,9 @@ type_reference_resolver::ctad_resolution_result type_reference_resolver::resolve
 
     for (auto it = viable_matches.begin(); it != viable_matches.end(); ++it) {
         if (it != best_it && it->score == best_it->score && it->defaults_used == best_it->defaults_used) {
-            if (it->concrete_agg != best_it->concrete_agg) {
+            if (it->concrete_agg != best_it->concrete_agg
+                || (imported_generic && build_instantiation_key(it->deduced_args)
+                    != build_instantiation_key(best_it->deduced_args))) {
                 result.success = false;
                 result.failure_reason = "Ambiguous class template argument deduction for '" +
                     tpl_agg->get_short_name() + "'";
@@ -1735,6 +2301,7 @@ type_reference_resolver::ctad_resolution_result type_reference_resolver::resolve
     result.deduced_args = best_it->deduced_args;
     result.adapted_args = best_it->adapted_args;
     result.is_copy_guide = best_it->is_copy_guide;
+    commit_usage(best_it->deduced_args);
     return result;
 }
 
@@ -1744,6 +2311,9 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
 {
     const auto& base_name = unres->type_id();
     const auto& ast_args = unres->get_ast_template_args();
+    const auto& model_targs = unres->get_model_template_args();
+    const bool model_only = unres->has_model_only_template_args();
+    const auto arg_count = model_only ? model_targs.size() : ast_args.size();
     const auto resolved_argument = [](const std::shared_ptr<type>& argument) {
         return argument && (type::is_resolved(argument)
             || std::dynamic_pointer_cast<struct_type>(argument));
@@ -1806,9 +2376,9 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     if (!ti) return {};
 
     // 2. Validate argument count (allow fewer args if trailing params have defaults)
-    if (ast_args.size() > ti->params.size()) return {};
-    if (ast_args.size() < ti->params.size()) {
-        for (size_t i = ast_args.size(); i < ti->params.size(); ++i) {
+    if (arg_count > ti->params.size()) return {};
+    if (arg_count < ti->params.size()) {
+        for (size_t i = arg_count; i < ti->params.size(); ++i) {
             auto& param = ti->params[i];
             if (param.is_type_param() && !param.default_type) return {};
             if (param.is_value_param() && !param.default_value.has_value()) return {};
@@ -1822,8 +2392,15 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     // template instantiation when the AST arg name (e.g. "T") is no longer in scope
     // in the concrete entity. Indexed parallel to ast_args; a null slot means "use
     // the normal AST resolution path below".
-    const auto& model_targs = unres->get_model_template_args();
-    for (size_t i = 0; i < ast_args.size(); ++i) {
+    for (size_t i = 0; i < arg_count; ++i) {
+        if (model_only) {
+            if (!ti->params[i].is_type_param() || !model_targs[i]
+                || type::contains_template_placeholder(model_targs[i])) return {};
+            auto arg_type = resolve_type_chain(model_targs[i], &context_elem);
+            if (!arg_type || type::contains_unresolved(arg_type)) return {};
+            model_args.push_back(template_argument::make_type(arg_type));
+            continue;
+        }
         const auto& ast_arg = ast_args[i];
         // Resolve the value parameter's declared type once, up-front, so that
         // enum-typed value params (still an unresolved_type placeholder at
@@ -1891,6 +2468,8 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
                             auto nested = try_instantiate_template_type(unres_arg, context_elem);
                             if (resolved_argument(nested)) {
                                 arg_type = nested;
+                            } else {
+                                return {};
                             }
                         }
                         // A bare template-parameter placeholder (e.g. 'I'/'O'/'T' used
@@ -1996,14 +2575,24 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
         }
     }
     // 3b. Fill in default arguments for missing trailing parameters
-    for (size_t i = ast_args.size(); i < ti->params.size(); ++i) {
+    for (size_t i = arg_count; i < ti->params.size(); ++i) {
         auto& param = ti->params[i];
         if (param.is_type_param() && param.default_type) {
             auto def_type = param.default_type;
             if (!type::is_resolved(def_type)) {
-                def_type = _context->resolve_type(def_type);
-                if (!def_type || !type::is_resolved(def_type)) {
-                    if (auto unres_def = std::dynamic_pointer_cast<unresolved_type>(param.default_type)) {
+                auto unres_def = std::dynamic_pointer_cast<unresolved_type>(param.default_type);
+                const element& declaration = tpl_agg ? static_cast<const element&>(*tpl_agg)
+                                                     : static_cast<const element&>(*tpl_union);
+                auto using_target = !ti->is_generic && unres_def && !unres_def->is_template_param_placeholder()
+                    && !unres_def->has_template_args() && !unres_def->has_model_template_args()
+                    ? scope_lookup::lookup_qualified_using(
+                          declaration.shared_as<const element>(), unres_def->type_id())
+                    : std::nullopt;
+                if (using_target) {
+                    def_type = resolve_type_by_name(using_target->target, *using_target->scope);
+                } else {
+                    def_type = _context->resolve_type(def_type);
+                    if ((!def_type || !type::is_resolved(def_type)) && unres_def) {
                         auto resolved = resolve_type_by_name(unres_def->type_id(), context_elem);
                         if (resolved && type::is_resolved(resolved)) def_type = resolved;
                     }
@@ -2018,10 +2607,32 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
         }
     }
 
-    // 3c. Resolve constraint types in template params if still unresolved
+    auto local_bound = tpl_agg
+        ? scope_lookup::analyze_local_aggregate_constraint(
+              _unit, *tpl_agg, *ti, model_args, context_elem)
+        : scope_lookup::local_bound_result{};
+    if (local_bound.state == scope_lookup::local_bound_state::missing) {
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_UNRESOLVED_TYPE_EXPR),
+                    lex::opt_any_lexeme{}, "Template '{}' has unresolved bound '{}'",
+                    {tpl_agg->get_short_name(), local_bound.name});
+    }
+    if (local_bound.state == scope_lookup::local_bound_state::violated) {
+        auto params = ti->params;
+        params[local_bound.parameter_index].constraint_type = local_bound.bound->get_struct_type();
+        auto [code, msg] = format_constraint_error(
+            tpl_agg->get_short_name(), params, model_args, local_bound.parameter_index, "constraint");
+        throw_error(code, lex::opt_any_lexeme{}, msg);
+    }
+
+    // Keep the proven declaration-scope result separate from the shared template.
+    // Unsupported/dependent cases retain their existing resolution path.
     {
         const element& constraint_ctx = tpl_agg ? static_cast<const element&>(*tpl_agg) : static_cast<const element&>(*tpl_union);
-        for (auto& param : ti->params) {
+        for (size_t i = 0; i < ti->params.size(); ++i) {
+            if (std::find(local_bound.verified_indices.begin(), local_bound.verified_indices.end(), i)
+                != local_bound.verified_indices.end()) continue;
+            if (scope_lookup::same_declaration_constraint_binder(*ti, i)) continue;
+            auto& param = ti->params[i];
             if (param.is_type_param() && param.constraint_type && !type::is_resolved(param.constraint_type)) {
                 auto resolved = _context->resolve_type(param.constraint_type);
                 if (resolved && type::is_resolved(resolved)) {
@@ -2037,11 +2648,22 @@ std::shared_ptr<type> type_reference_resolver::try_instantiate_template_type(
     // 3d. Validate type constraints (kind filter + base-type constraint)
     {
         std::string tpl_short_name = tpl_agg ? tpl_agg->get_short_name() : tpl_union->get_short_name();
-        size_t err_idx;
-        std::string err_reason;
-        if (!validate_template_arg_constraints(*ti, model_args, err_idx, err_reason)) {
+        auto params = bind_same_list_dependent_bounds(*ti, model_args);
+        for (auto i : local_bound.verified_indices) params[i].constraint_type.reset();
+        tpl_info checked;
+        checked.is_generic = ti->is_generic;
+        checked.params = params;
+        auto verdict = evaluate_template_arg_constraints(checked, model_args);
+        k::name written_bound;
+        if (verdict.is_unproven_bound()
+            && is_independent_written_bound(params, verdict.error_index, &written_bound)) {
+            throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_UNRESOLVED_TYPE_EXPR),
+                        lex::opt_any_lexeme{}, "Template '{}' has unresolved bound '{}'",
+                        {tpl_short_name, written_bound.to_string()});
+        }
+        if (verdict.is_invalid()) {
             auto [code, msg] = format_constraint_error(
-                tpl_short_name, ti->params, model_args, err_idx, err_reason);
+                tpl_short_name, params, model_args, verdict.error_index, verdict.error_kind);
             throw_error(code, lex::opt_any_lexeme{}, msg);
         }
     }
@@ -2282,6 +2904,7 @@ void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
     //         After template instantiation, member fields like `next : Node<T>*` may
     //         still carry unresolved inner types that need template instantiation.
     for (auto& [name, var] : agg.variables()) {
+        if (name == "__parent__") continue;
         if (var && var->get_type() && !type::is_resolved(var->get_type())) {
             auto resolved = resolve_type_chain(var->get_type(), &agg);
             if (resolved && !type::contains_unresolved(resolved)) {
@@ -2338,7 +2961,7 @@ void type_reference_resolver::resolve_instantiated_aggregate(aggregate& agg) {
     const auto children = agg.get_children();
     for (const auto& child : children) {
         if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
-            resolve_agg_fn_types(*nested);
+            if (!nested->is_template()) resolve_agg_fn_types(*nested);
         }
     }
 
@@ -2809,14 +3432,16 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
                 return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
             }
-            // Struct upcast: ptr<Derived> → ptr<Base> or ptr<Derived> → lien<Base>
+            // Struct upcast: ptr<Derived> → ptr<Base> or ptr<Derived> → lnk<Base>.
+            // The same-kind upcast ranks above the cross-kind one, so that overloads on
+            // 'Base*' and 'Base+' stay distinguishable.
             auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
             auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
             if (src_st_type && tgt_st_type) {
                 auto src_st = src_st_type->get_struct();
                 auto tgt_st = tgt_st_type->get_struct();
                 if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
-                    return CAST_REF_CONV;
+                    return type::is_pointer(tgt_nc) ? CAST_REF_CONV : CAST_WIDENING;
                 }
             }
             // Generic erasure: ptr<Concrete> ↔ ptr<byte*> or ptr<byte*> ↔ ptr<Concrete>
@@ -2853,14 +3478,15 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
                 return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
             }
-            // Struct upcast: lien<Derived> → lien<Base> or lien<Derived> → ptr<Base>
+            // Struct upcast: lnk<Derived> → lnk<Base> (same kind, preferred) or
+            // lnk<Derived> → ptr<Base> (cross kind).
             auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
             auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
             if (src_st_type && tgt_st_type) {
                 auto src_st = src_st_type->get_struct();
                 auto tgt_st = tgt_st_type->get_struct();
                 if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
-                    return CAST_REF_CONV;
+                    return type::is_link(tgt_nc) ? CAST_REF_CONV : CAST_WIDENING;
                 }
             }
             // Generic erasure: lnk<Concrete> ↔ ptr<erased> (e.g. '&d' passed to a 'T*' parameter)
@@ -2893,14 +3519,15 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
                 return (type_src == tgt) ? CAST_NONE : CAST_WIDENING;
             }
-            // Struct upcast: pin<Derived> → pin<Base> or pin<Derived> → ptr<Base>
+            // Struct upcast: view<Derived> → view<Base> (same kind, preferred) or
+            // view<Derived> → ptr<Base> (cross kind).
             auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
             auto tgt_st_type = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
             if (src_st_type && tgt_st_type) {
                 auto src_st = src_st_type->get_struct();
                 auto tgt_st = tgt_st_type->get_struct();
                 if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
-                    return CAST_REF_CONV;
+                    return type::is_view(tgt_nc) ? CAST_REF_CONV : CAST_WIDENING;
                 }
             }
             // Generic erasure: view<Concrete> ↔ view/ptr<erased>
@@ -2961,12 +3588,13 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             if (same_conversion_type(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
                 return CAST_WIDENING;
             }
-            // Upcast observer: owner<Derived> → ptr<Base>
+            // Upcast observer: owner<Derived> → ptr<Base>. Ranks below the link/view
+            // upcast, so 'Base+' is preferred over 'Base*' on ties.
             auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
             auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
             if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
                 src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
-                return CAST_REF_CONV;
+                return CAST_WIDENING;
             }
             return CAST_IMPOSSIBLE;
         }
@@ -2975,6 +3603,13 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
             if (same_conversion_type(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
                 return CAST_WIDENING;
+            // Upcast observer: owner<Derived> → lnk<Base> / view<Base>
+            auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
+            auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+            if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                return CAST_REF_CONV;
+            }
         }
         // owner<T> → ref<T>: borrow owned object as reference
         if (type::is_reference(tgt_nc)) {
@@ -2996,7 +3631,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         // drain<T> → drain<T>: identity
         if (type::is_drain(tgt_nc)) {
             auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
-            if (src_sub_nc == tgt_sub_nc) return CAST_NONE;
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc)) return CAST_NONE;
             // Struct upcast: drain<Derived> → drain<Base>
             auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
             auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
@@ -3008,8 +3643,12 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
         }
         // drain<T> → ref<T>: implicit (drain can always be used as a reference)
         if (type::is_reference(tgt_nc)) {
-            auto tgt_sub_nc = type::remove_const(std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype());
-            if (src_sub_nc == tgt_sub_nc) return CAST_REF_CONV;
+            auto tgt_sub = std::dynamic_pointer_cast<reference_type>(tgt_nc)->get_subtype();
+            auto tgt_sub_nc = type::remove_const(tgt_sub);
+            if (same_conversion_type(src_sub_nc, tgt_sub_nc)) {
+                if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
+                return type::is_const(tgt_sub) && !type::is_const(src_sub) ? CAST_WIDENING : CAST_REF_CONV;
+            }
             if (types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) return CAST_REF_CONV;
             // Struct upcast: drain<Derived> → ref<Base>
             auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
@@ -3033,7 +3672,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             return CAST_IMPOSSIBLE;
         }
         // drain<T> → value T: load through drain (like ref → value)
-        if (src_sub_nc == tgt_nc) return CAST_REF_CONV;
+        if (same_conversion_type(src_sub_nc, tgt_nc)) return CAST_REF_CONV;
 
         // drain<T> → different primitive: load + cast
         auto prim_sub = std::dynamic_pointer_cast<primitive_type>(src_sub_nc);
@@ -3074,7 +3713,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
                 if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
                     src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
-                    return CAST_REF_CONV;
+                    return CAST_WIDENING;
                 }
             }
             if (type::is_owner(tgt_nc)) {
@@ -3096,6 +3735,13 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 if (same_conversion_type(own_sub_nc, tgt_sub_nc) ||
                     types_match_array_const_compatible(own_sub_nc, tgt_sub_nc))
                     return CAST_REF_CONV;
+                // Upcast: ref<owner<Derived>> → lnk<Base> / view<Base>
+                auto src_st = std::dynamic_pointer_cast<struct_type>(own_sub_nc);
+                auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
+                if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
+                    src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
+                    return CAST_REF_CONV;
+                }
             }
             // ref<owner<T>> → ref<T>: load owner pointer value, borrow as reference
             if (type::is_reference(tgt_nc)) {
@@ -3126,9 +3772,14 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 }
                 auto src_sub_nc = type::remove_const(src_sub);
                 auto tgt_sub_nc = type::remove_const(tgt_sub);
+                // A conversion that keeps the observer kind ranks above a cross-kind one.
+                const bool same_kind = (type::is_pointer(inner_value) && type::is_pointer(tgt_nc)) ||
+                                       (type::is_link(inner_value) && type::is_link(tgt_nc)) ||
+                                       (type::is_view(inner_value) && type::is_view(tgt_nc));
+                const cast_weight observer_conv = same_kind ? CAST_REF_CONV : CAST_WIDENING;
                 if (same_conversion_type(src_sub_nc, tgt_sub_nc)) {
                     if (type::is_const(src_sub) && !type::is_const(tgt_sub)) return CAST_IMPOSSIBLE;
-                    return CAST_REF_CONV;
+                    return observer_conv;
                 }
                 // Struct upcast: ref<lnk/pin/ptr<Derived>> → lnk/pin/ptr<Base>
                 auto src_st_type = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
@@ -3137,7 +3788,7 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                     auto src_st = src_st_type->get_struct();
                     auto tgt_st = tgt_st_type->get_struct();
                     if (src_st && tgt_st && src_st->is_derived_from(tgt_st)) {
-                        return CAST_REF_CONV;
+                        return observer_conv;
                     }
                 }
                 return CAST_IMPOSSIBLE;
@@ -3188,6 +3839,15 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
     std::shared_ptr<k::model::type> effective_src = type_src;
     if (type::is_double_reference(type_src)) {
         effective_src = std::dynamic_pointer_cast<reference_type>(type_src)->get_subtype();
+    }
+
+    auto enum_backing_src = type::remove_const(effective_src);
+    if (type::is_reference(enum_backing_src)) {
+        enum_backing_src = type::remove_const(enum_backing_src->get_subtype());
+    }
+    if (is_enum_backing_const_reference(
+            std::dynamic_pointer_cast<enum_type>(enum_backing_src), tgt_nc)) {
+        return CAST_WIDENING;
     }
 
     // --- Union conversion to alternative or polymorphic base ---
@@ -3632,7 +4292,11 @@ std::pair<std::shared_ptr<constructor>/*best_constructor*/, std::vector<std::sha
  *
  * @return {best_constructor, adapted_args} or {nullptr, {}} on failure.
  */
-type_reference_resolver::get_best_matching_constructor(const std::vector<std::shared_ptr<constructor>>& constructors, const std::vector<std::shared_ptr<expression>>& args) {
+type_reference_resolver::get_best_matching_constructor(
+    const std::vector<std::shared_ptr<constructor>>& constructors,
+    const std::vector<std::shared_ptr<expression>>& args,
+    bool throw_on_failure, const lex::opt_any_lexeme& failure_location,
+    bool throw_on_deleted) {
     auto available = constructors;
     if (!constructors.empty() && constructors.front()) {
         if (auto owner = constructors.front()->get_owner()) {
@@ -3650,9 +4314,36 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
     std::vector<std::shared_ptr<constructor>> candidates;
     std::vector<std::shared_ptr<constructor>> template_candidates;
     std::unordered_map<const constructor*, size_t> template_specificity;
+    // A caller may pass only copy constructors, omitting the member-template
+    // declarations that own cached specializations in that filtered set.
+    // Retain their template ranking so a concrete copy overload still wins.
+    if (!available.empty() && available.front()) {
+        if (auto owner = available.front()->get_owner()) {
+            for (const auto& declaration : owner->constructors()) {
+                if (!declaration || !declaration->is_template()) continue;
+                auto* ti = declaration->get_tpl_info();
+                if (!ti) continue;
+                size_t specificity = 0;
+                for (const auto& param : ti->params) {
+                    if (param.kind != template_param_kind::TYPENAME || param.constraint_type) ++specificity;
+                }
+                for (const auto& [key, instance] : ti->instantiations) {
+                    if (const auto* fn = std::get_if<std::shared_ptr<function>>(&instance)) {
+                        if (auto cached = std::dynamic_pointer_cast<constructor>(*fn);
+                            cached && cached->is_instantiation()
+                            && !std::dynamic_pointer_cast<imported_constructor>(cached)) {
+                            template_specificity[cached.get()] = specificity;
+                        }
+                    }
+                }
+            }
+        }
+    }
     std::unordered_set<std::string> imported_symbols;
+    std::unordered_set<const constructor*> seen_constructors;
     candidates.reserve(available.size());
     for (const auto& ctor : available) {
+        if (ctor && !seen_constructors.insert(ctor.get()).second) continue;
         if (ctor && ctor->is_template()) template_candidates.push_back(ctor);
         else if (ctor) {
             // Repeated exported specializations can describe one ABI callable.
@@ -3691,8 +4382,8 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
 
         size_t constraint_error_index = 0;
         std::string constraint_error_reason;
-        if (!validate_template_arg_constraints(
-                *ti, deduction.deduced_args, constraint_error_index, constraint_error_reason)) {
+        if (!validate_function_template_constraints(
+                *ctor, deduction.deduced_args, constraint_error_index, constraint_error_reason)) {
             continue;
         }
 
@@ -3794,23 +4485,10 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_STATIC_CTOR_INIT_FAILED),
             "No constructor found with {} argument(s){}",
             {std::to_string(arg_count), avail.empty() ? "" : "; available constructors have: " + avail});
+        if (failure_location) d.at(*failure_location);
         report(d);
+        if (throw_on_failure) throw resolution_error(std::move(d));
         return {nullptr, {}};
-    }
-
-    {
-        std::vector<std::shared_ptr<constructor>> non_deleted;
-        for (auto& ctor : arity_matched) {
-            if (!ctor->is_deleted()) non_deleted.push_back(ctor);
-        }
-        if (non_deleted.empty()) {
-            auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
-                "Use of deleted constructor: a constructor matching {} argument(s) exists but has been explicitly deleted with '-> delete'",
-                {std::to_string(arg_count)});
-            report(d);
-            return {nullptr, {}};
-        }
-        arity_matched = std::move(non_deleted);
     }
 
     struct Candidate {
@@ -3853,11 +4531,13 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
             failed_candidates.push_back({ctor, std::move(failed_indices)});
         } else {
             auto specificity = template_specificity.find(ctor.get());
+            const bool member_template_instance = ctor->is_instantiation() && ctor->has_tpl_args()
+                && !std::dynamic_pointer_cast<imported_constructor>(ctor);
             valid_candidates.push_back({
                 ctor,
                 max_weight,
                 defaults_used,
-                specificity != template_specificity.end(),
+                specificity != template_specificity.end() || member_template_instance,
                 specificity == template_specificity.end() ? 0 : specificity->second
             });
         }
@@ -3867,6 +4547,7 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
             "No viable constructor found: none of the {} candidate(s) accept the provided argument types",
             {std::to_string(failed_candidates.size())});
+        if (failure_location) d.at(*failure_location);
         for (auto& fc : failed_candidates) {
             std::string sig;
             bool first = true;
@@ -3883,6 +4564,7 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
             d.add_note("candidate constructor({}) — cannot implicitly cast argument(s) at position(s): {}", {sig, failed_idxs});
         }
         report(d);
+        if (throw_on_failure) throw resolution_error(std::move(d));
         return {nullptr, {}};
     }
 
@@ -3943,7 +4625,9 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
         auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
             "Ambiguous constructor call: {} equally viable overloads",
             {std::to_string(best_candidates.size())});
-        if (!args.empty() && args.front()) {
+        if (failure_location) {
+            d.at(*failure_location);
+        } else if (!args.empty() && args.front()) {
             if (auto lexeme = args.front()->first_lexeme()) d.at(*lexeme);
         }
         for (auto* c : best_candidates) {
@@ -3963,6 +4647,14 @@ type_reference_resolver::get_best_matching_constructor(const std::vector<std::sh
     // Adapt only the selected overload: discarded adaptations otherwise reparent
     // shared argument nodes to temporary wrappers that disappear after selection.
     auto best_ctor = best_candidates[0]->ctor;
+    if (best_ctor->is_deleted()) {
+        auto d = k::log::diagnostic::make_error(static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_AMBIGUOUS),
+            "Use of deleted constructor: the selected constructor has been explicitly deleted with '-> delete'", {});
+        if (failure_location) d.at(*failure_location);
+        report(d);
+        if (throw_on_failure || throw_on_deleted) throw resolution_error(std::move(d));
+        return {nullptr, {}};
+    }
     const auto& params = best_ctor->parameters();
     std::vector<std::shared_ptr<expression>> adapted_args;
     for (size_t i = 0; i < arg_count; ++i) {
@@ -4246,7 +4938,8 @@ type_reference_resolver::get_best_matching_function(
         const std::vector<std::shared_ptr<expression>>* direct_args,
         const std::string& callee_name,
         const lex::opt_any_lexeme& call_lexeme,
-        const std::vector<std::pair<std::shared_ptr<function>, std::string>>& rejected_tpl_candidates)
+        const std::vector<std::pair<std::shared_ptr<function>, std::string>>& rejected_tpl_candidates,
+        const tpl_info::generic_usage_descriptor* static_usage)
 {
     struct CandInfo {
         std::shared_ptr<function> func;
@@ -4267,11 +4960,19 @@ type_reference_resolver::get_best_matching_function(
         std::vector<std::shared_ptr<type>> result;
         if (!func) return result;
 
-        const auto* usage = find_generic_usage_for_receiver(this_expr);
+        const auto* usage = static_usage ? static_usage : find_generic_usage_for_receiver(this_expr);
         if (!usage || usage->type_bindings.empty()) return result;
 
         auto ast_decl = func->get_ast_function_decl();
-        if (!ast_decl) return result;
+        if (!ast_decl) {
+            // Imported generic: the declared signature only exists in its KDI metadata.
+            std::vector<std::shared_ptr<type>> imported_params;
+            std::shared_ptr<type> imported_return;
+            if (concrete_generic_signature(*func, *usage, imported_params, imported_return)) {
+                return imported_params;
+            }
+            return result;
+        }
 
         result.reserve(func->parameters().size());
 
@@ -4309,7 +5010,7 @@ type_reference_resolver::get_best_matching_function(
     auto score_with_defaults = [&](const std::vector<std::shared_ptr<expression>>& exprs,
                                    const std::vector<std::shared_ptr<parameter>>& params,
                                    const std::vector<std::shared_ptr<type>>* concrete_param_types,
-                                   size_t offset = 0)
+                                   size_t offset = 0, bool adapt = false)
             -> std::pair<cast_weight, std::vector<std::shared_ptr<expression>>>
     {
         const auto get_param_type = [&](size_t index) -> std::shared_ptr<type> {
@@ -4348,12 +5049,12 @@ type_reference_resolver::get_best_matching_function(
                 auto w = compute_cast_weight(exprs[i], target_type);
                 if (w == CAST_IMPOSSIBLE) return {CAST_IMPOSSIBLE, {}};
                 if (w > max_w) max_w = w;
-                auto a = adapt_type(exprs[i], target_type);
+                auto a = adapt ? adapt_type(exprs[i], target_type) : nullptr;
                 adapted.push_back(a ? a : exprs[i]);
             }
             // Fill defaults for missing fixed params
             for (size_t i = fixed_provided; i < n_fixed; ++i)
-                adapted.push_back(params[offset + i]->get_default_expr()->clone());
+                if (adapt) adapted.push_back(params[offset + i]->get_default_expr()->clone());
 
             // Score varargs trailing arguments
             size_t n_varargs_exprs = (n_exprs > n_fixed) ? (n_exprs - n_fixed) : 0;
@@ -4376,8 +5077,8 @@ type_reference_resolver::get_best_matching_function(
                 }
                 if (w_direct != CAST_IMPOSSIBLE) {
                     if (w_direct > max_w) max_w = w_direct;
-                    auto a = adapt_type(exprs[n_fixed], orig_param_type);
-                    if (!a) a = adapt_type(exprs[n_fixed], varargs_param_type);
+                    auto a = adapt ? adapt_type(exprs[n_fixed], orig_param_type) : nullptr;
+                    if (adapt && !a) a = adapt_type(exprs[n_fixed], varargs_param_type);
                     adapted.push_back(a ? a : exprs[n_fixed]);
                     return {max_w, adapted};
                 }
@@ -4392,7 +5093,7 @@ type_reference_resolver::get_best_matching_function(
                 auto w = compute_cast_weight(exprs[i], varargs_elem_type);
                 if (w == CAST_IMPOSSIBLE) return {CAST_IMPOSSIBLE, {}};
                 if (w > max_w) max_w = w;
-                auto a = adapt_type(exprs[i], varargs_elem_type);
+                auto a = adapt ? adapt_type(exprs[i], varargs_elem_type) : nullptr;
                 adapted.push_back(a ? a : exprs[i]);
             }
 
@@ -4414,11 +5115,11 @@ type_reference_resolver::get_best_matching_function(
             auto w = compute_cast_weight(exprs[i], target_type);
             if (w == CAST_IMPOSSIBLE) return {CAST_IMPOSSIBLE, {}};
             if (w > max_w) max_w = w;
-            auto a = adapt_type(exprs[i], target_type);
+            auto a = adapt ? adapt_type(exprs[i], target_type) : nullptr;
             adapted.push_back(a ? a : exprs[i]);
         }
         for (size_t i = n_exprs; i < n_params; ++i)
-            adapted.push_back(params[offset + i]->get_default_expr()->clone());
+            if (adapt) adapted.push_back(params[offset + i]->get_default_expr()->clone());
         return {max_w, adapted};
     };
 
@@ -4444,18 +5145,7 @@ type_reference_resolver::get_best_matching_function(
                 }
             }
             // Re-read params after dynamic addition
-            const auto& new_params = func->parameters();
-            std::vector<std::shared_ptr<expression>> adapted_args;
-            for (size_t i = 0; i < args.size(); ++i) {
-                // Adapt arguments to match declared parameter types (load from reference, etc.)
-                if (i < new_params.size() && new_params[i]->get_type()) {
-                    auto a = adapt_type(args[i], new_params[i]->get_type());
-                    adapted_args.push_back(a ? a : args[i]);
-                } else {
-                    adapted_args.push_back(args[i]);
-                }
-            }
-            valid.push_back({func, std::move(adapted_args), CAST_NONE, false, nullptr, 0, 0, false});
+            valid.push_back({func, args, CAST_NONE, false, nullptr, 0, 0, false});
             continue;
         }
 
@@ -4497,7 +5187,8 @@ type_reference_resolver::get_best_matching_function(
         if ((!func->is_member() || func->is_static()) && (!this_expr || direct_args)) {
             const auto& b_args = direct_args ? *direct_args : args;
             if (b_args.size() <= params.size() || func_has_varargs) {
-                auto [w, adapted] = score_with_defaults(b_args, params, nullptr, 0);
+                auto [w, adapted] = score_with_defaults(b_args, params,
+                    func->is_member() && static_usage ? member_param_types : nullptr, 0);
                 if (w != CAST_IMPOSSIBLE) {
                     size_t def = (b_args.size() < params.size()) ? params.size() - b_args.size() : 0;
                     valid.push_back({func, std::move(adapted), w, false, nullptr, 1, def, func_is_tpl});
@@ -4515,7 +5206,6 @@ type_reference_resolver::get_best_matching_function(
                     auto [w_rest, adapted_rest] = score_with_defaults(args, params, nullptr, 1);
                     if (w_rest != CAST_IMPOSSIBLE) {
                         cast_weight total = std::max(w_this, w_rest);
-                        auto adapted_this = adapt_type(this_expr, first_param_type);
                         size_t def = (args.size() < params.size() - 1) ? (params.size() - 1) - args.size() : 0;
                         int pref = 3;
                         if (func->is_member() && func->is_static()) {
@@ -4556,7 +5246,7 @@ type_reference_resolver::get_best_matching_function(
                             }
                         }
                         valid.push_back({func, std::move(adapted_rest), total, true,
-                                         adapted_this ? adapted_this : this_expr, pref, def, func_is_tpl});
+                                         this_expr, pref, def, func_is_tpl});
                     }
                 }
             }
@@ -4572,18 +5262,18 @@ type_reference_resolver::get_best_matching_function(
             // Member-call shape-compatible fallback.
             if (fn->is_member() && !fn->is_static() && this_expr
                 && (args.size() <= params.size() || fn->has_varargs())) {
-                    auto [w, adapted] = score_with_defaults(args, params, nullptr, 0);
+                auto [w, ignored] = score_with_defaults(args, params, nullptr, 0);
                 if (w != CAST_IMPOSSIBLE) {
-                    return {fn, adapted, false, nullptr};
+                    return {fn, score_with_defaults(args, params, nullptr, 0, true).second, false, nullptr};
                 }
             }
 
             // Direct/free/static shape-compatible fallback.
             if ((!fn->is_member() || fn->is_static())
                 && (b_args.size() <= params.size() || fn->has_varargs())) {
-                    auto [w, adapted] = score_with_defaults(b_args, params, nullptr, 0);
+                auto [w, ignored] = score_with_defaults(b_args, params, nullptr, 0);
                 if (w != CAST_IMPOSSIBLE) {
-                    return {fn, adapted, false, nullptr};
+                    return {fn, score_with_defaults(b_args, params, nullptr, 0, true).second, false, nullptr};
                 }
             }
         }
@@ -4608,11 +5298,19 @@ type_reference_resolver::get_best_matching_function(
             args_str += format_user_type(args[i] ? args[i]->get_type() : nullptr);
         }
 
-        auto diag = k::log::diagnostic::make_error(
-            static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_NO_MATCH),
-            "No viable overload found for '{}' with argument(s) of type '({})': "
-            "none of the {} candidate(s) can be called with the provided arguments",
-            {fname, args_str, std::to_string(candidates.size())});
+        auto missing = std::find_if(rejected_tpl_candidates.begin(), rejected_tpl_candidates.end(),
+            [](const auto& candidate) {
+                return candidate.second.find("unresolved bound '") != std::string::npos;
+            });
+        auto diag = missing != rejected_tpl_candidates.end()
+            ? k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_NO_MATCH),
+                "No viable overload found for '{}': {}", {fname, missing->second})
+            : k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_NO_MATCH),
+                "No viable overload found for '{}' with argument(s) of type '({})': "
+                "none of the {} candidate(s) can be called with the provided arguments",
+                {fname, args_str, std::to_string(candidates.size())});
 
         if (fn_lexeme) {
             diag.at(*fn_lexeme);
@@ -4714,6 +5412,29 @@ type_reference_resolver::get_best_matching_function(
     }
 
     auto* b = best[0];
+    const auto& selected_params = b->func->parameters();
+    const auto concrete_param_types = build_concrete_member_param_types(b->func);
+    const auto* param_types = b->func->is_member() && (!b->func->is_static() || static_usage)
+        && !concrete_param_types.empty() ? &concrete_param_types : nullptr;
+    const auto& selected_args = !b->is_unified && (!b->func->is_member() || b->func->is_static()) && direct_args
+        ? *direct_args : args;
+    if (b->func->is_member() && !b->func->is_static() && this_expr
+        && get_intrinsic_name(*b->func).has_value()) {
+        b->adapted_args.clear();
+        for (size_t i = 0; i < selected_args.size(); ++i) {
+            auto adapted = i < selected_params.size() && selected_params[i]->get_type()
+                ? adapt_type(selected_args[i], selected_params[i]->get_type()) : nullptr;
+            b->adapted_args.push_back(adapted ? adapted : selected_args[i]);
+        }
+    } else {
+        auto [score, adapted] = score_with_defaults(selected_args, selected_params, param_types,
+                                                     b->is_unified ? 1 : 0, true);
+        b->adapted_args = std::move(adapted);
+        if (b->is_unified) {
+            auto receiver = adapt_type(this_expr, selected_params[0]->get_type());
+            b->this_for_unified = receiver ? receiver : this_expr;
+        }
+    }
     for (auto& arg : b->adapted_args) {
         if (auto unary = std::dynamic_pointer_cast<unary_expression>(arg)) {
             if (unary->sub_expr()) {
@@ -4733,16 +5454,63 @@ type_reference_resolver::get_best_matching_function(
     return {b->func, b->adapted_args, b->is_unified, b->this_for_unified};
 }
 
+std::shared_ptr<expression> type_reference_resolver::adapt_union_value_copy(
+    const std::shared_ptr<expression>& source, const std::shared_ptr<type>& target, bool const_source) {
+    auto parent = source->parent<element>();
+    std::shared_ptr<type> referred = target;
+    if (const_source) referred = target->get_const();
+    auto reference_cast = cast_expression::make_shared(source, referred->get_reference(), true);
+    reference_cast->set_parent(parent);
+    auto adapted = adapt_reference_load_value(reference_cast);
+    if (auto load = std::dynamic_pointer_cast<load_value_expression>(adapted)) {
+        if (auto selected = load->get_value_constructor())
+            check_union_lifecycle_constructor_contract(*selected, source->first_lexeme());
+    }
+    return adapted;
+}
+
 std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(const std::shared_ptr<expression>& expr) {
+    if (!expr) return nullptr;
     auto type = expr->get_type();
 
-    if(!expr || !type::is_resolved(type)) {
+    if(!type::is_resolved(type)) {
         // Arguments must not be null, expr must have a type and this must be resolved.
         return nullptr;
     }
 
     if(type::is_reference(type)) {
-        auto deref = load_value_expression::make_shared(expr);
+        auto source = expr;
+        std::shared_ptr<constructor> copy_ctor;
+        auto value_type = type::canonical(type::remove_const(type->get_subtype()));
+        auto st = std::dynamic_pointer_cast<struct_type>(value_type);
+        auto agg = st ? st->get_struct() : nullptr;
+        if (st && !agg && !std::dynamic_pointer_cast<temporary_construction_expression>(expr)
+            && find_union_by_struct_type(_unit.get_root_namespace(), st)) {
+            check_union_payload_copy_contract(st, type::is_const(type->get_subtype()), expr->first_lexeme());
+        }
+        auto first_copy = agg ? agg->get_copy_constructor() : nullptr;
+        if (agg && (!first_copy || first_copy->is_compiler_generated())
+            && !std::dynamic_pointer_cast<temporary_construction_expression>(expr)
+            && scalar_union_wrapper(agg, _unit.get_root_namespace())) {
+            check_union_payload_copy_contract(st, type::is_const(type->get_subtype()),
+                                              expr->first_lexeme());
+        }
+        if (first_copy && !first_copy->is_generated_bytewise_copy()
+            && !std::dynamic_pointer_cast<temporary_construction_expression>(expr)) {
+            auto access_site = expr->parent<element>();
+            std::vector<std::shared_ptr<constructor>> copies;
+            for (const auto& ctor : agg->constructors()) {
+                if (ctor && agg->is_copy_constructor(*ctor)) copies.push_back(ctor);
+            }
+            auto [selected, adapted] = get_best_matching_constructor(
+                copies, {expr}, true, expr->first_lexeme());
+            check_constructor_visibility(*selected, access_site ? *access_site : *expr);
+            check_call_contract(*selected, expr->first_lexeme());
+            copy_ctor = selected;
+            source = adapted.front();
+        }
+        auto deref = load_value_expression::make_shared(source);
+        std::dynamic_pointer_cast<load_value_expression>(deref)->set_value_constructor(copy_ctor);
         // Strip const when loading a value: const is compile-time only.
         deref->set_type(k::model::type::remove_const(type->get_subtype()));
         if (expr->is_constant()) {
@@ -4750,7 +5518,42 @@ std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(
         }
         return deref;
     } else if(type::is_drain(type)) {
-        auto deref = load_value_expression::make_shared(expr);
+        auto source = expr;
+        std::shared_ptr<constructor> value_ctor;
+        auto value_type = type::canonical(type::remove_const(type->get_subtype()));
+        auto st = std::dynamic_pointer_cast<struct_type>(value_type);
+        auto agg = st ? st->get_struct() : nullptr;
+        if (agg) {
+            std::vector<std::shared_ptr<constructor>> candidates;
+            for (const auto& ctor : agg->constructors()) {
+                if (!ctor) continue;
+                if (agg->is_copy_constructor(*ctor)) {
+                    candidates.push_back(ctor);
+                    continue;
+                }
+                if (ctor->get_parameter_size() != 1 || !ctor->get_parameter(0)) continue;
+                auto param = type::canonical(type::remove_const(ctor->get_parameter(0)->get_type()));
+                if (!type::is_drain(param)) continue;
+                auto drained = type::canonical(type::remove_const(param->get_subtype()));
+                if (type::are_equal(drained, value_type)) candidates.push_back(ctor);
+            }
+            if (!candidates.empty()) {
+                auto access_site = expr->parent<element>();
+                auto [selected, adapted] = get_best_matching_constructor(
+                    candidates, {expr}, true, expr->first_lexeme());
+                check_constructor_visibility(*selected, access_site ? *access_site : *expr);
+                check_call_contract(*selected, expr->first_lexeme());
+                value_ctor = selected;
+                source = adapted.front();
+            } else if (aggregate_type_has_resource_field(value_type)) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE),
+                    expr->first_lexeme(),
+                    "Type '{}' is not copyable from a drain: a copy or drain constructor is required",
+                    {value_type->to_string()});
+            }
+        }
+        auto deref = load_value_expression::make_shared(source);
+        std::dynamic_pointer_cast<load_value_expression>(deref)->set_value_constructor(value_ctor);
         deref->set_type(k::model::type::remove_const(type->get_subtype()));
         if (expr->is_constant()) {
             deref->set_constant_value(expr->get_constant_value());

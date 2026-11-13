@@ -486,6 +486,26 @@ void enumeration::accept(model_visitor& visitor) {
     visitor.visit_enumeration(*this);
 }
 
+void enumeration::attach_initializer_arguments(const std::vector<std::shared_ptr<expression>>& args) {
+    for (const auto& arg : args) element::set_parent(shared_as<element>(), arg);
+}
+
+void enumeration::attach_adapted_initializer_arguments(const enum_entry_def& entry) {
+    for (size_t i = 0; i < entry.adapted_ctor_args.size(); ++i) {
+        auto parent = shared_as<element>();
+        if (i >= entry.ctor_args.size() && entry.resolved_constructor
+            && i < entry.resolved_constructor->parameters().size()) {
+            parent = entry.resolved_constructor->parameters()[i];
+        }
+        element::set_parent(parent, entry.adapted_ctor_args[i]);
+    }
+}
+
+void enumeration::add_raw_entry(const enum_raw_entry_def& entry) {
+    attach_initializer_arguments(entry.ctor_args);
+    _raw_entries.push_back(entry);
+}
+
 
 //
 // Alias definition
@@ -607,6 +627,15 @@ std::shared_ptr<expression> variable_definition::get_init_expr() const {
 }
 
 variable_definition& variable_definition::set_type(std::shared_ptr<type> type) {
+    if (!_declared_template_type && _type && _type != type) {
+        for (auto current = _type; current; current = current->get_subtype()) {
+            if (auto unresolved = std::dynamic_pointer_cast<unresolved_type>(current);
+                unresolved && unresolved->has_template_args()) {
+                _declared_template_type = unresolved;
+                break;
+            }
+        }
+    }
     _type = type;
     return *this;
 }
@@ -1466,31 +1495,25 @@ bool klass::has_abstract_vtable_slots() const {
     return false;
 }
 
+bool aggregate::is_copy_constructor(const constructor& ctor) const {
+    if (ctor.is_copy_constructor()) return true;
+    if (ctor.get_parameter_size() != 1) return false;
+    auto p0 = ctor.get_parameter(0);
+    if (!p0) return false;
+    auto pt = type::canonical(type::remove_const(p0->get_type()));
+    auto ref = std::dynamic_pointer_cast<reference_type>(pt);
+    if (!ref) return false;
+    auto sub = type::canonical(type::remove_const(ref->get_referenced_type()));
+    if (auto st = std::dynamic_pointer_cast<struct_type>(sub))
+        return st->get_struct() && st->get_struct().get() == this;
+    if (auto unres = std::dynamic_pointer_cast<unresolved_type>(sub))
+        return unres->type_id().to_string() == get_short_name();
+    return false;
+}
+
 std::shared_ptr<constructor> aggregate::get_copy_constructor() const {
-    for (auto& ctor : _constructors) {
-        if (ctor->is_copy_constructor()) return ctor;
-        if (ctor->get_parameter_size() == 1) {
-            auto p0 = ctor->get_parameter(0);
-            if (p0) {
-                auto pt = p0->get_type();
-                if (type::is_const(pt)) pt = type::remove_const(pt);
-                if (auto ref = std::dynamic_pointer_cast<reference_type>(pt)) {
-                    auto sub = ref->get_referenced_type();
-                    if (type::is_const(sub)) sub = type::remove_const(sub);
-                    if (auto st = std::dynamic_pointer_cast<struct_type>(sub)) {
-                        if (st->get_struct() && st->get_struct().get() == this) {
-                            return ctor;
-                        }
-                    }
-                    if (auto unres = std::dynamic_pointer_cast<unresolved_type>(sub)) {
-                        if (unres->type_id().to_string() == get_short_name()) {
-                            return ctor;
-                        }
-                    }
-                }
-            }
-        }
-    }
+    for (auto& ctor : _constructors)
+        if (ctor && is_copy_constructor(*ctor)) return ctor;
     return nullptr;
 }
 

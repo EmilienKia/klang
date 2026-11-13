@@ -25,9 +25,15 @@
 #include "kdi_type_converter.hpp"
 #include "../../parse/parser.hpp"
 #include "../../gen/resolvers_scope_lookup.hpp"
+#include "../../gen/ffi_validation.hpp"
 
 #include <kdi.hpp>  // kdi_read_cbor_file, kdi_file, kdi_namespace, kdi_aggregate, …
 
+#include <llvm/IR/DataLayout.h>
+
+#include <cctype>
+#include <cstdint>
+#include <string_view>
 #include <sstream>
 #include <algorithm>
 #include <utility>
@@ -40,6 +46,21 @@
 namespace k::model {
 
 namespace {
+
+bool identical_imported_function(const kdi::kdi_function& left,
+                                 const kdi::kdi_function& right) {
+    if (left.fq_name.empty() || left.fq_name != right.fq_name
+        || left.mangled_name != right.mangled_name) return false;
+    const auto encode = [](const kdi::kdi_function& function) {
+        kdi::kdi_file file;
+        file.unit.root_ns.functions.push_back(function);
+        file.unit.root_ns.functions.back().doc.reset();
+        std::ostringstream stream;
+        kdi::kdi_write_json(file, stream);
+        return stream.str();
+    };
+    return encode(left) == encode(right);
+}
 
 std::shared_ptr<ns> imported_namespace(unit& owner, std::string fq_name) {
     if (fq_name.starts_with("::")) fq_name.erase(0, 2);
@@ -135,22 +156,29 @@ template_param_kind template_param_kind_from_kdi(const std::string& kind) {
 
 std::unique_ptr<tpl_info> build_tpl_info_from_kdi(const kdi::kdi_template_def& tdef,
                                                   unit& owner,
-                                                  const std::shared_ptr<context>& ctx) {
+                                                  const std::shared_ptr<context>& ctx,
+                                                  const std::shared_ptr<ns>& definition_scope) {
     auto ti = std::make_unique<tpl_info>();
     ti->is_generic = tdef.is_generic;
     ti->is_imported_signature_only = tdef.is_generic;
+    const auto convert_param_type = [&](const kdi::kdi_type& descriptor) {
+        auto result = kdi_type_to_model_type(descriptor, owner, ctx,
+                                             kdi_type_conversion::template_signature);
+        set_type_definition_namespace(result, definition_scope);
+        return result;
+    };
     for (const auto& param : tdef.params) {
         template_param_descriptor desc;
         desc.kind = template_param_kind_from_kdi(param.kind);
         desc.name = param.name;
         if (param.constraint_type) {
-            desc.constraint_type = kdi_type_to_model_type(*param.constraint_type, owner, ctx);
+            desc.constraint_type = convert_param_type(*param.constraint_type);
         }
         if (param.default_type) {
-            desc.default_type = kdi_type_to_model_type(*param.default_type, owner, ctx);
+            desc.default_type = convert_param_type(*param.default_type);
         }
         if (param.value_type) {
-            desc.value_type = kdi_type_to_model_type(*param.value_type, owner, ctx);
+            desc.value_type = convert_param_type(*param.value_type);
         }
         ti->params.push_back(std::move(desc));
     }
@@ -160,7 +188,36 @@ std::unique_ptr<tpl_info> build_tpl_info_from_kdi(const kdi::kdi_template_def& t
 void populate_template_signature_aggregate(aggregate& agg,
                                            const kdi::kdi_aggregate& sig,
                                            unit& owner,
-                                           const std::shared_ptr<context>& ctx) {
+                                           const std::shared_ptr<context>& ctx,
+                                           std::vector<std::pair<std::shared_ptr<function>,
+                                                                 const std::vector<kdi::kdi_type>*>>& pending,
+                                           std::vector<std::tuple<std::shared_ptr<variable_definition>,
+                                                                  const kdi::kdi_type*, std::shared_ptr<ns>>>& pending_variables,
+                                           std::vector<std::tuple<std::shared_ptr<function>,
+                                                                  const kdi::kdi_type*, std::shared_ptr<ns>>>& pending_returns) {
+    const auto assign_type = [&](const std::shared_ptr<variable_definition>& var,
+                                 const kdi::kdi_type& descriptor) {
+        auto result = kdi_type_to_model_type(descriptor, owner, ctx,
+                                             kdi_type_conversion::template_signature);
+        if (result) {
+            set_type_definition_namespace(result, agg.ancestor<ns>());
+            var->set_type(std::move(result));
+        } else {
+            pending_variables.emplace_back(var, &descriptor, agg.ancestor<ns>());
+        }
+    };
+    const auto assign_return = [&](const std::shared_ptr<function>& fn,
+                                   const kdi::kdi_type& descriptor) {
+        if (std::holds_alternative<kdi::kdi_void_type>(descriptor.value)) return;
+        auto result = kdi_type_to_model_type(descriptor, owner, ctx,
+                                             kdi_type_conversion::template_signature);
+        if (result) {
+            set_type_definition_namespace(result, agg.ancestor<ns>());
+            fn->set_return_type(std::move(result));
+        } else {
+            pending_returns.emplace_back(fn, &descriptor, agg.ancestor<ns>());
+        }
+    };
     // Restore base class declarations (raw_name only — resolved during instantiation)
     for (const auto& kb : sig.bases) {
         visibility vis = (kb.visibility == kdi::kdi_visibility::protected_) ? PROTECTED : PUBLIC;
@@ -176,44 +233,61 @@ void populate_template_signature_aggregate(aggregate& agg,
         if (!mv) continue;
         mv->set_visibility(member->visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
         mv->set_const(member->is_const);
-        mv->set_type(kdi_type_to_model_type(member->type, owner, ctx));
+        assign_type(mv, member->type);
     }
 
     for (const auto& ctor_sig : sig.constructors) {
         auto fn = agg.define_function(agg.get_short_name(), false);
         auto ctor = std::dynamic_pointer_cast<constructor>(fn);
         if (!ctor) continue;
-        ctor->set_visibility(ctor_sig.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
+        ctor->set_visibility(ctor_sig.is_private ? PRIVATE :
+            (ctor_sig.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC));
         ctor->set_copy_constructor(ctor_sig.is_copy_constructor);
         ctor->set_aliasing(ctor_sig.is_deleted ? function::function_aliasing::DELETE
                                               : (ctor_sig.is_defaulted ? function::function_aliasing::DEFAULT
                                                                        : function::function_aliasing::NONE));
+        ctor->set_throws_spec_unknown(!ctor_sig.throws_spec);
         for (const auto& param : ctor_sig.params) {
-            auto p = ctor->append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
-            if (p) p->set_varargs(param.is_varargs);
+            if (param.is_ffi_cstring)
+                throw std::runtime_error("CString parameter on imported generic constructor '" + agg.get_fq_name() + "'");
+            auto p = ctor->append_parameter(param.name, nullptr);
+            if (p) {
+                p->set_varargs(param.is_varargs);
+                assign_type(p, param.type);
+            }
         }
+        if (ctor_sig.throws_spec) pending.emplace_back(ctor, &*ctor_sig.throws_spec);
     }
 
     for (const auto& method_sig : sig.methods) {
         auto fn = agg.define_function(method_sig.name, method_sig.is_static);
         if (!fn) continue;
-        fn->set_visibility(method_sig.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
+        fn->set_visibility(method_sig.is_private ? PRIVATE :
+            (method_sig.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC));
         fn->set_const_member(method_sig.is_const_member);
         fn->set_virtual(method_sig.is_virtual);
         fn->set_abstract_func(method_sig.is_abstract);
         fn->set_final_func(method_sig.is_final);
         fn->set_operator(method_sig.is_operator);
-        auto ret_type = kdi_type_to_model_type(method_sig.return_type, owner, ctx);
-        if (ret_type) fn->set_return_type(ret_type);
+        if (method_sig.is_extern) {
+            if (method_sig.mangled_name.empty() || !method_sig.is_static)
+                throw std::runtime_error("native generic method '" + method_sig.fq_name + "' has no valid static C declaration");
+            fn->set_extern_c_symbol(method_sig.mangled_name);
+            static_cast<named_element&>(*fn).update_mangled_name();
+        }
+        if (method_sig.is_deleted) fn->set_aliasing(function::function_aliasing::DELETE);
+        assign_return(fn, method_sig.return_type);
         for (const auto& param : method_sig.params) {
-            auto p = fn->append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
-            if (p) p->set_varargs(param.is_varargs);
+            if (param.is_ffi_cstring && !method_sig.is_extern)
+                throw std::runtime_error("CString parameter on non-native generic method '" + method_sig.fq_name + "'");
+            auto p = fn->append_parameter(param.name, nullptr);
+            if (p) {
+                p->set_varargs(param.is_varargs);
+                p->set_ffi_cstring(param.is_ffi_cstring);
+                assign_type(p, param.type);
+            }
         }
-        // Import throws spec
-        for (const auto& ts : method_sig.throws_spec) {
-            auto exc_type = kdi_type_to_model_type(ts, owner, ctx);
-            if (exc_type) fn->add_throws_type(exc_type);
-        }
+        pending.emplace_back(fn, &method_sig.throws_spec);
         if (auto doc = to_function_doc(method_sig.doc)) {
             fn->set_documentation(std::move(doc));
         }
@@ -223,20 +297,46 @@ void populate_template_signature_aggregate(aggregate& agg,
 void populate_template_signature_function(function& fn,
                                           const kdi::kdi_function& sig,
                                           unit& owner,
-                                          const std::shared_ptr<context>& ctx) {
+                                          const std::shared_ptr<context>& ctx,
+                                          const std::shared_ptr<ns>& definition_scope,
+                                          std::vector<std::pair<std::shared_ptr<function>,
+                                                                const std::vector<kdi::kdi_type>*>>& pending,
+                                          std::vector<std::tuple<std::shared_ptr<variable_definition>,
+                                                                 const kdi::kdi_type*, std::shared_ptr<ns>>>& pending_variables,
+                                          std::vector<std::tuple<std::shared_ptr<function>,
+                                                                 const kdi::kdi_type*, std::shared_ptr<ns>>>& pending_returns) {
+    const auto convert_signature = [&](const kdi::kdi_type& descriptor) {
+        auto result = kdi_type_to_model_type(descriptor, owner, ctx,
+                                             kdi_type_conversion::template_signature);
+        set_type_definition_namespace(result, definition_scope);
+        return result;
+    };
     fn.set_visibility(sig.visibility == kdi::kdi_visibility::protected_ ? PROTECTED : PUBLIC);
     fn.set_operator(sig.is_operator);
-    auto ret_type = kdi_type_to_model_type(sig.return_type, owner, ctx);
-    if (ret_type) fn.set_return_type(ret_type);
+    if (sig.is_extern) {
+        if (sig.mangled_name.empty())
+            throw std::runtime_error("native generic function '" + sig.fq_name + "' has no C symbol");
+        fn.set_extern_c_symbol(sig.mangled_name);
+        static_cast<named_element&>(fn).update_mangled_name();
+    }
+    if (!std::holds_alternative<kdi::kdi_void_type>(sig.return_type.value)) {
+        auto ret_type = convert_signature(sig.return_type);
+        if (ret_type) fn.set_return_type(ret_type);
+        else pending_returns.emplace_back(fn.shared_as<function>(), &sig.return_type, definition_scope);
+    }
     for (const auto& param : sig.params) {
-        auto p = fn.append_parameter(param.name, kdi_type_to_model_type(param.type, owner, ctx));
-        if (p) p->set_varargs(param.is_varargs);
+        if (param.is_ffi_cstring && !sig.is_extern)
+            throw std::runtime_error("CString parameter on non-native generic function '" + sig.fq_name + "'");
+        auto p = fn.append_parameter(param.name, nullptr);
+        if (p) {
+            p->set_varargs(param.is_varargs);
+            p->set_ffi_cstring(param.is_ffi_cstring);
+            auto param_type = convert_signature(param.type);
+            if (param_type) p->set_type(std::move(param_type));
+            else pending_variables.emplace_back(p, &param.type, definition_scope);
+        }
     }
-    // Import throws spec
-    for (const auto& ts : sig.throws_spec) {
-        auto exc_type = kdi_type_to_model_type(ts, owner, ctx);
-        if (exc_type) fn.add_throws_type(exc_type);
-    }
+    pending.emplace_back(fn.shared_as<function>(), &sig.throws_spec);
     if (auto doc = to_function_doc(sig.doc)) {
         fn.set_documentation(std::move(doc));
     }
@@ -510,17 +610,182 @@ static std::string extract_llvm_type_name(const std::string& llvm_def) {
     return llvm_def.substr(1, eq - 1); // strip leading '%'
 }
 
+enum class union_layout_state { valid, missing, legacy_abi, malformed };
+
+struct union_layout_info {
+    union_layout_state state = union_layout_state::missing;
+    uint64_t storage_size = 0;
+};
+
+/// Parse the only union layout the compiler produces: `{ i64, [N x i8] }` with N >= 1.
+/// The i64 header holds the discriminant and the live state.
+static union_layout_info parse_union_layout(const std::string& llvm_def) {
+    if (llvm_def.empty()) return {union_layout_state::missing, 0};
+    const auto marker = llvm_def.find(" = type ");
+    if (marker == std::string::npos) return {union_layout_state::malformed, 0};
+    size_t pos = marker + 8;
+    const auto skip_space = [&]() {
+        while (pos < llvm_def.size() && std::isspace(static_cast<unsigned char>(llvm_def[pos]))) ++pos;
+    };
+    const auto consume = [&](std::string_view token) {
+        skip_space();
+        if (llvm_def.compare(pos, token.size(), token) != 0) return false;
+        pos += token.size();
+        return true;
+    };
+    if (!consume("{")) return {union_layout_state::malformed, 0};
+    if (!consume("i64")) return {union_layout_state::legacy_abi, 0};
+    if (!consume(",") || !consume("[")) return {union_layout_state::malformed, 0};
+    skip_space();
+    uint64_t size = 0;
+    const size_t digits = pos;
+    while (pos < llvm_def.size() && std::isdigit(static_cast<unsigned char>(llvm_def[pos]))) {
+        if (size > (UINT64_MAX - 9) / 10) return {union_layout_state::malformed, 0};
+        size = size * 10 + static_cast<uint64_t>(llvm_def[pos] - '0');
+        ++pos;
+    }
+    if (pos == digits || size == 0 || !consume("x") || !consume("i8") || !consume("]")
+        || !consume("}")) return {union_layout_state::malformed, 0};
+    skip_space();
+    if (pos != llvm_def.size()) return {union_layout_state::malformed, 0};
+    return {union_layout_state::valid, size};
+}
+
+struct llvm_type_identity {
+    std::string fq_name;
+    std::string conflicting_fq_name;
+    bool ambiguous = false;
+};
+
+using llvm_type_identity_map = std::unordered_map<std::string, llvm_type_identity>;
+
+static void record_llvm_type_identity(llvm_type_identity_map& identities,
+                                     const std::string& llvm_name,
+                                     const std::string& fq_name) {
+    if (llvm_name.empty() || fq_name.empty()) return;
+    const auto canonical_fq = fq_name.starts_with("::") ? fq_name.substr(2) : fq_name;
+    auto [it, inserted] = identities.emplace(llvm_name, llvm_type_identity{canonical_fq, {}, false});
+    if (!inserted && it->second.fq_name != canonical_fq) {
+        it->second.conflicting_fq_name = canonical_fq;
+        it->second.ambiguous = true;
+    }
+}
+
+static void collect_llvm_type_identities(const kdi::kdi_namespace& ns,
+                                         llvm_type_identity_map& identities) {
+    for (const auto& un : ns.unions) {
+        record_llvm_type_identity(identities, extract_llvm_type_name(un.llvm_def), un.fq_name);
+    }
+
+    std::function<void(const kdi::kdi_aggregate&)> collect_aggregate;
+    collect_aggregate = [&](const kdi::kdi_aggregate& agg) {
+        record_llvm_type_identity(identities, extract_llvm_type_name(agg.llvm_def), agg.fq_name);
+        for (const auto& nested_un : agg.nested_unions) {
+            record_llvm_type_identity(identities, extract_llvm_type_name(nested_un.llvm_def),
+                                      nested_un.fq_name);
+        }
+        for (const auto& nested : agg.nested) {
+            collect_aggregate(nested);
+        }
+    };
+    for (const auto& agg : ns.aggregates) {
+        collect_aggregate(agg);
+    }
+
+    for (const auto& child_ns : ns.namespaces) {
+        collect_llvm_type_identities(child_ns, identities);
+    }
+}
+
+using llvm_def_bundle = std::unordered_map<std::string, std::string>;
+
+struct seen_llvm_def {
+    std::string definition;
+    std::shared_ptr<const llvm_def_bundle> bundle;
+};
+
+static bool llvm_name_char(char ch) {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+           (ch >= '0' && ch <= '9') || ch == '_' || ch == '.' ||
+           ch == '$' || ch == '-';
+}
+
+static std::string llvm_unsuffixed_name(const std::string& name) {
+    const auto dot = name.rfind('.');
+    if (dot == std::string::npos || dot + 1 == name.size() ||
+        !std::all_of(name.begin() + static_cast<std::ptrdiff_t>(dot + 1), name.end(),
+                     [](char ch) { return ch >= '0' && ch <= '9'; })) {
+        return name;
+    }
+    return name.substr(0, dot);
+}
+
+/// A suffix alone does not establish layout equivalence. Compare each renamed
+/// reference's definition from the same exported bundle, recursively.
+static bool equivalent_llvm_defs(const std::string& first, const llvm_def_bundle& first_bundle,
+                                 const std::string& second, const llvm_def_bundle& second_bundle,
+                                 const llvm_type_identity_map& identities) {
+    std::unordered_set<std::string> active;
+    std::function<bool(const std::string&, const std::string&)> compare;
+    compare = [&](const std::string& lhs, const std::string& rhs) {
+        const auto lbody = lhs.find(" = type ");
+        const auto rbody = rhs.find(" = type ");
+        if (lbody == std::string::npos || rbody == std::string::npos) return false;
+        size_t l = lbody + 8, r = rbody + 8;
+        while (l < lhs.size() && r < rhs.size()) {
+            if (lhs[l] != '%' || rhs[r] != '%') {
+                if (lhs[l++] != rhs[r++]) return false;
+                continue;
+            }
+            const auto lstart = ++l, rstart = ++r;
+            while (l < lhs.size() && llvm_name_char(lhs[l])) ++l;
+            while (r < rhs.size() && llvm_name_char(rhs[r])) ++r;
+            // Quoted names are compared literally, never normalized.
+            if (l == lstart || r == rstart) {
+                if (l != lstart || r != rstart) return false;
+                continue;
+            }
+            const auto lname = lhs.substr(lstart, l - lstart);
+            const auto rname = rhs.substr(rstart, r - rstart);
+            if (lname == rname) continue;
+
+            const auto lbase = llvm_unsuffixed_name(lname);
+            const auto rbase = llvm_unsuffixed_name(rname);
+            // One side must be the canonical name. Do not equate unrelated
+            // explicitly registered types, even if their spelling is similar.
+            const std::string& base = lname == rbase ? lname : rname;
+            if (!((lname == rbase && rname != rbase) ||
+                  (rname == lbase && lname != lbase))) return false;
+            const auto identity = identities.find(base);
+            if (identity == identities.end() || identity->second.ambiguous) return false;
+            for (const auto& name : {lname, rname}) {
+                const auto named = identities.find(name);
+                if (named != identities.end() &&
+                    (named->second.ambiguous || named->second.fq_name != identity->second.fq_name))
+                    return false;
+            }
+            const auto left = first_bundle.find(lname);
+            const auto right = second_bundle.find(rname);
+            if (left == first_bundle.end() || right == second_bundle.end()) return false;
+            const std::string key = lname + '\n' + rname;
+            if (active.insert(key).second) {
+                if (!compare(left->second, right->second)) return false;
+                active.erase(key);
+            }
+        }
+        return l == lhs.size() && r == rhs.size();
+    };
+    return compare(first, second);
+}
+
 /// Collect all LLVM struct type definition strings from @p ns (recursively) into @p out,
 /// deduplicating by type name so a type shared by several KDIs appears at most once in the
 /// combined IR blob (LLVM rejects two definitions of the same type name).
 ///
-/// Deduplication by name is only sound because every LLVM type name is unique per entity:
-/// a nested type of a template instantiation is named after its enclosing instantiation
-/// (`Expected__long__…::Storage_union`), not by its bare short name. When that invariant is
-/// broken, two structurally different types share a name and the silent skip below would
-/// collapse them onto a single (possibly too small) layout — exactly the bug that made
-/// `Expected<long,E>` reuse `Expected<int,E>`'s 4-byte payload. Any same-name/different-body
-/// pair is therefore reported as a fatal error rather than silently dropped.
+/// A same-name/different-body pair remains an error unless the named type has
+/// an unambiguous KDI identity and its referenced copies have matching layouts.
+/// Definitions attached to their own KDI declaration are collected before the
+/// dependency copies bundled with other aggregates.
 ///
 /// Nested-union defs are emitted BEFORE the containing aggregate's def so that
 /// LLVM resolves the inner type without creating an opaque forward-reference for
@@ -533,34 +798,60 @@ static std::string extract_llvm_type_name(const std::string& llvm_def) {
 static void collect_llvm_defs_from_namespace(
     const kdi::kdi_namespace& ns,
     std::string& out,
-    std::unordered_map<std::string, std::string>& seen,
+    std::unordered_map<std::string, seen_llvm_def>& seen,
+    const llvm_type_identity_map& identities,
+    bool declarations_only,
     const std::function<void(const std::string&, const std::string&, const std::string&)>& on_conflict)
 {
-    const auto emit_definition = [&](const std::string& llvm_def) {
+    const auto emit_definition = [&](const std::string& llvm_def,
+                                     const std::shared_ptr<const llvm_def_bundle>& bundle) {
         if (llvm_def.empty()) return;
         auto tname = extract_llvm_type_name(llvm_def);
         if (tname.empty()) {
             // No parsable name: emit as-is (defensive, matches the historical behaviour).
-            out += llvm_def;
-            out += '\n';
+            if (!declarations_only) {
+                out += llvm_def;
+                out += '\n';
+            }
             return;
         }
-        auto [it, inserted] = seen.emplace(tname, llvm_def);
+        auto [it, inserted] = seen.emplace(tname, seen_llvm_def{llvm_def, bundle});
         if (inserted) {
             out += llvm_def;
             out += '\n';
-        } else if (it->second != llvm_def) {
-            on_conflict(tname, it->second, llvm_def);
+        } else {
+            const auto identity = identities.find(tname);
+            if (identity != identities.end() && identity->second.ambiguous) {
+                on_conflict(tname, it->second.definition, llvm_def);
+            } else if (it->second.definition == llvm_def) {
+                return;
+            } else if (identity != identities.end() &&
+                       equivalent_llvm_defs(it->second.definition, *it->second.bundle,
+                                            llvm_def, *bundle, identities)) {
+                return;
+            } else {
+                on_conflict(tname, it->second.definition, llvm_def);
+            }
         }
     };
     const auto emit = [&](const std::string& definitions) {
         // An aggregate also carries definitions for private by-value layout
         // dependencies. Deduplicate each named definition, not the whole bundle.
+        auto bundle = std::make_shared<llvm_def_bundle>();
         size_t start = 0;
         while (start < definitions.size()) {
             auto end = definitions.find('\n', start);
-            emit_definition(definitions.substr(start, end - start));
+            auto def = definitions.substr(start, end - start);
+            auto name = extract_llvm_type_name(def);
+            if (!name.empty()) bundle->emplace(std::move(name), std::move(def));
             if (end == std::string::npos) break;
+            start = end + 1;
+        }
+        start = 0;
+        while (start < definitions.size()) {
+            auto end = definitions.find('\n', start);
+            emit_definition(definitions.substr(start, end - start), bundle);
+            if (declarations_only || end == std::string::npos) break;
             start = end + 1;
         }
     };
@@ -576,7 +867,8 @@ static void collect_llvm_defs_from_namespace(
         emit_aggregate(agg);
     }
     for (const auto& child_ns : ns.namespaces) {
-        collect_llvm_defs_from_namespace(child_ns, out, seen, on_conflict);
+        collect_llvm_defs_from_namespace(child_ns, out, seen, identities,
+                                         declarations_only, on_conflict);
     }
 }
 
@@ -616,6 +908,46 @@ void kdi_importer::restore_parameter_defaults(function& fn,
 }
 
 void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
+    _pending_type_aliases.clear();
+    _pending_generic_contracts.clear();
+    _pending_generic_variables.clear();
+    _pending_generic_returns.clear();
+    _pending_generic_template_params.clear();
+    _pending_generic_overloads.clear();
+    // Older union descriptors may use a 32-bit tag. Do not silently rebuild
+    // those types with the lifecycle layout: their payload offsets can differ.
+    // A union without a complete `{ i64, [N x i8] }` layout cannot be rebuilt either.
+    const auto validate_union_layout = [this](const kdi::kdi_union& un) {
+        const auto layout = parse_union_layout(un.llvm_def);
+        if (layout.state == union_layout_state::valid) return;
+        const std::string name = un.fq_name.empty() ? un.name : un.fq_name;
+        const char* message = layout.state == union_layout_state::legacy_abi
+            ? "Imported union '{}' has an incompatible lifecycle ABI; rebuild its library and KDI descriptor"
+            : layout.state == union_layout_state::missing
+            ? "Imported union '{}' has no LLVM layout; rebuild its library and KDI descriptor"
+            : "Imported union '{}' has an invalid LLVM layout; rebuild its library and KDI descriptor";
+        auto diag = k::log::diagnostic::make_error(
+            static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT),
+            message, {name});
+        _logger.report(diag);
+        throw k::log::compiler_error(std::move(diag));
+    };
+    std::function<void(const kdi::kdi_aggregate&)> validate_aggregate;
+    validate_aggregate = [&](const kdi::kdi_aggregate& agg) {
+        for (const auto& un : agg.nested_unions) validate_union_layout(un);
+        for (const auto& nested : agg.nested) validate_aggregate(nested);
+    };
+    std::function<void(const kdi::kdi_namespace&)> validate_namespace;
+    validate_namespace = [&](const kdi::kdi_namespace& ns) {
+        for (const auto& un : ns.unions) validate_union_layout(un);
+        for (const auto& agg : ns.aggregates) validate_aggregate(agg);
+        for (const auto& child : ns.namespaces) validate_namespace(child);
+    };
+    for (const auto& tdep : _transitive_kdis)
+        if (tdep) validate_namespace(tdep->unit.root_ns);
+    for (const auto& imp : _unit.get_imports())
+        if (imp.kdi) validate_namespace(imp.kdi->unit.root_ns);
+
     // ── Step B1: collect all llvm_def strings from every loaded KDI ─────────
     // Parse them together in one LLVM IR module so that forward-references
     // between types (e.g. %Derived referencing %Base) are resolved immediately,
@@ -625,17 +957,36 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
     // from indirect imports are available during resolution.
     //
     // A single shared `seen` map across all KDIs ensures that a type reachable through
-    // several KDIs is emitted exactly once in the combined blob. Duplicates cause LLVM IR
-    // parse errors which silently drop ALL type bodies, leaving every aggregate as an
-    // opaque (unsized) placeholder. Two *different* bodies under the same name mean the
-    // producing module violated the "one LLVM type name per entity" invariant; dropping one
-    // of them would silently give an entity the wrong layout, so it is a fatal error.
+    // several KDIs is emitted exactly once in the combined blob. Imported aggregate
+    // definitions can bundle local copies of base-class LLVM types. Prefer each
+    // declaration's own definition even if a direct importer appears before its
+    // provider. Distinct K types with colliding LLVM names remain fatal errors.
     std::string combined_ir;
     combined_ir.reserve(4096);
-    std::unordered_map<std::string, std::string> seen_type_names;
-    const auto on_conflict = [this](const std::string& tname,
-                                    const std::string& first,
-                                    const std::string& second) {
+    std::unordered_map<std::string, seen_llvm_def> seen_type_names;
+    llvm_type_identity_map type_identities;
+    for (const auto& tdep : _transitive_kdis) {
+        if (tdep) {
+            collect_llvm_type_identities(tdep->unit.root_ns, type_identities);
+        }
+    }
+    for (const auto& imp : _unit.get_imports()) {
+        if (imp.kdi) {
+            collect_llvm_type_identities(imp.kdi->unit.root_ns, type_identities);
+        }
+    }
+    const auto on_conflict = [this, &type_identities](const std::string& tname,
+                                                     const std::string& first,
+                                                     const std::string& second) {
+        auto identity = type_identities.find(tname);
+        if (identity != type_identities.end() && identity->second.ambiguous) {
+            auto diag = k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT),
+                "Imported LLVM type '{0}' is claimed by distinct KDI identities '{1}' and '{2}'",
+                {tname, identity->second.fq_name, identity->second.conflicting_fq_name});
+            _logger.report(diag);
+            throw k::log::compiler_error(std::move(diag));
+        }
         auto diag = k::log::diagnostic::make_error(
             static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT),
             "Imported LLVM type '{0}' has two different definitions: '{1}' and '{2}'; "
@@ -644,14 +995,17 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
         _logger.report(diag);
         throw k::log::compiler_error(std::move(diag));
     };
-    // Transitive deps first (bases before derived)
-    for (const auto& tdep : _transitive_kdis) {
-        if (!tdep) continue;
-        collect_llvm_defs_from_namespace(tdep->unit.root_ns, combined_ir, seen_type_names, on_conflict);
-    }
-    for (const auto& imp : _unit.get_imports()) {
-        if (!imp.kdi) continue;
-        collect_llvm_defs_from_namespace(imp.kdi->unit.root_ns, combined_ir, seen_type_names, on_conflict);
+    for (bool declarations_only : {true, false}) {
+        for (const auto& tdep : _transitive_kdis) {
+            if (!tdep) continue;
+            collect_llvm_defs_from_namespace(tdep->unit.root_ns, combined_ir, seen_type_names,
+                                             type_identities, declarations_only, on_conflict);
+        }
+        for (const auto& imp : _unit.get_imports()) {
+            if (!imp.kdi) continue;
+            collect_llvm_defs_from_namespace(imp.kdi->unit.root_ns, combined_ir, seen_type_names,
+                                             type_identities, declarations_only, on_conflict);
+        }
     }
     if (!combined_ir.empty()) {
         ctx->intern_all_llvm_struct_defs(combined_ir);
@@ -674,6 +1028,143 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
         materialise_namespace(imp.kdi->unit.root_ns, ctx);
     }
 
+    // Targets can refer to aliases declared later, including chains across
+    // namespaces. Resolve only after all declarations have been registered.
+    bool progress;
+    do {
+        progress = false;
+        for (auto& [alias, descriptor] : _pending_type_aliases) {
+            if (!alias || alias->is_resolved()) continue;
+            auto target = kdi_type_to_model_type(*descriptor->target_type, _unit, ctx);
+            if (!target || !type::is_resolved(target)) continue;
+            alias->set_target_type(target);
+            alias->_target_kind = alias_definition::target_kind_t::TYPE;
+            if (alias->is_strong()) alias->_alias_type = ctx->create_alias_type(alias, target);
+            alias->_resolved = true;
+            progress = true;
+        }
+    } while (progress);
+    _pending_type_aliases.clear();
+
+    for (const auto& [owner, info, definition, scope] : _pending_generic_template_params) {
+        (void)owner;
+        for (size_t i = 0; i < definition->params.size(); ++i) {
+            const auto& source = definition->params[i];
+            template_param_descriptor scratch;
+            auto& target = info ? info->params[i] : scratch;
+            const auto complete_type = [&](const std::optional<kdi::kdi_type>& descriptor,
+                                           std::shared_ptr<type>& destination,
+                                           const char* role) {
+                if (!descriptor || destination) return;
+                destination = kdi_type_to_model_type(*descriptor, _unit, ctx,
+                                                     kdi_type_conversion::template_signature);
+                if (!destination) {
+                    auto diag = k::log::diagnostic::make_error(
+                        static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_TYPE_UNRESOLVED),
+                        "Cannot materialise imported template parameter '{}' {} of '{}': "
+                        "its KDI type is unavailable",
+                        {source.name, role, definition->fq_name});
+                    diag.add_note("KDI type: '{0}'", {kdi::kdi_type_to_string(*descriptor)});
+                    _logger.report(diag);
+                    throw k::log::compiler_error(std::move(diag));
+                }
+                set_type_definition_namespace(destination, scope);
+            };
+            complete_type(source.constraint_type, target.constraint_type, "constraint");
+            complete_type(source.default_type, target.default_type, "default");
+            complete_type(source.value_type, target.value_type, "value type");
+        }
+    }
+    _pending_generic_template_params.clear();
+
+    // Retried descriptors can refer to aliases declared in a later namespace.
+    for (const auto& [var, descriptor, scope] : _pending_generic_variables) {
+        auto resolved = kdi_type_to_model_type(*descriptor, _unit, ctx,
+                                               kdi_type_conversion::template_signature);
+        if (!resolved) {
+            const bool is_param = std::dynamic_pointer_cast<parameter>(var) != nullptr;
+            auto diag = k::log::diagnostic::make_error(
+                is_param ? static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_VOID_NOT_ALLOWED)
+                         : static_cast<unsigned int>(k::diag::variable_diag::ERR_VAR_TYPE_UNRESOLVED),
+                "Cannot materialise imported generic {} '{}': its KDI type is unavailable",
+                {is_param ? "parameter" : "field", var->get_fq_name()});
+            diag.add_note("KDI type: '{0}'", {kdi::kdi_type_to_string(*descriptor)});
+            _logger.report(diag);
+            throw k::log::compiler_error(std::move(diag));
+        }
+        set_type_definition_namespace(resolved, scope);
+        var->set_type(std::move(resolved));
+    }
+    _pending_generic_variables.clear();
+
+    for (const auto& [fn, descriptor, scope] : _pending_generic_returns) {
+        auto resolved = kdi_type_to_model_type(*descriptor, _unit, ctx,
+                                               kdi_type_conversion::template_signature);
+        if (!resolved) {
+            auto diag = k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01B),
+                "Cannot materialise imported generic return type of '{}': its KDI type is unavailable",
+                {fn->get_fq_name()});
+            diag.add_note("KDI return type: '{0}'", {kdi::kdi_type_to_string(*descriptor)});
+            _logger.report(diag);
+            throw k::log::compiler_error(std::move(diag));
+        }
+        set_type_definition_namespace(resolved, scope);
+        fn->set_return_type(std::move(resolved));
+    }
+    _pending_generic_returns.clear();
+
+    // Null parameter types must not be compared as void before completion.
+    for (const auto& [fn, candidates] : _pending_generic_overloads) {
+        for (const auto& candidate : candidates) {
+            bool same = true;
+            for (size_t i = 0; i < fn->get_parameter_size(); ++i) {
+                if (!gen::scope_lookup::same_signature_type(
+                        candidate->parameters()[i]->get_type(), fn->parameters()[i]->get_type())) {
+                    same = false;
+                    break;
+                }
+            }
+            if (same) {
+                if (auto owner = fn->parent<ns>()) owner->remove_function(fn);
+                break;
+            }
+        }
+    }
+    _pending_generic_overloads.clear();
+
+    const auto complete_throws = [&](function& fn, const std::vector<kdi::kdi_type>& spec,
+                                     bool template_signature) {
+        std::vector<std::shared_ptr<type>> resolved_types;
+        resolved_types.reserve(spec.size());
+        for (const auto& ts : spec) {
+            auto mode = template_signature ? kdi_type_conversion::template_signature
+                                           : kdi_type_conversion::concrete_contract;
+            auto exc_type = kdi_type_to_model_type(ts, _unit, ctx, mode);
+            if (!exc_type) {
+                auto diag = k::log::diagnostic::make_error(
+                    static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND),
+                    "Cannot materialise imported exception type '{}' of '{}'",
+                    {kdi::kdi_type_to_string(ts), fn.get_fq_name()});
+                _logger.report(diag);
+                throw k::log::compiler_error(std::move(diag));
+            }
+            set_type_definition_namespace(exc_type, fn.ancestor<ns>());
+            resolved_types.push_back(std::move(exc_type));
+        }
+        fn.set_throws_spec(std::move(resolved_types));
+    };
+    for (const auto& [fn, spec] : _pending_generic_contracts) {
+        complete_throws(*fn, *spec, true);
+        for (const auto& param : fn->parameters()) {
+            if (!param->is_ffi_cstring() || type::contains_template_placeholder(param->get_type()))
+                continue;
+            gen::validate_ffi_cstring_parameter(_logger, *fn, *param, param->get_type());
+            param->set_ffi_cstring_type_validated();
+        }
+    }
+    _pending_generic_contracts.clear();
+
     // Signatures can refer to unions or aliases in namespaces materialised later.
     // Complete their metadata only after every imported declaration exists.
     const auto complete_signature = [&](function& fn, const auto& signature) {
@@ -692,6 +1183,12 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
                 throw k::log::compiler_error(std::move(diag));
             }
             param->set_type(std::move(resolved));
+        }
+        for (const auto& param : fn.parameters()) {
+            if (param->is_ffi_cstring()) {
+                gen::validate_ffi_cstring_parameter(_logger, fn, *param, param->get_type());
+                param->set_ffi_cstring_type_validated();
+            }
         }
         restore_parameter_defaults(fn, signature.params, ctx);
         if constexpr (requires { signature.return_type; }) {
@@ -713,18 +1210,27 @@ void kdi_importer::materialise_all(std::shared_ptr<context> ctx) {
         }
     };
     for (const auto& [mangled, fn] : _unit.get_imported_functions()) {
-        if (auto signature = fn->get_kdi_function()) complete_signature(*fn, *signature);
+        if (auto signature = fn->get_kdi_function()) {
+            complete_signature(*fn, *signature);
+            complete_throws(*fn, signature->throws_spec, false);
+        }
     }
     for (const auto& [fq, agg] : _unit.get_imported_aggregates()) {
         for (const auto& ctor : agg->constructors()) {
             if (auto imported = std::dynamic_pointer_cast<imported_constructor>(ctor)) {
-                if (auto signature = imported->get_kdi_constructor())
+                if (auto signature = imported->get_kdi_constructor()) {
                     complete_signature(*imported, *signature);
+                    if (signature->throws_spec)
+                        complete_throws(*imported, *signature->throws_spec, false);
+                }
             }
         }
         for (const auto& child : agg->get_children()) {
             if (auto method = std::dynamic_pointer_cast<imported_method>(child)) {
-                if (auto signature = method->get_kdi_method()) complete_signature(*method, *signature);
+                if (auto signature = method->get_kdi_method()) {
+                    complete_signature(*method, *signature);
+                    complete_throws(*method, signature->throws_spec, false);
+                }
             }
         }
     }
@@ -737,6 +1243,7 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
     // can be attached even when no symbol is explicitly referenced yet.
     auto model_ns = imported_namespace(_unit, ns.fq_name);
     if (model_ns) {
+        model_ns->mark_declared_namespace();
         if (auto doc = to_namespace_doc(ns.doc)) {
             model_ns->set_documentation(std::move(doc));
         }
@@ -786,7 +1293,17 @@ void kdi_importer::materialise_namespace(const kdi::kdi_namespace& ns,
     // Pass 3 — free functions in this namespace
     for (const auto& fn : ns.functions) {
         materialise_function(fn, ctx);
-        model_ns->add_function_reference(_unit.get_or_create_imported_function(&fn, ctx));
+        auto imported = _unit.get_or_create_imported_function(&fn, ctx);
+        bool duplicate = false;
+        for (const auto& existing : model_ns->get_functions(fn.name)) {
+            auto prior = std::dynamic_pointer_cast<imported_function>(existing);
+            if (prior && prior->get_kdi_function()
+                && identical_imported_function(*prior->get_kdi_function(), fn)) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) model_ns->add_function_reference(imported);
     }
 
     // Pass 4 — global / static variables in this namespace
@@ -997,6 +1514,8 @@ void kdi_importer::materialise_alias(const kdi::kdi_alias& al,
             adef->_alias_type = ctx->create_alias_type(adef, adef->_target_type);
         }
         adef->_resolved = true;
+    } else if (al.target_type) {
+        _pending_type_aliases.emplace_back(adef, &al);
     }
 
     target_ns->add_alias(adef);
@@ -1127,17 +1646,17 @@ void kdi_importer::materialise_union(const kdi::kdi_union& un,
         auto& llvm_ctx = ctx->llvm_context();
         auto* union_llvm_type = llvm::StructType::create(llvm_ctx, un.mangled_name + "_union");
 
-        size_t storage_size = 1;
-        if (!un.llvm_def.empty()) {
-            auto lbracket = un.llvm_def.find('[');
-            auto x_pos = un.llvm_def.find(" x i8]", lbracket);
-            if (lbracket != std::string::npos && x_pos != std::string::npos && x_pos > lbracket) {
-                std::string num_str = un.llvm_def.substr(lbracket + 1, x_pos - (lbracket + 1));
-                try {
-                    storage_size = std::stoull(num_str);
-                } catch (...) {}
-            }
+        // validate_union_layout has already rejected descriptors without a valid layout.
+        const auto layout = parse_union_layout(un.llvm_def);
+        if (layout.state != union_layout_state::valid) {
+            auto diag = k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT),
+                "Imported union '{}' has no usable LLVM layout; rebuild its library and KDI descriptor",
+                {normalised});
+            _logger.report(diag);
+            throw k::log::compiler_error(std::move(diag));
         }
+        const size_t storage_size = layout.storage_size;
         auto* disc_type = llvm::Type::getInt64Ty(llvm_ctx);
         auto* storage_type = llvm::ArrayType::get(llvm::Type::getInt8Ty(llvm_ctx), storage_size);
         union_llvm_type->setBody({disc_type, storage_type}, false);
@@ -1260,6 +1779,28 @@ void kdi_importer::materialise_union(const kdi::kdi_union& un,
         }
     }
 
+    // The imported storage must hold every alternative of the chain: a smaller payload
+    // would make copies and cleanup read or write past the object.
+    {
+        // The module layout is not available yet; the default layout never overestimates
+        // the target size, so it can only miss an undersized payload, never reject a valid one.
+        const llvm::DataLayout data_layout("");
+        const uint64_t storage_size = parse_union_layout(un.llvm_def).storage_size;
+        for (const auto* alt : udef->all_alternatives_ptrs()) {
+            if (!alt || !alt->resolved_type || !type::is_resolved(alt->resolved_type)) continue;
+            auto* alt_llvm = alt->resolved_type->get_llvm_type();
+            if (!alt_llvm || !alt_llvm->isSized()) continue;
+            if (data_layout.getTypeAllocSize(alt_llvm) <= storage_size) continue;
+            auto diag = k::log::diagnostic::make_error(
+                static_cast<unsigned int>(k::diag::codegen_diag::ERR_KDI_TYPE_LAYOUT_CONFLICT),
+                "Imported union '{}' has a {}-byte payload that cannot hold alternative '{}'; "
+                "rebuild its library and KDI descriptor",
+                {normalised, std::to_string(storage_size), alt->name});
+            _logger.report(diag);
+            throw k::log::compiler_error(std::move(diag));
+        }
+    }
+
     // ── Link polymorphic base (if declared) ──────────────────────────────────
     if (!un.polymorphic_base_fq_name.empty()) {
         std::vector<std::string> base_parts;
@@ -1326,10 +1867,17 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
                 if (!param.name.empty()) param_names.insert(param.name);
             }
             ctx->push_template_param_scope(param_names);
-            auto ti = build_tpl_info_from_kdi(tdef, _unit, ctx);
+            auto definition_scope = imported_namespace(_unit,
+                tdef.origin_module.empty() ? parent_kdi_ns.fq_name : tdef.origin_module);
+            auto ti = build_tpl_info_from_kdi(tdef, _unit, ctx, definition_scope);
             if (auto tpl_fn = host->define_function(tdef.name, tdef.function_signature->is_static)) {
                 tpl_fn->set_tpl_info(std::move(ti));
-                populate_template_signature_function(*tpl_fn, *tdef.function_signature, _unit, ctx);
+                _pending_generic_template_params.emplace_back(
+                    tpl_fn, tpl_fn->get_tpl_info(), &tdef, definition_scope);
+                populate_template_signature_function(*tpl_fn, *tdef.function_signature, _unit, ctx,
+                                                     definition_scope,
+                                                     _pending_generic_contracts,
+                                                     _pending_generic_variables, _pending_generic_returns);
                 restore_parameter_defaults(*tpl_fn, tdef.function_signature->params, ctx);
             }
             ctx->pop_template_param_scope();
@@ -1354,7 +1902,7 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
         }
         ctx->push_template_param_scope(param_names);
 
-        auto ti = build_tpl_info_from_kdi(tdef, _unit, ctx);
+        auto ti = build_tpl_info_from_kdi(tdef, _unit, ctx, target_ns);
         // Tag the template with its originating module namespace (normalised, no root
         // prefix) so the local instantiator can build an origin-qualified registry key.
         // Prefer the TRUE origin recorded on a re-exported template's KDI; fall back to
@@ -1369,6 +1917,7 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
         if (tdef.aggregate_signature) {
             if (auto existing = target_ns->get_aggregate(tdef.name)) {
                 if (existing->is_template()) {
+                    _pending_generic_template_params.emplace_back(existing, nullptr, &tdef, target_ns);
                     ctx->pop_template_param_scope();
                     return;
                 }
@@ -1394,7 +1943,11 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             if (tpl_agg) {
                 tpl_agg->set_visibility(tdef.visibility == "protected" ? PROTECTED : PUBLIC);
                 tpl_agg->set_tpl_info(std::move(ti));
-                populate_template_signature_aggregate(*tpl_agg, *tdef.aggregate_signature, _unit, ctx);
+                _pending_generic_template_params.emplace_back(
+                    tpl_agg, tpl_agg->get_tpl_info(), &tdef, target_ns);
+                populate_template_signature_aggregate(*tpl_agg, *tdef.aggregate_signature, _unit, ctx,
+                                                      _pending_generic_contracts,
+                                                      _pending_generic_variables, _pending_generic_returns);
                 materialise_annotations(tdef.aggregate_signature->annotations, *tpl_agg);
                 for (size_t i = 0; i < tpl_agg->constructors().size(); ++i)
                     restore_parameter_defaults(*tpl_agg->constructors()[i],
@@ -1405,6 +1958,7 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             }
         } else if (tdef.function_signature) {
             const auto& signature = *tdef.function_signature;
+            std::vector<std::shared_ptr<function>> pending_candidates;
             for (const auto& existing : target_ns->get_functions(tdef.name)) {
                 auto existing_ti = existing->get_tpl_info();
                 if (!existing_ti || existing_ti->params.size() != ti->params.size()
@@ -1412,24 +1966,30 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
                     || existing->get_parameter_size() != signature.params.size()) continue;
                 bool same = true;
                 for (size_t i = 0; i < signature.params.size(); ++i) {
-                    if (!gen::scope_lookup::same_signature_type(
-                            existing->parameters()[i]->get_type(),
-                            kdi_type_to_model_type(signature.params[i].type, _unit, ctx))) {
+                    auto existing_type = existing->parameters()[i]->get_type();
+                    auto incoming_type = kdi_type_to_model_type(signature.params[i].type, _unit, ctx,
+                                                                 kdi_type_conversion::template_signature);
+                    if (existing_type && incoming_type
+                        && !gen::scope_lookup::same_signature_type(existing_type, incoming_type)) {
                         same = false;
                         break;
                     }
                 }
-                if (same) {
-                    ctx->pop_template_param_scope();
-                    return;
-                }
+                if (same) pending_candidates.push_back(existing);
             }
 
             auto tpl_fn = target_ns->define_function(tdef.name, tdef.function_signature->is_static);
             if (tpl_fn) {
                 tpl_fn->set_tpl_info(std::move(ti));
-                populate_template_signature_function(*tpl_fn, *tdef.function_signature, _unit, ctx);
+                _pending_generic_template_params.emplace_back(
+                    tpl_fn, tpl_fn->get_tpl_info(), &tdef, target_ns);
+                populate_template_signature_function(*tpl_fn, *tdef.function_signature, _unit, ctx,
+                                                     target_ns,
+                                                     _pending_generic_contracts,
+                                                     _pending_generic_variables, _pending_generic_returns);
                 restore_parameter_defaults(*tpl_fn, tdef.function_signature->params, ctx, target_ns);
+                if (!pending_candidates.empty())
+                    _pending_generic_overloads.emplace_back(tpl_fn, std::move(pending_candidates));
             }
         }
 
@@ -1446,6 +2006,12 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
     expose_imported_namespace(_unit, target_ns);
 
     // ── 2. Check if a template with this name already exists ────────────────
+    const bool nested_aggregate_template = template_host && tdef.entity_kind != "function";
+    if (nested_aggregate_template) {
+        if (auto existing = template_host->get_aggregate(tdef.name)) {
+            if (existing->is_template()) return;
+        }
+    }
     if (!template_host) {
         if (auto existing = target_ns->get_aggregate(tdef.name)) {
             if (existing->is_template()) return;
@@ -1561,31 +2127,69 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
             });
         }
 
+        // Replayed using directives live in the definition namespace. Several
+        // templates of one namespace repeat the same directive; keep one, and
+        // never shadow a name the namespace already declares.
+        std::erase_if(ast_unit->declarations, [&](const auto& declaration) {
+            auto directive = std::dynamic_pointer_cast<parse::ast::using_decl>(declaration);
+            if (!directive || !directive->qname) return false;
+            const auto target = directive->qname->to_name().to_string();
+            const auto alias = directive->alias_name ? std::string{directive->alias_name->content} : std::string{};
+            const auto bound = !alias.empty() ? alias : directive->qname->to_name().back();
+            const bool is_namespace = directive->element_filter
+                && directive->element_filter->type == lex::keyword::NAMESPACE;
+            if (!(is_namespace && alias.empty())) {
+                const auto& children = target_ns->get_children();
+                if (std::any_of(children.begin(), children.end(), [&](const auto& child) {
+                        auto named = dynamic_cast<const named_element*>(child.get());
+                        return named && named->get_short_name() == bound; })) return true;
+            }
+            return !_template_private_declarations.insert(
+                target_ns->get_fq_name() + ":using:" + alias + "=" + target
+                + (is_namespace ? ":ns" : "")).second;
+        });
+
         // ── 4. Build declarations without changing the consumer unit or its AST ──
         if (template_host) {
+            // A member recipe is attached to its imported host; the rest of the
+            // source (using prelude, private dependencies) is built in target_ns.
+            std::shared_ptr<parse::ast::declaration> recipe;
             auto member = std::find_if(ast_unit->declarations.begin(), ast_unit->declarations.end(),
                 [&](const auto& declaration) {
+                    if (nested_aggregate_template) {
+                        auto agg = std::dynamic_pointer_cast<parse::ast::aggregate_decl>(declaration);
+                        return agg && agg->is_template() && agg->name.content == tdef.name;
+                    }
                     auto fn = std::dynamic_pointer_cast<parse::ast::function_decl>(declaration);
                     return fn && fn->is_template() && fn->name.content == tdef.name;
                 });
             if (member == ast_unit->declarations.end()) {
-                throw std::runtime_error("stored member template source is not a function template");
+                throw std::runtime_error(nested_aggregate_template
+                    ? "stored member template source is not an aggregate template"
+                    : "stored member template source is not a function template");
             }
-            auto fn_decl = std::dynamic_pointer_cast<parse::ast::function_decl>(*member);
+            recipe = *member;
             ast_unit->declarations.erase(member);
             // Generated private dependency scopes belong to the definition namespace,
             // while the recipe itself must be attached to its imported aggregate host.
             k::model::model_builder::visit_imported_declarations(
                 _logger, ctx, *ast_unit, _unit, target_ns);
-            const auto existing_members = template_host->get_functions(tdef.name);
-            if (fn_decl->template_source_text.empty()
-                || std::none_of(existing_members.begin(), existing_members.end(), [&](const auto& fn) {
-                    auto ti = fn->get_tpl_info();
-                    return ti && ti->source_text == fn_decl->template_source_text;
-                })) {
+            const auto member_visibility = tdef.visibility == "protected" ? PROTECTED : PUBLIC;
+            if (nested_aggregate_template) {
+                auto agg_decl = std::dynamic_pointer_cast<parse::ast::aggregate_decl>(recipe);
                 k::model::model_builder::visit_member(
-                    _logger, ctx, *fn_decl, _unit, template_host,
-                    tdef.visibility == "protected" ? PROTECTED : PUBLIC, target_ns);
+                    _logger, ctx, *agg_decl, _unit, template_host, member_visibility, target_ns);
+            } else {
+                auto fn_decl = std::dynamic_pointer_cast<parse::ast::function_decl>(recipe);
+                const auto existing_members = template_host->get_functions(tdef.name);
+                if (fn_decl->template_source_text.empty()
+                    || std::none_of(existing_members.begin(), existing_members.end(), [&](const auto& fn) {
+                        auto ti = fn->get_tpl_info();
+                        return ti && ti->source_text == fn_decl->template_source_text;
+                    })) {
+                    k::model::model_builder::visit_member(
+                        _logger, ctx, *fn_decl, _unit, template_host, member_visibility, target_ns);
+                }
             }
         } else {
             // Keep same-named overloads, but avoid materializing the exact same
@@ -1626,32 +2230,35 @@ void kdi_importer::materialise_template_def(const kdi::kdi_template_def& tdef,
                 tag(ti);
                 if (ti && private_scope) ti->private_definition_scope = std::const_pointer_cast<ns>(private_scope);
             };
-            if (template_host) {
-                for (auto& fn : template_host->get_functions(tdef.name)) tag_definition(fn->get_tpl_info());
-            } else {
-                if (auto agg = target_ns->get_aggregate(tdef.name)) {
-                    tag_definition(agg->get_tpl_info());
-                    // The recipe source has no syntax for compiler-promoted
-                    // virtual bases. Restore the producer's ABI decisions from
-                    // the structured signature before instantiating the recipe.
-                    if (tdef.aggregate_signature) {
-                        auto& bases = agg->get_bases_mutable();
-                        const auto& saved = tdef.aggregate_signature->bases;
-                        if (bases.size() == saved.size()) {
-                            for (size_t i = 0; i < bases.size(); ++i)
-                                bases[i].is_virtual = saved[i].is_virtual;
-                        } else {
-                            for (auto& base : bases) {
-                                for (const auto& saved_base : saved) {
-                                    if (base.raw_name == saved_base.fq_name) {
-                                        base.is_virtual = saved_base.is_virtual;
-                                        break;
-                                    }
+            // The recipe source has no syntax for compiler-promoted virtual bases.
+            // Restore the producer's ABI decisions from the structured signature
+            // before instantiating the recipe.
+            auto tag_aggregate = [&](const std::shared_ptr<aggregate>& agg) {
+                if (!agg) return;
+                tag_definition(agg->get_tpl_info());
+                if (tdef.aggregate_signature) {
+                    auto& bases = agg->get_bases_mutable();
+                    const auto& saved = tdef.aggregate_signature->bases;
+                    if (bases.size() == saved.size()) {
+                        for (size_t i = 0; i < bases.size(); ++i)
+                            bases[i].is_virtual = saved[i].is_virtual;
+                    } else {
+                        for (auto& base : bases) {
+                            for (const auto& saved_base : saved) {
+                                if (base.raw_name == saved_base.fq_name) {
+                                    base.is_virtual = saved_base.is_virtual;
+                                    break;
                                 }
                             }
                         }
                     }
                 }
+            };
+            if (template_host) {
+                if (nested_aggregate_template) tag_aggregate(template_host->get_aggregate(tdef.name));
+                else for (auto& fn : template_host->get_functions(tdef.name)) tag_definition(fn->get_tpl_info());
+            } else {
+                tag_aggregate(target_ns->get_aggregate(tdef.name));
                 for (auto& fn : target_ns->get_functions(tdef.name)) tag_definition(fn->get_tpl_info());
                 if (auto un = target_ns->get_union(tdef.name)) tag_definition(un->get_tpl_info());
                 if (auto al = target_ns->get_alias(tdef.name)) tag_definition(al->get_tpl_info());

@@ -166,6 +166,8 @@ All observer indirection types share the same memory size (one pointer) and call
 - Immutable binding, non-null, drain permission.
 - Is **not** implicitly created from a reference: the `#` operator is explicitly required.
 - **Is** implicitly convertible to `T&`, `T+`, `T?`, `T*`.
+- Converting to an aggregate value uses a viable drain constructor or copy
+  constructor; a selected deleted or inaccessible constructor is an error.
 - After draining, the source object must remain in a valid state (typically default-constructed).
 
 ### 3.3 Null
@@ -238,6 +240,7 @@ An explicit pointer, link, or view cast may not remove `const` from the pointed-
 
 #### Owner Upcast/Downcast
 Owner follows the same rules as indirections for upcast/downcast, with the same move constraints.
+Borrowing an owner lvalue as an observer also upcasts: `Derived!` → `Base+`, `Base?` or `Base*` copies the (adjusted) address without ownership transfer. Overload ties prefer the link/view over the pointer, and a conversion keeping the argument's observer kind over one changing it.
 
 #### Indirection → `bool`
 `T*`, `T+`, `T?`, `T!` non-null → `true`, null → `false`. Applicable in `if`, `while`, `for`, `&&`, `||`, `!`. `T&` is **not** convertible to `bool`.
@@ -1270,17 +1273,34 @@ With an explicit primitive type (`enum E : unsigned byte`), that explicit primit
 
 `enum E : AggregateType { ... }` defines an object-backed enum:
 
+- A transparent alias or alias chain may name the aggregate, including an
+  imported aggregate; each alias target resolves in its declaration scope.
 - Runtime representation is an integer index.
 - Each entry maps to one object in a static backing table.
+- Aliases share a table object and do not add reverse-lookup candidates.
 - `E -> const AggregateType&` conversion returns a reference to that table entry.
 - `AggregateType -> E` conversion performs a runtime lookup against the backing
   table and requires value equality support for the aggregate.
 - `AggregateType -> E` on non-match is fatal by default.
 - In `if` condition-variable declarations (`if (e : E = obj)`), a non-match
   follows the existing soft-fail path and branches to `else`.
-- Entry initializers support designated braces (`NAME{.f = v}`), constructor form (`NAME(args)`), and zero-init (`NAME`).
-- Implicit entries in object-backed enums derive from the previous entry value
-  (copy + increment semantics when supported by the underlying object shape).
+- Entry initializers include designated braces (`NAME{.f = v}`), explicit
+  constructor form (`NAME(args)`), and implicit entries (`NAME`).
+- Constructor forms use ordinary overload, argument adaptation, default-argument
+  and access rules. `NAME()` selects a zero-argument constructor, unlike `NAME`.
+- An object-backed entry cannot use an integer value initializer (`NAME = 1`).
+- Constant backing tables currently support trivial zero-initialization,
+  designated integer literals, and implicit increments of an integer field,
+  including trivial struct bases and trivial classes with only their implicit
+  `k::Object` base. Implicit and designated values do not invoke constructors.
+- Runtime tables construct constructor-form entries lazily with literal
+  arguments. Derived tables also support trivial designated and implicit entries
+  and copy inherited entries from the initialized base table, including imported
+  constant tables; nontrivial backing types need a const-reference copy
+  constructor. Imported runtime tables are accessed through their lazy accessor.
+  Failed construction rolls back completed entries and permits retry; module
+  finalization destroys successful entries in reverse order. Other nontrivial
+  forms are diagnosed.
 
 ### 19.3 Enum Derivation
 
@@ -1315,22 +1335,35 @@ A discriminated (tagged) union holds one active alternative at a time. A hidden
 
 | Operation | Behaviour |
 |-----------|-----------|
-| Default construction | Constructs alternative 0; storage is zero-initialized. |
+| Default construction | Selects alternative 0 and zero-initializes storage without constructing a class/struct payload. |
 | Explicit member assignment (`u.alt = x`) | Constructs an inactive class/struct payload after destroying the old alternative; assigns an already-active payload. Updates discriminant only after successful construction. |
 | Member access (`u.alt`) | Runtime-checks the discriminant; mismatch traps by default. In classic `if-let`, mismatch soft-fails to the false branch. |
 | Destruction | Switch on discriminant; calls destructor of active alternative if non-trivial. |
 
 A failed alternative construction leaves no live payload to destroy. A later
-member assignment may activate a new alternative.
+member assignment may activate a new alternative. Copying a live payload must
+respect its copy constructor's checked-exception contract. A `const`
+alternative is copied from a const source even in a mutable union. Copy
+contract checking considers potentially active alternatives, while the
+runtime copy dispatches only to the active payload.
+Extracting an owner alternative by value moves it and nulls its source slot
+without changing the active discriminant. A const union or const alternative
+cannot be consumed; a mutable owner slot may own a const pointee. Reference
+and observer conversions borrow instead.
 
 ### 19b.3 Memory Layout
 
 ```
-{ uint32 discriminant, [max_size x i8] storage }
+{ uint64 tag_and_lifecycle, [max_size x i8] storage }
 ```
 
 Storage is sized to the largest alternative (including all inherited alternatives
-when the union has a parent).
+when the union has a parent). The low 32 bits of the first word hold the
+discriminant; the remaining bits are reserved for lifecycle state. The current
+implementation requires little-endian targets. Its lifecycle state is
+incompatible with earlier code even when the physical layout is unchanged.
+Rebuild affected libraries, KDI descriptors and consumers together; the
+importer does not yet detect every incompatible descriptor.
 
 ### 19b.4 Inheritance
 
@@ -1529,6 +1562,8 @@ namespace lang {
 
 - **Scope-based deletion**: non-null owner on scope exit → auto-delete.
 - **Assignment**: the previous object is destroyed before transfer.
+- If destroying the previous object throws after acquiring the incoming owner,
+  the destination stays null and the incoming owner is cleaned up during unwinding.
 - **`= null`**: destroys the object and sets the owner to null.
 - **Unassigned return**: warning `0x0E05`, object destroyed immediately.
 
@@ -1662,6 +1697,10 @@ max(a: T&, b: T&) : T {
 | `interface` | Must be an `interface` type                    |
 
 Optional base-type constraint: `class T : Animal` — T must be or derive from `Animal`.
+An earlier type parameter may be the bound: in `template<class Base, class T : Base>`,
+`T` must be or derive from the type supplied for `Base`.
+Checking this dependent bound is currently limited to certain concrete local
+template uses with complete hierarchy information; generic obligations remain incomplete.
 
 Optional default type: `typename T = int`.
 

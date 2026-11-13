@@ -18,12 +18,16 @@
 #include "resolvers.hpp"
 #include "generators.hpp"
 #include "gen_helpers.hpp"
+#include "resolvers_scope_lookup.hpp"
 
 #include "../model/imported.hpp"
 #include "../model/mangler.hpp"
+#include "../common/llvm_scope_exit.hpp"
 #include "../errors.hpp"
 
+#include <functional>
 #include <limits>
+#include <optional>
 #include <set>
 
 namespace k::model::gen {
@@ -50,6 +54,32 @@ llvm::Value* implementation_generator::get_thrown_state_slot(const char* accesso
     }
     // Always a plain call: the accessor is nounwind, it must never become an invoke.
     return _builder->CreateCall(fn_ty, accessor, {}, "thrown_state_slot");
+}
+
+implementation_generator::pending_exception_metadata
+implementation_generator::save_pending_exception_metadata() {
+    auto* func = _builder->GetInsertBlock()->getParent();
+    auto* entry = &func->getEntryBlock();
+    llvm::IRBuilder<> alloca_builder(entry, entry->begin());
+    auto* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
+    pending_exception_metadata metadata{
+        alloca_builder.CreateAlloca(ptr_ty, nullptr, "pending_exception_chain"),
+        alloca_builder.CreateAlloca(ptr_ty, nullptr, "pending_exception_type")
+    };
+    auto* chain_slot = get_thrown_state_slot("__k_thrown_typeinfo_chain_addr");
+    auto* type_slot = get_thrown_state_slot("__k_thrown_typeinfo_addr");
+    _builder->CreateStore(_builder->CreateLoad(ptr_ty, chain_slot), metadata.chain);
+    _builder->CreateStore(_builder->CreateLoad(ptr_ty, type_slot), metadata.type);
+    return metadata;
+}
+
+void implementation_generator::restore_pending_exception_metadata(
+    const pending_exception_metadata& metadata) {
+    auto* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
+    auto* chain_slot = get_thrown_state_slot("__k_thrown_typeinfo_chain_addr");
+    auto* type_slot = get_thrown_state_slot("__k_thrown_typeinfo_addr");
+    _builder->CreateStore(_builder->CreateLoad(ptr_ty, metadata.chain), chain_slot);
+    _builder->CreateStore(_builder->CreateLoad(ptr_ty, metadata.type), type_slot);
 }
 
 llvm::Value* implementation_generator::create_call_or_invoke(
@@ -205,6 +235,38 @@ struct debug_scope_guard {
 // Expression temporaries cleanup
 //
 
+void implementation_generator::emit_expression_temporary_cleanup(
+    const expression_temporary_cleanup& temporary, bool direct_call) {
+    llvm::BasicBlock* done = nullptr;
+    if (temporary.live) {
+        auto* function = _builder->GetInsertBlock()->getParent();
+        auto* destroy = llvm::BasicBlock::Create(**_context, "temporary.destroy", function);
+        done = llvm::BasicBlock::Create(**_context, "temporary.done", function);
+        _builder->CreateCondBr(temporary.live, destroy, done);
+        _builder->SetInsertPoint(destroy);
+    }
+
+    if (temporary.array_type) {
+        if (direct_call) {
+            emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
+                temporary.alloca, temporary.array_type);
+        } else {
+            emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
+                temporary.alloca, temporary.array_type, make_virtual_call_emitter());
+        }
+    } else if (temporary.union_type) {
+        emit_union_cleanup(temporary.alloca, *temporary.union_type);
+    } else if (temporary.destructor) {
+        if (direct_call) _builder->CreateCall(temporary.destructor, {temporary.alloca});
+        else create_call_or_invoke(temporary.destructor->getFunctionType(),
+                                   temporary.destructor, {temporary.alloca});
+    }
+    if (done) {
+        _builder->CreateBr(done);
+        _builder->SetInsertPoint(done);
+    }
+}
+
 void implementation_generator::emit_expression_temporaries_cleanup(const lex::opt_any_lexeme& anchor_lexeme) {
     if (_expression_temporaries.empty()) return;
 
@@ -214,14 +276,8 @@ void implementation_generator::emit_expression_temporaries_cleanup(const lex::op
     }
 
     // Destroy in reverse creation order
-    for (auto it = _expression_temporaries.rbegin(); it != _expression_temporaries.rend(); ++it) {
-        if (it->array_type) {
-            emit_sized_array_elements_cleanup(_builder.get(), get_module(), _context->_functions,
-                it->alloca, it->array_type, make_virtual_call_emitter());
-        } else if (it->destructor) {
-            create_call_or_invoke(it->destructor->getFunctionType(), it->destructor, {it->alloca});
-        }
-    }
+    for (auto it = _expression_temporaries.rbegin(); it != _expression_temporaries.rend(); ++it)
+        emit_expression_temporary_cleanup(*it);
     _expression_temporaries.clear();
 
     _builder->SetCurrentDebugLocation(previous_debug_loc);
@@ -238,10 +294,7 @@ void implementation_generator::emit_scope_variable_cleanup(
     for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
         auto& var_stmt = *it;
 
-        // NRVO transfers lifetime only on a normal return. A constructed result
-        // still belongs to the callee when it unwinds without returning.
-        if (!use_dtor_flags
-            && ((_nrvo_candidate && var_stmt == _nrvo_candidate) || (extra_skip && var_stmt == extra_skip))) {
+        if (!use_dtor_flags && extra_skip && var_stmt == extra_skip) {
             continue;
         }
 
@@ -249,7 +302,7 @@ void implementation_generator::emit_scope_variable_cleanup(
         if (var_it == _context->_variables.end()) continue;
         llvm::AllocaInst* alloca = var_it->second;
 
-        auto vt = var_stmt->get_type();
+        auto vt = type::canonical(type::remove_const(var_stmt->get_type()));
         if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
             if (auto agg = st_type->get_struct()) {
                 auto dtor = agg->get_destructor();
@@ -290,7 +343,24 @@ void implementation_generator::emit_scope_variable_cleanup(
                 }
             } else {
                 auto udef = find_union_for_struct_type(_unit, st_type);
-                if (udef) emit_union_cleanup(alloca, *udef);
+                if (!udef) continue;
+                auto flag_it = _dtor_flags.find(var_stmt);
+                if (use_dtor_flags && flag_it != _dtor_flags.end()) {
+                    auto* func = _builder->GetInsertBlock()->getParent();
+                    auto* destroy = llvm::BasicBlock::Create(llvm_ctx, "union_cleanup", func);
+                    auto* done = llvm::BasicBlock::Create(llvm_ctx, "union_cleanup_done", func);
+                    auto* live = _builder->CreateLoad(_builder->getInt1Ty(), flag_it->second);
+                    _builder->CreateCondBr(live, destroy, done);
+                    _builder->SetInsertPoint(destroy);
+                    _builder->CreateStore(_builder->getFalse(), flag_it->second);
+                    emit_union_cleanup(alloca, *udef);
+                    _builder->CreateBr(done);
+                    _builder->SetInsertPoint(done);
+                } else {
+                    if (flag_it != _dtor_flags.end())
+                        _builder->CreateStore(_builder->getFalse(), flag_it->second);
+                    emit_union_cleanup(alloca, *udef);
+                }
             }
         } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
             emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
@@ -307,19 +377,192 @@ void implementation_generator::emit_scope_variable_cleanup(
     }
 }
 
-void implementation_generator::emit_active_scope_cleanup(
+void implementation_generator::emit_early_exit_cleanup(
     size_t scope_count,
+    size_t finally_count,
     const std::string& owner_cleanup_name,
-    bool use_dtor_flags,
+    const lex::opt_any_lexeme& fallback_lexeme,
     const std::shared_ptr<variable_statement>& extra_skip)
 {
-    if (scope_count == 0 || _cleanup_vars_stack.empty()) return;
+    auto saved_vars = _cleanup_vars_stack;
+    auto saved_depths = _cleanup_scope_depth_stack;
+    auto saved_cleanups = _cleanup_lpad_stack;
+    auto saved_catches = _landing_pad_stack;
+    auto saved_finally = _finally_stack;
+    auto saved_pending_result = _pending_return_result;
+    auto restore = k::make_scope_exit([&]() {
+        _cleanup_vars_stack = std::move(saved_vars);
+        _cleanup_scope_depth_stack = std::move(saved_depths);
+        _cleanup_lpad_stack = std::move(saved_cleanups);
+        _landing_pad_stack = std::move(saved_catches);
+        _finally_stack = std::move(saved_finally);
+        _pending_return_result = std::move(saved_pending_result);
+    });
+    auto restrict_handlers = [&](unsigned depth) {
+        while (!_cleanup_lpad_stack.empty() && _cleanup_lpad_stack.top().depth > depth)
+            _cleanup_lpad_stack.pop();
+        while (!_landing_pad_stack.empty() && _landing_pad_stack.top().depth > depth)
+            _landing_pad_stack.pop();
+    };
+    auto cleanup_scope = [&]() {
+        restrict_handlers(_cleanup_scope_depth_stack.top());
+        std::vector<std::shared_ptr<variable_statement>> vars;
+        bool transfers_result = false;
+        for (const auto& var : _cleanup_vars_stack.top()) {
+            if (extra_skip && var == extra_skip) transfers_result = true;
+            else vars.push_back(var);
+        }
+        {
+            const bool protect_result = _pending_return_result
+                && _dtor_flags.count(_pending_return_result);
+            call_argument_cleanup_scope guard(*this, protect_result);
+            guard.track_variable(_pending_return_result);
+            emit_scope_variable_cleanup(vars, owner_cleanup_name, true);
+        }
+        _cleanup_vars_stack.pop();
+        _cleanup_scope_depth_stack.pop();
+        if (transfers_result && _sret_ptr && _dtor_flags.count(extra_skip))
+            _pending_return_result = extra_skip;
+        --scope_count;
+    };
 
-    std::stack<std::vector<std::shared_ptr<variable_statement>>> tmp = _cleanup_vars_stack;
-    for (size_t i = 0; i < scope_count && !tmp.empty(); ++i) {
-        emit_scope_variable_cleanup(tmp.top(), owner_cleanup_name, use_dtor_flags, extra_skip);
-        tmp.pop();
+    while (finally_count && !_finally_stack.empty()) {
+        auto ctx = _finally_stack.top();
+        while (scope_count && _cleanup_vars_stack.size() > ctx.cleanup_scope_depth)
+            cleanup_scope();
+        _finally_stack.pop();
+        --finally_count;
+        restrict_handlers(ctx.outer_lpad_depth);
+        set_debug_location(ctx.origin_lexeme ? ctx.origin_lexeme : fallback_lexeme);
+        if (ctx.abandoned_exception) {
+            auto* ptr_ty = llvm::PointerType::get(_context->llvm_context(), 0);
+            emit_abandoned_exception_cleanup(_builder->CreateLoad(ptr_ty, ctx.abandoned_exception));
+        }
+        if (ctx.in_catch) {
+            auto cxa_end = _context->module().getOrInsertFunction("__cxa_end_catch",
+                llvm::FunctionType::get(llvm::Type::getVoidTy(_context->llvm_context()), {}, false));
+            _builder->CreateCall(cxa_end);
+        }
+        if (ctx.finally_body) {
+            {
+                const bool protect_result = _pending_return_result
+                    && _dtor_flags.count(_pending_return_result);
+                call_argument_cleanup_scope guard(*this, protect_result);
+                guard.track_variable(_pending_return_result);
+                ctx.finally_body->accept(*this);
+            }
+            if (_builder->GetInsertBlock()->getTerminator()) return;
+        }
     }
+    while (scope_count && !_cleanup_vars_stack.empty()) cleanup_scope();
+}
+
+void implementation_generator::emit_abandoned_exception_cleanup(llvm::Value* exception)
+{
+    auto& llvm_ctx = _context->llvm_context();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    auto begin = get_module().getOrInsertFunction("__cxa_begin_catch",
+        llvm::FunctionType::get(ptr_ty, {ptr_ty}, false));
+    auto end = get_module().getOrInsertFunction("__cxa_end_catch",
+        llvm::FunctionType::get(llvm::Type::getVoidTy(llvm_ctx), {}, false));
+    _builder->CreateCall(begin, {exception});
+    _builder->CreateCall(end);
+}
+
+void implementation_generator::emit_pending_exception_finally(
+    const std::shared_ptr<block>& body, llvm::AllocaInst* exception,
+    const lex::opt_any_lexeme& origin)
+{
+    if (!body) return;
+    auto& llvm_ctx = _context->llvm_context();
+    auto* func = _builder->GetInsertBlock()->getParent();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+    auto* lpad_type = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
+    llvm::IRBuilder<> entry(&func->getEntryBlock(), func->getEntryBlock().begin());
+    if (!_exc_ptr_slot) {
+        _exc_ptr_slot = entry.CreateAlloca(ptr_ty, nullptr, "exc_ptr_cleanup_slot");
+        _exc_sel_slot = entry.CreateAlloca(i32_ty, nullptr, "exc_sel_cleanup_slot");
+    }
+    auto* replacement_ptr = entry.CreateAlloca(ptr_ty, nullptr, "finally_replacement_ptr");
+    auto* replacement_sel = entry.CreateAlloca(i32_ty, nullptr, "finally_replacement_sel");
+
+    cleanup_lpad_context cleanup{};
+    cleanup.lpad_bb = llvm::BasicBlock::Create(llvm_ctx, "finally_replacement_lpad", func);
+    cleanup.cleanup_code_bb = llvm::BasicBlock::Create(llvm_ctx, "finally_replacement_cleanup", func);
+    const unsigned cleanup_depth = _cleanup_lpad_stack.empty() ? 0 : _cleanup_lpad_stack.top().depth;
+    const unsigned catch_depth = _landing_pad_stack.empty() ? 0 : _landing_pad_stack.top().depth;
+    const bool has_handler = catch_depth && _landing_pad_stack.top().has_handler;
+    if (cleanup_depth > catch_depth) {
+        cleanup.continuation = cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP;
+        cleanup.chain_target_bb = _cleanup_lpad_stack.top().cleanup_code_bb;
+    } else if (catch_depth) {
+        const auto& outer = _landing_pad_stack.top();
+        cleanup.continuation = cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH;
+        cleanup.chain_target_bb = outer.dispatch_bb;
+        cleanup.catch_exc_alloca = outer.exc_ptr_alloca;
+        cleanup.catch_exc_sel_alloca = outer.exc_sel_alloca;
+    } else {
+        cleanup.continuation = cleanup_lpad_context::RESUME;
+    }
+    const unsigned outer_depth = _lpad_depth_counter;
+    cleanup.depth = ++_lpad_depth_counter;
+    _cleanup_lpad_stack.push(cleanup);
+    _finally_stack.push({nullptr, false, origin, _cleanup_vars_stack.size(), outer_depth, exception});
+    {
+        auto restore = k::make_scope_exit([&]() {
+            _finally_stack.pop();
+            _cleanup_lpad_stack.pop();
+        });
+        body->accept(*this);
+    }
+
+    auto* normal_bb = _builder->GetInsertBlock();
+    auto* saved_value = _value;
+    auto saved_loc = _builder->getCurrentDebugLocation();
+    _builder->SetInsertPoint(cleanup.lpad_bb);
+    auto* lpad = _builder->CreateLandingPad(lpad_type, has_handler ? 1 : 0, "finally_replacement");
+    lpad->setCleanup(true);
+    if (has_handler) lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty));
+    _builder->CreateStore(_builder->CreateExtractValue(lpad, 0), _exc_ptr_slot);
+    _builder->CreateStore(_builder->CreateExtractValue(lpad, 1), _exc_sel_slot);
+    _builder->CreateBr(cleanup.cleanup_code_bb);
+
+    _builder->SetInsertPoint(cleanup.cleanup_code_bb);
+    auto* new_ptr = _builder->CreateLoad(ptr_ty, _exc_ptr_slot);
+    auto* new_sel = _builder->CreateLoad(i32_ty, _exc_sel_slot);
+    _builder->CreateStore(new_ptr, replacement_ptr);
+    _builder->CreateStore(new_sel, replacement_sel);
+    auto metadata = save_pending_exception_metadata();
+    auto* old_ptr = _builder->CreateLoad(ptr_ty, exception);
+    auto* discard = llvm::BasicBlock::Create(llvm_ctx, "finally_discard_exception", func);
+    auto* forward = llvm::BasicBlock::Create(llvm_ctx, "finally_forward_exception", func);
+    _builder->CreateCondBr(_builder->CreateICmpEQ(old_ptr, new_ptr), forward, discard);
+    _builder->SetInsertPoint(discard);
+    // Balancing begin/end both releases the abandoned unwind object and fixes
+    // the ABI uncaught-exception count; never consume a rethrow of that object.
+    emit_abandoned_exception_cleanup(old_ptr);
+    _builder->CreateBr(forward);
+    _builder->SetInsertPoint(forward);
+    restore_pending_exception_metadata(metadata);
+    new_ptr = _builder->CreateLoad(ptr_ty, replacement_ptr);
+    new_sel = _builder->CreateLoad(i32_ty, replacement_sel);
+    if (cleanup.continuation == cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP) {
+        _builder->CreateStore(new_ptr, _exc_ptr_slot);
+        _builder->CreateStore(new_sel, _exc_sel_slot);
+        _builder->CreateBr(cleanup.chain_target_bb);
+    } else if (cleanup.continuation == cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH) {
+        _builder->CreateStore(new_ptr, cleanup.catch_exc_alloca);
+        _builder->CreateStore(new_sel, cleanup.catch_exc_sel_alloca);
+        _builder->CreateBr(cleanup.chain_target_bb);
+    } else {
+        auto* resume = _builder->CreateInsertValue(llvm::UndefValue::get(lpad_type), new_ptr, 0);
+        resume = _builder->CreateInsertValue(resume, new_sel, 1);
+        _builder->CreateResume(resume);
+    }
+    _builder->SetInsertPoint(normal_bb);
+    _builder->SetCurrentDebugLocation(saved_loc);
+    _value = saved_value;
 }
 
 void implementation_generator::emit_active_parameter_cleanup(const std::string& owner_cleanup_name)
@@ -348,10 +591,11 @@ void implementation_generator::emit_active_parameter_cleanup(const std::string& 
         for (auto it = params.rbegin(); it != params.rend(); ++it) {
             auto& param = *it;
             auto st_type = std::dynamic_pointer_cast<struct_type>(param->get_type());
-            if (!st_type || !st_type->get_struct() || !st_type->get_struct()->get_destructor()) continue;
-            auto dtor = st_type->get_struct()->get_destructor();
-            auto dtor_it = _context->_functions.find(dtor->shared_as<k::model::function>());
-            if (dtor_it == _context->_functions.end()) continue;
+            if (!st_type) continue;
+            auto agg = st_type->get_struct();
+            auto un = agg ? nullptr : find_union_for_struct_type(_unit, st_type);
+            auto dtor = agg ? agg->get_destructor() : nullptr;
+            if (!dtor && !un) continue;
             auto param_it = _context->_parameter_variables.find(param);
             if (param_it == _context->_parameter_variables.end()) continue;
             auto* fn = _builder->GetInsertBlock()->getParent();
@@ -366,35 +610,18 @@ void implementation_generator::emit_active_parameter_cleanup(const std::string& 
                 _builder->CreateStore(
                     llvm::ConstantInt::getFalse(_context->llvm_context()), flag_it->second);
             }
-            create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {param_it->second});
+            if (dtor) {
+                if (auto* llvm_dtor = _context->lookup_llvm_function(dtor)) {
+                    create_call_or_invoke(llvm_dtor->getFunctionType(), llvm_dtor, {param_it->second});
+                }
+            } else {
+                emit_union_cleanup(param_it->second, *un);
+            }
             _builder->CreateBr(done);
             _builder->SetInsertPoint(done);
         }
     }
 }
-
-void implementation_generator::emit_finally_cleanup(size_t finally_count, const lex::opt_any_lexeme& fallback_lexeme)
-{
-    if (finally_count == 0 || _finally_stack.empty()) return;
-
-    auto& mod = _context->module();
-    auto cxa_end_fn = mod.getOrInsertFunction("__cxa_end_catch",
-        llvm::FunctionType::get(llvm::Type::getVoidTy(_context->llvm_context()), {}, false));
-
-    std::stack<finally_context> tmp_finally = _finally_stack;
-    for (size_t i = 0; i < finally_count && !tmp_finally.empty(); ++i) {
-        auto ctx = tmp_finally.top();
-        tmp_finally.pop();
-        set_debug_location(ctx.origin_lexeme ? ctx.origin_lexeme : fallback_lexeme);
-        if (ctx.in_catch) {
-            _builder->CreateCall(cxa_end_fn);
-        }
-        if (ctx.finally_body) {
-            ctx.finally_body->accept(*this);
-        }
-    }
-}
-
 
 //
 // Block
@@ -478,19 +705,13 @@ void implementation_generator::visit_block(block& blk) {
     std::vector<std::shared_ptr<variable_statement>> dtor_vars;
     for (auto& stmt : blk.get_statements()) {
         if (auto var_stmt = std::dynamic_pointer_cast<variable_statement>(stmt)) {
-            auto vt = var_stmt->get_type();
+            auto vt = type::canonical(type::remove_const(var_stmt->get_type()));
             // Struct with destructor
             if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
-                if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
+                auto agg = st_type->get_struct();
+                auto un = agg ? nullptr : find_union_for_struct_type(_unit, st_type);
+                if ((agg && agg->get_destructor()) || (un && un->has_nontrivial_destructor_alternative())) {
                     dtor_vars.push_back(var_stmt);
-                }
-                // Union with non-trivial alternative(s)
-                else if (!st_type->get_struct()) {
-                    if (auto udef = find_union_for_struct_type(_unit, st_type)) {
-                        if (udef->has_nontrivial_destructor_alternative()) {
-                            dtor_vars.push_back(var_stmt);
-                        }
-                    }
                 }
             }
             // Owner type — always needs cleanup (destroy + free on scope exit)
@@ -581,6 +802,7 @@ void implementation_generator::visit_block(block& blk) {
 
         ctx.depth = ++_lpad_depth_counter;
         _cleanup_lpad_stack.push(ctx);
+        _cleanup_scope_depth_stack.push(ctx.depth);
     }
 
     // Generate statements normally
@@ -598,7 +820,10 @@ void implementation_generator::visit_block(block& blk) {
         func->insert(func->end(), cleanup_block);
         _builder->SetInsertPoint(cleanup_block);
 
-        emit_scope_variable_cleanup(dtor_vars, "owner_cleanup");
+        auto direct_function = blk.get_direct_function();
+        auto fallthrough_result = _sret_ptr && direct_function
+            ? direct_function->get_named_return_var() : nullptr;
+        emit_scope_variable_cleanup(dtor_vars, "owner_cleanup", false, fallthrough_result);
 
         // On normal path, branch to continue
         _builder->CreateBr(continue_block);
@@ -619,9 +844,12 @@ void implementation_generator::visit_block(block& blk) {
         auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
         auto* lpad_type = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
 
-        // Include catch-all clause if chaining to a catch dispatch (for personality phase-1 search)
+        // A cleanup must advertise a handler only when an enclosing try can catch.
+        // Otherwise phase 1 must continue searching for a handler in the caller.
+        const bool has_local_handler =
+            !_landing_pad_stack.empty() && _landing_pad_stack.top().has_handler;
         llvm::LandingPadInst* lpad;
-        if (cleanup_ctx.continuation == cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH) {
+        if (has_local_handler) {
             lpad = _builder->CreateLandingPad(lpad_type, 1, "cleanup_lpad_val");
             lpad->setCleanup(true);
             lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty)); // catch-all
@@ -640,7 +868,9 @@ void implementation_generator::visit_block(block& blk) {
         func->insert(func->end(), cleanup_code_bb);
         _builder->SetInsertPoint(cleanup_code_bb);
 
+        auto pending_metadata = save_pending_exception_metadata();
         emit_scope_variable_cleanup(dtor_vars, "unwind_owner", true);
+        restore_pending_exception_metadata(pending_metadata);
 
         // Chain to continuation
         switch (cleanup_ctx.continuation) {
@@ -675,6 +905,7 @@ void implementation_generator::visit_block(block& blk) {
         // Pop normal-path cleanup stacks
         _cleanup_blocks.pop();
         _cleanup_vars_stack.pop();
+        _cleanup_scope_depth_stack.pop();
 
         // Emit continue block and set insert point there
         func->insert(func->end(), continue_block);
@@ -887,6 +1118,7 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
     auto func = stmt.get_block()->get_function();
     auto named_ret_var = func ? func->get_named_return_var() : nullptr;
     auto return_lexeme = get_statement_debug_lexeme(stmt);
+    auto transferred_var = named_ret_var;
 
     // Evaluate the return expression first (before any destructor calls)
     llvm::Value* ret_value = nullptr;
@@ -948,6 +1180,7 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
                     is_nrvo_return = true;
                 }
             }
+            if (is_nrvo_return) transferred_var = _nrvo_candidate;
         }
 
         if (!is_nrvo_return) {
@@ -1000,15 +1233,35 @@ void implementation_generator::visit_return_statement(return_statement& stmt) {
 
     set_debug_location(return_lexeme);
 
-    // Emit finally blocks for enclosing try-catch-finally scopes (innermost to outermost).
-    // If we are inside a catch body, also emit __cxa_end_catch() before the finally.
-    emit_finally_cleanup(_finally_stack.size(), return_lexeme);
+    emit_early_exit_cleanup(_cleanup_vars_stack.size(), _finally_stack.size(),
+                            "ret_owner", return_lexeme, transferred_var);
+    if (_builder->GetInsertBlock()->getTerminator()) return;
 
-    // Step 2: Emit cleanup for all block-scoped variables (reverse order)
-    // Emit destructor calls for all active scopes, from innermost to outermost.
-    // We use a copy of the cleanup vars stack to iterate without modifying the live stack.
-    emit_active_scope_cleanup(_cleanup_vars_stack.size(), "ret_owner", false, named_ret_var);
-    emit_active_parameter_cleanup("ret_param");
+    // Match constructor fallthrough: repair vptrs and virtual-base pointers
+    // after body cleanup, but only on the successful return path.
+    if (func) {
+        emit_constructor_post_block(*func);
+    }
+
+    {
+        auto saved_cleanups = _cleanup_lpad_stack;
+        auto saved_catches = _landing_pad_stack;
+        auto restore = k::make_scope_exit([&]() {
+            _cleanup_lpad_stack = std::move(saved_cleanups);
+            _landing_pad_stack = std::move(saved_catches);
+        });
+        while (!_cleanup_lpad_stack.empty()
+               && _cleanup_lpad_stack.top().depth > _function_cleanup_depth)
+            _cleanup_lpad_stack.pop();
+        while (!_landing_pad_stack.empty()
+               && _landing_pad_stack.top().depth > _function_cleanup_depth)
+            _landing_pad_stack.pop();
+        const auto pending_result = _sret_ptr && transferred_var
+            && _dtor_flags.count(transferred_var) ? transferred_var : _pending_return_result;
+        call_argument_cleanup_scope guard(*this, pending_result != nullptr);
+        guard.track_variable(pending_result);
+        emit_active_parameter_cleanup("ret_param");
+    }
 
     // Step 4: For NRVO candidates: no copy needed (already in sret destination)
     // Step 5: Emit ret instruction
@@ -1100,13 +1353,12 @@ void implementation_generator::visit_break_statement(break_statement& stmt) {
     size_t loop_depth = _loop_cleanup_depth.top();
     size_t current_depth = _cleanup_vars_stack.size();
 
-    emit_active_scope_cleanup(current_depth > loop_depth ? current_depth - loop_depth : 0, "break_owner");
-
-    // Emit finally blocks between the break and the loop boundary
     size_t loop_finally_depth = _loop_finally_depth.top();
     size_t current_finally_depth = _finally_stack.size();
-    emit_finally_cleanup(current_finally_depth > loop_finally_depth ? current_finally_depth - loop_finally_depth : 0,
-        break_lexeme);
+    emit_early_exit_cleanup(current_depth > loop_depth ? current_depth - loop_depth : 0,
+        current_finally_depth > loop_finally_depth ? current_finally_depth - loop_finally_depth : 0,
+        "break_owner", break_lexeme);
+    if (_builder->GetInsertBlock()->getTerminator()) return;
 
     // Branch to loop exit block
     set_debug_location(break_lexeme);
@@ -1153,14 +1405,12 @@ void implementation_generator::visit_continue_statement(continue_statement& stmt
     size_t loop_depth = _loop_cleanup_depth.top();
     size_t current_depth = _cleanup_vars_stack.size();
 
-    emit_active_scope_cleanup(current_depth > loop_depth ? current_depth - loop_depth : 0, "continue_owner");
-
-    // Emit finally blocks between the continue and the loop boundary
     size_t loop_finally_depth_cont = _loop_finally_depth.top();
     size_t current_finally_depth_cont = _finally_stack.size();
-    emit_finally_cleanup(
+    emit_early_exit_cleanup(current_depth > loop_depth ? current_depth - loop_depth : 0,
         current_finally_depth_cont > loop_finally_depth_cont ? current_finally_depth_cont - loop_finally_depth_cont : 0,
-        continue_lexeme);
+        "continue_owner", continue_lexeme);
+    if (_builder->GetInsertBlock()->getTerminator()) return;
 
     // Branch to loop continue block
     set_debug_location(continue_lexeme);
@@ -1280,6 +1530,40 @@ void implementation_generator::visit_throw_statement(throw_statement& stmt) {
 
         auto cxa_rethrow = mod.getOrInsertFunction("__cxa_rethrow",
             llvm::FunctionType::get(void_ty, {}, false));
+
+        if (!_caught_exception_metadata.empty()) {
+            // A pre-existing unbalanced catch can leave the ABI's active
+            // exception different from the lexically enclosing catch. Never
+            // publish metadata for a different thrown type.
+            auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+            auto current_type_fn = mod.getOrInsertFunction("__cxa_current_exception_type",
+                llvm::FunctionType::get(ptr_ty, {}, false));
+            auto* current_type = _builder->CreateCall(current_type_fn, {}, "rethrow_current_type");
+            auto* chain_slot = get_thrown_state_slot("__k_thrown_typeinfo_chain_addr");
+            auto* type_slot = get_thrown_state_slot("__k_thrown_typeinfo_addr");
+            auto* restored_bb = llvm::BasicBlock::Create(llvm_ctx, "rethrow_metadata_ready", current_func);
+
+            for (auto it = _caught_exception_metadata.rbegin();
+                 it != _caught_exception_metadata.rend(); ++it) {
+                auto* saved_type = _builder->CreateLoad(ptr_ty, it->type, "caught_type");
+                auto* saved_chain = _builder->CreateLoad(ptr_ty, it->chain, "caught_chain");
+                auto* matches = _builder->CreateAnd(
+                    _builder->CreateICmpNE(current_type, llvm::ConstantPointerNull::get(ptr_ty)),
+                    _builder->CreateICmpEQ(current_type, saved_type));
+                matches = _builder->CreateAnd(matches,
+                    _builder->CreateICmpNE(saved_chain, llvm::ConstantPointerNull::get(ptr_ty)));
+                auto* restore_bb = llvm::BasicBlock::Create(llvm_ctx, "rethrow_restore_metadata", current_func);
+                auto* next_bb = llvm::BasicBlock::Create(llvm_ctx, "rethrow_check_outer_metadata", current_func);
+                _builder->CreateCondBr(matches, restore_bb, next_bb);
+                _builder->SetInsertPoint(restore_bb);
+                _builder->CreateStore(saved_chain, chain_slot);
+                _builder->CreateStore(saved_type, type_slot);
+                _builder->CreateBr(restored_bb);
+                _builder->SetInsertPoint(next_bb);
+            }
+            _builder->CreateBr(restored_bb);
+            _builder->SetInsertPoint(restored_bb);
+        }
 
         if (!_landing_pad_stack.empty()) {
             // Inside a try-catch: use invoke so the rethrown exception unwinds to the landing pad
@@ -1852,10 +2136,15 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     _builder->SetInsertPoint(try_bb);
 
     // Save the outer context (if any) for nested unwinding
-    eh_landing_context* outer_ctx = _landing_pad_stack.empty() ? nullptr : &_landing_pad_stack.top();
+    std::optional<eh_landing_context> outer_ctx;
+    if (!_landing_pad_stack.empty()) outer_ctx = _landing_pad_stack.top();
+    const bool has_handler = !clauses.empty() || (outer_ctx && outer_ctx->has_handler);
+    const unsigned outer_lpad_depth = _lpad_depth_counter;
+    const size_t outer_cleanup_scope_depth = _cleanup_vars_stack.size();
 
     // Push landing pad context so function calls within the try body use invoke
-    _landing_pad_stack.push({lpad_bb, dispatch_bb, exc_ptr_alloca, exc_sel_alloca, ++_lpad_depth_counter});
+    _landing_pad_stack.push(
+        {lpad_bb, dispatch_bb, exc_ptr_alloca, exc_sel_alloca, ++_lpad_depth_counter, has_handler});
 
     // Helper lambda: emit the finally body at the current insert point (inlined copy).
     auto finally_body = stmt.get_finally_body();
@@ -1867,7 +2156,8 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
 
     // Push finally context so return/break/continue inside the try body emit the finally block
     if (finally_body) {
-        _finally_stack.push({finally_body, false, try_lexeme});
+        _finally_stack.push({finally_body, false, try_lexeme,
+                             outer_cleanup_scope_depth, outer_lpad_depth});
     }
 
     // Generate the try body
@@ -1934,10 +2224,15 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
         typeinfos.push_back(ti_gv);
     }
 
-    // Create the landingpad instruction with catch-all clause.
+    // A try-finally with no enclosing handler is a cleanup, not a handler:
+    // marking it catch-all would stop the personality's search in this frame.
     auto* lpad_type = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
-    auto* lpad = _builder->CreateLandingPad(lpad_type, 1, "lpad_val");
-    lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty));
+    auto* lpad = _builder->CreateLandingPad(lpad_type, has_handler ? 1 : 0, "lpad_val");
+    if (has_handler) {
+        lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty));
+    } else {
+        lpad->setCleanup(true);
+    }
 
     // Extract exception pointer and selector, store to shared allocas
     auto* exc_ptr_from_lpad = _builder->CreateExtractValue(lpad, 0, "exc_ptr");
@@ -2067,6 +2362,16 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
         // Begin catch — returns pointer to the exception object (start of thrown type)
         auto* caught_ptr = _builder->CreateCall(cxa_begin, {exc_ptr}, "caught");
 
+        // The earlier entry builder may still point to end() after the entry
+        // acquired a terminator. Insert these allocas before its first instruction.
+        llvm::IRBuilder<> catch_alloca_builder(entry_bb, entry_bb->begin());
+        auto* saved_chain = catch_alloca_builder.CreateAlloca(ptr_ty, nullptr, "caught_chain_slot");
+        auto* saved_type = catch_alloca_builder.CreateAlloca(ptr_ty, nullptr, "caught_type_slot");
+        auto* chain_slot = get_thrown_state_slot("__k_thrown_typeinfo_chain_addr");
+        auto* type_slot = get_thrown_state_slot("__k_thrown_typeinfo_addr");
+        _builder->CreateStore(_builder->CreateLoad(ptr_ty, chain_slot), saved_chain);
+        _builder->CreateStore(_builder->CreateLoad(ptr_ty, type_slot), saved_type);
+
         // Adjust the pointer by the matched base offset to point to the correct
         // base sub-object for the catch variable's declared type.
         auto* matched_offset = _builder->CreateLoad(i32_ty, offset_alloca, "matched_offset");
@@ -2091,20 +2396,49 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
             }
         }
 
-        // Generate catch body
-        // Push finally context (in_catch=true) so return/break/continue inside the catch
-        // body will emit __cxa_end_catch + finally before exiting.
-        if (finally_body) {
-            _finally_stack.push({finally_body, true});
+        // A catch is itself an unwind boundary: locals must be destroyed before
+        // ending the catch and running its finally, even if a local destructor
+        // throws during an early exit.
+        if (!_exc_ptr_slot) {
+            llvm::IRBuilder<> cleanup_alloca_builder(entry_bb, entry_bb->begin());
+            _exc_ptr_slot = cleanup_alloca_builder.CreateAlloca(ptr_ty, nullptr, "exc_ptr_cleanup_slot");
+            _exc_sel_slot = cleanup_alloca_builder.CreateAlloca(i32_ty, nullptr, "exc_sel_cleanup_slot");
         }
+        llvm::IRBuilder<> boundary_alloca_builder(entry_bb, entry_bb->begin());
+        auto* boundary_exc_ptr = boundary_alloca_builder.CreateAlloca(ptr_ty, nullptr, "catch_unwind_ptr");
+        auto* boundary_exc_sel = boundary_alloca_builder.CreateAlloca(i32_ty, nullptr, "catch_unwind_sel");
+        cleanup_lpad_context catch_cleanup{};
+        catch_cleanup.lpad_bb = llvm::BasicBlock::Create(llvm_ctx, "catch_cleanup_lpad", func);
+        catch_cleanup.cleanup_code_bb = llvm::BasicBlock::Create(llvm_ctx, "catch_cleanup_unwind", func);
+        const unsigned cleanup_depth = _cleanup_lpad_stack.empty() ? 0 : _cleanup_lpad_stack.top().depth;
+        const unsigned catch_depth = _landing_pad_stack.empty() ? 0 : _landing_pad_stack.top().depth;
+        const bool outer_has_handler = catch_depth && _landing_pad_stack.top().has_handler;
+        if (cleanup_depth > catch_depth) {
+            catch_cleanup.continuation = cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP;
+            catch_cleanup.chain_target_bb = _cleanup_lpad_stack.top().cleanup_code_bb;
+        } else if (catch_depth) {
+            const auto& outer = _landing_pad_stack.top();
+            catch_cleanup.continuation = cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH;
+            catch_cleanup.chain_target_bb = outer.dispatch_bb;
+            catch_cleanup.catch_exc_alloca = outer.exc_ptr_alloca;
+            catch_cleanup.catch_exc_sel_alloca = outer.exc_sel_alloca;
+        } else {
+            catch_cleanup.continuation = cleanup_lpad_context::RESUME;
+        }
+        catch_cleanup.depth = ++_lpad_depth_counter;
+        _cleanup_lpad_stack.push(catch_cleanup);
+        // No origin anchor: an early exit out of a catch body keeps the exiting
+        // statement's location for __cxa_end_catch and the inlined finally.
+        _finally_stack.push({finally_body, true, std::nullopt,
+                             outer_cleanup_scope_depth, outer_lpad_depth});
 
+        _caught_exception_metadata.push_back({saved_chain, saved_type});
         if (auto body = clauses[i]->get_body()) {
             body->accept(*this);
         }
-
-        if (finally_body) {
-            _finally_stack.pop();
-        }
+        _caught_exception_metadata.pop_back();
+        _finally_stack.pop();
+        _cleanup_lpad_stack.pop();
 
         // End catch (only on normal path — early exit paths handle this via _finally_stack)
         if (!_builder->GetInsertBlock()->getTerminator()) {
@@ -2122,6 +2456,40 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
             }
         }
 
+        _builder->SetInsertPoint(catch_cleanup.lpad_bb);
+        auto* catch_lpad = _builder->CreateLandingPad(lpad_type, outer_has_handler ? 1 : 0,
+                                                       "catch_cleanup_exception");
+        catch_lpad->setCleanup(true);
+        if (outer_has_handler) catch_lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty));
+        _builder->CreateStore(_builder->CreateExtractValue(catch_lpad, 0), _exc_ptr_slot);
+        _builder->CreateStore(_builder->CreateExtractValue(catch_lpad, 1), _exc_sel_slot);
+        _builder->CreateBr(catch_cleanup.cleanup_code_bb);
+
+        _builder->SetInsertPoint(catch_cleanup.cleanup_code_bb);
+        _builder->CreateStore(_builder->CreateLoad(ptr_ty, _exc_ptr_slot), boundary_exc_ptr);
+        _builder->CreateStore(_builder->CreateLoad(i32_ty, _exc_sel_slot), boundary_exc_sel);
+        auto pending_metadata = save_pending_exception_metadata();
+        _builder->CreateCall(cxa_end);
+        emit_pending_exception_finally(finally_body, boundary_exc_ptr, try_lexeme);
+        if (!_builder->GetInsertBlock()->getTerminator()) {
+            restore_pending_exception_metadata(pending_metadata);
+            auto* unwind_ptr = _builder->CreateLoad(ptr_ty, boundary_exc_ptr);
+            auto* unwind_sel = _builder->CreateLoad(i32_ty, boundary_exc_sel);
+            if (catch_cleanup.continuation == cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP) {
+                _builder->CreateStore(unwind_ptr, _exc_ptr_slot);
+                _builder->CreateStore(unwind_sel, _exc_sel_slot);
+                _builder->CreateBr(catch_cleanup.chain_target_bb);
+            } else if (catch_cleanup.continuation == cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH) {
+                _builder->CreateStore(unwind_ptr, catch_cleanup.catch_exc_alloca);
+                _builder->CreateStore(unwind_sel, catch_cleanup.catch_exc_sel_alloca);
+                _builder->CreateBr(catch_cleanup.chain_target_bb);
+            } else {
+                auto* resume = _builder->CreateInsertValue(llvm::UndefValue::get(lpad_type), unwind_ptr, 0);
+                resume = _builder->CreateInsertValue(resume, unwind_sel, 1);
+                _builder->CreateResume(resume);
+            }
+        }
+
         _current_debug_scope = previous_debug_scope;
         _builder->SetCurrentDebugLocation(previous_debug_loc);
     }
@@ -2129,24 +2497,41 @@ void implementation_generator::visit_try_catch_statement(try_catch_statement& st
     // Catch fallthrough — no match, emit finally then propagate to outer handler or resume unwinding
     _builder->SetInsertPoint(catch_fallthrough_bb);
 
-    // Emit finally body before propagating unmatched exception
+    // A normally completing finally can catch another exception, overwriting
+    // the thread-local metadata of the exception being propagated.
     set_debug_location(get_statement_debug_lexeme(stmt));
-    emit_finally();
+    if (finally_body) {
+        auto pending_metadata = save_pending_exception_metadata();
+        emit_pending_exception_finally(finally_body, exc_ptr_alloca, try_lexeme);
+        if (!_builder->GetInsertBlock()->getTerminator()) {
+            restore_pending_exception_metadata(pending_metadata);
+        }
+    }
 
-    if (outer_ctx) {
-        // Nested try-catch in the same function: store the exception pointer into the
-        // outer handler's alloca and branch directly to its dispatch block.
-        // This avoids re-throwing and stays entirely within the function's CFG.
+    if (_builder->GetInsertBlock()->getTerminator()) {
+        _builder->SetInsertPoint(end_bb);
+        return;
+    }
+
+    const unsigned outer_depth = outer_ctx ? outer_ctx->depth : 0;
+    if (!_cleanup_lpad_stack.empty() && _cleanup_lpad_stack.top().depth > outer_depth) {
+        const auto& cleanup = _cleanup_lpad_stack.top();
+        if (!cleanup.cleanup_code_bb || !_exc_ptr_slot || !_exc_sel_slot) {
+            throw_error(0, try_lexeme, "Internal error: missing exception cleanup continuation");
+        }
         auto* exc_ptr = _builder->CreateLoad(ptr_ty, exc_ptr_alloca, "exc_ptr_prop");
+        auto* exc_sel = _builder->CreateLoad(i32_ty, exc_sel_alloca, "exc_sel_prop");
+        _builder->CreateStore(exc_ptr, _exc_ptr_slot);
+        _builder->CreateStore(exc_sel, _exc_sel_slot);
+        _builder->CreateBr(cleanup.cleanup_code_bb);
+    } else if (outer_ctx) {
+        auto* exc_ptr = _builder->CreateLoad(ptr_ty, exc_ptr_alloca, "exc_ptr_prop");
+        auto* exc_sel = _builder->CreateLoad(i32_ty, exc_sel_alloca, "exc_sel_prop");
         _builder->CreateStore(exc_ptr, outer_ctx->exc_ptr_alloca);
+        _builder->CreateStore(exc_sel, outer_ctx->exc_sel_alloca);
         set_debug_location(get_statement_debug_lexeme(stmt));
         _builder->CreateBr(outer_ctx->dispatch_bb);
     } else {
-        // Top-level try-catch: emit cleanup for all outer scope variables, then resume.
-        // This ensures destructors and owner cleanup run during exception propagation.
-        emit_active_scope_cleanup(_cleanup_vars_stack.size(), "fallthru_owner", true);
-        emit_active_parameter_cleanup("fallthru_param");
-
         // Resume unwinding with original exception pointer and selector
         auto* exc_ptr = _builder->CreateLoad(ptr_ty, exc_ptr_alloca, "exc_ptr_resume");
         auto* exc_sel = _builder->CreateLoad(i32_ty, exc_sel_alloca, "exc_sel_resume");
@@ -2340,10 +2725,55 @@ void type_reference_resolver::check_throw_contract(
                 {current_func->get_short_name(), thrown_agg->get_short_name()});
 }
 
+std::vector<std::shared_ptr<type>> type_reference_resolver::resolve_raw_function_throws(
+    const function& fn, const lex::opt_any_lexeme& lexeme)
+{
+    std::vector<std::shared_ptr<type>> exceptions;
+    exceptions.reserve(fn.get_throws_spec_raw().size());
+    for (const auto& raw_name : fn.get_throws_spec_raw()) {
+        auto throws_type = resolve_type_by_name(k::name::from(raw_name), fn);
+        if (!throws_type) {
+            auto agg = scope_lookup::lookup_structure_or_import(
+                _unit, _context, std::const_pointer_cast<element>(fn.shared_as<const element>()), raw_name);
+            if (agg) {
+                throws_type = agg->get_struct_type();
+                if (!throws_type) {
+                    auto st = std::make_shared<struct_type>(agg->get_short_name(), agg);
+                    _context->add_struct(st);
+                    agg->set_struct_type(st);
+                    throws_type = std::move(st);
+                }
+            }
+        }
+        if (!throws_type || type::contains_unresolved(throws_type)) {
+            throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND),
+                lexeme, "Cannot resolve type '{}' in throws clause of function '{}'",
+                {raw_name, fn.get_short_name()});
+        }
+
+        auto agg = get_exception_aggregate(type::canonical(throws_type));
+        auto root = _unit.get_root_namespace();
+        auto k_ns = root ? root->get_child_namespace("k") : nullptr;
+        auto throwable = k_ns ? k_ns->get_aggregate("Throwable") : nullptr;
+        if (!throwable) {
+            throwable = _unit.get_or_create_imported_aggregate(k::name(false, {"k", "Throwable"}), _context);
+        }
+        if (!agg || (throwable && agg != throwable && !agg->is_derived_from(throwable))) {
+            throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_NOT_EXCEPTION_TYPE),
+                lexeme, "Type '{}' in throws clause of function '{}' does not derive from ::k::Throwable",
+                {raw_name, fn.get_short_name()});
+        }
+        exceptions.push_back(std::move(throws_type));
+    }
+    return exceptions;
+}
+
 void type_reference_resolver::check_call_contract(
     const function& called_func,
-    const lex::opt_any_lexeme& lexeme)
+    const lex::opt_any_lexeme& lexeme,
+    const element* use_site)
 {
+    if (check_imported_generic_constructor_contract(called_func, lexeme, use_site)) return;
     if (_function_stack.empty()) return;
     auto& current_func = _function_stack.back();
     if (!current_func) return;
@@ -2351,10 +2781,42 @@ void type_reference_resolver::check_call_contract(
     // Only check if the called function has a throws spec
     if (!called_func.has_throws_spec()) return;
 
+    const auto& raw_types = called_func.get_throws_spec_raw();
+    const auto& resolved_types = called_func.get_throws_spec();
+    if (!raw_types.empty() && raw_types.size() != resolved_types.size()) {
+        // A call can precede the callee's type-reference visit.
+        auto exceptions = resolve_raw_function_throws(called_func, lexeme);
+        exceptions.insert(exceptions.end(), resolved_types.begin(), resolved_types.end());
+        check_call_exception_types(called_func, exceptions, lexeme);
+        return;
+    }
+
+    check_call_exception_types(called_func, resolved_types, lexeme);
+}
+
+void type_reference_resolver::check_call_exception_types(
+    const function& called_func,
+    const std::vector<std::shared_ptr<type>>& exceptions,
+    const lex::opt_any_lexeme& lexeme)
+{
+    if (_function_stack.empty() || !_function_stack.back()) {
+        if (!exceptions.empty()) {
+            throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_UNCAUGHT_EXCEPTION),
+                lexeme, "Cannot check exception contract of '{}' outside a function",
+                {called_func.get_fq_name()});
+        }
+        return;
+    }
+    auto& current_func = _function_stack.back();
+
     // For each exception type declared by the called function, check if it's handled
-    for (const auto& exc_type : called_func.get_throws_spec()) {
-        auto exc_agg = get_exception_aggregate(exc_type);
-        if (!exc_agg) continue;
+    for (const auto& exc_type : exceptions) {
+        auto exc_agg = get_exception_aggregate(type::canonical(exc_type));
+        if (!exc_agg) {
+            throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_THROWS_TYPE_NOT_FOUND),
+                lexeme, "Cannot resolve exception type '{}' in contract of '{}'",
+                {exc_type ? exc_type->to_string() : std::string("<unknown>"), called_func.get_fq_name()});
+        }
 
         // Caught by enclosing try-catch?
         if (is_exception_caught_by_try_catch(exc_agg)) continue;
@@ -2369,6 +2831,78 @@ void type_reference_resolver::check_call_contract(
                     "Call to '{}' may throw '{}' which is neither caught nor declared in the throws clause of '{}'",
                     {called_func.get_short_name(), exc_agg->get_short_name(), current_func->get_short_name()});
     }
+}
+
+void type_reference_resolver::check_union_lifecycle_constructor_contract(
+    const constructor& ctor, const lex::opt_any_lexeme& lexeme) {
+    if (ctor.is_throws_spec_unknown()) {
+        throw_error(static_cast<unsigned int>(k::diag::exception_diag::ERR_UNCAUGHT_EXCEPTION),
+            lexeme, "Union lifecycle constructor '{}' has an unknown exception contract; regenerate its KDI descriptor",
+            {ctor.get_fq_name()});
+    }
+    check_call_contract(ctor, lexeme);
+}
+
+void type_reference_resolver::check_union_payload_copy_contract(
+    const std::shared_ptr<type>& payload, bool source_const,
+    const lex::opt_any_lexeme& lexeme) {
+    std::set<const struct_type*> visited_mutable;
+    std::set<const struct_type*> visited_const;
+    std::function<void(const std::shared_ptr<type>&, bool)> check =
+        [&](const auto& value, bool value_const) {
+        auto bare = type::canonical(type::remove_const(type::canonical(value)));
+        if (auto array = std::dynamic_pointer_cast<sized_array_type>(bare)) {
+            check(array->get_subtype(), value_const);
+            return;
+        }
+        auto st = std::dynamic_pointer_cast<struct_type>(bare);
+        auto& visited = value_const ? visited_const : visited_mutable;
+        if (!st || !visited.insert(st.get()).second) return;
+        auto agg = st->get_struct();
+        if (!agg) {
+            if (auto un = find_union_by_struct_type(_unit.get_root_namespace(), st)) {
+                for (const auto* alt : un->all_alternatives_ptrs()) {
+                    if (alt) {
+                        const bool alt_const = value_const || alt->is_const
+                            || type::is_const(type::canonical(alt->resolved_type));
+                        check(alt->resolved_type, alt_const);
+                    }
+                }
+            }
+            return;
+        }
+
+        auto wrapper_copy = agg->get_copy_constructor();
+        if ((!wrapper_copy || wrapper_copy->is_compiler_generated())) {
+            if (auto un = scalar_union_wrapper(agg, _unit.get_root_namespace())) {
+                check(un->get_struct_type(), value_const);
+                return;
+            }
+        }
+
+        std::shared_ptr<constructor> selected;
+        bool selected_const = true;
+        for (const auto& ctor : agg->constructors()) {
+            if (!ctor || !agg->is_copy_constructor(*ctor) || ctor->get_parameter_size() != 1
+                || !ctor->get_parameter(0)) continue;
+            auto param = type::canonical(ctor->get_parameter(0)->get_type());
+            if (!type::is_reference(param)) continue;
+            const bool param_const = type::is_const(param->get_subtype());
+            if (value_const && !param_const) continue;
+            if (!selected || (selected_const && !param_const)) {
+                selected = ctor;
+                selected_const = param_const;
+            }
+        }
+        if (!selected || selected->is_deleted()) return;
+        std::vector<std::shared_ptr<function>> access_stack;
+        if (!_function_stack.empty() && _function_stack.back())
+            access_stack.push_back(_function_stack.back());
+        if (!scope_lookup::is_struct_member_accessible(selected->get_visibility(), *agg, agg, access_stack)
+            && !scope_lookup::is_friend_of(*agg, access_stack, _unit)) return;
+        check_union_lifecycle_constructor_contract(*selected, lexeme);
+    };
+    check(payload, source_const);
 }
 
 //
@@ -2493,36 +3027,6 @@ void declaration_generator::visit_if_else_statement(if_else_statement& stmt) {
 }
 
 /**
- * Emit cleanup (destructor / owner free) for a single variable.
- * Helper for if-let condition variable cleanup.
- */
-void implementation_generator::emit_cond_var_cleanup(
-    const std::shared_ptr<variable_statement>& var_stmt)
-{
-    auto vt = var_stmt->get_type();
-    auto var_it = _context->_variables.find(var_stmt);
-    if (var_it == _context->_variables.end()) return;
-    llvm::AllocaInst* alloca = var_it->second;
-
-    if (auto st_type = std::dynamic_pointer_cast<struct_type>(vt)) {
-        if (st_type->get_struct()) {
-            auto dtor = st_type->get_struct()->get_destructor();
-            if (!dtor) return;
-            auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-            if (dtor_it == _context->_functions.end()) return;
-            create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {alloca});
-        } else {
-            // Union with non-trivial alternatives
-            auto udef = find_union_for_struct_type(_unit, st_type);
-            if (udef) emit_union_cleanup(alloca, *udef);
-        }
-    } else if (auto own_type = std::dynamic_pointer_cast<owner_type>(vt)) {
-        emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
-            alloca, own_type->get_owned_type(), "if_cond_var_cleanup", make_virtual_call_emitter());
-    }
-}
-
-/**
  * Generate LLVM IR for an if-else statement.
  *
  * Steps:
@@ -2559,6 +3063,57 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
 
     auto* saved_null_failure_bb = _null_failure_bb;
     auto* saved_union_failure_bb = _union_failure_bb;
+
+    std::vector<std::shared_ptr<variable_statement>> cond_cleanup_vars;
+    if (has_cond_var) {
+        for (const auto& var : stmt.get_cond_vars()) {
+            auto vt = type::canonical(type::remove_const(type::canonical(var->get_type())));
+            if (auto st = std::dynamic_pointer_cast<struct_type>(vt)) {
+                auto agg = st->get_struct();
+                auto un = agg ? nullptr : find_union_for_struct_type(_unit, st);
+                if ((agg && agg->get_destructor()) || (un && un->has_nontrivial_destructor_alternative()))
+                    cond_cleanup_vars.push_back(var);
+            } else if (type::is_owner(vt) || type::is_sized_array(vt)) {
+                cond_cleanup_vars.push_back(var);
+            } else if (auto callable = std::dynamic_pointer_cast<callable_type>(vt)) {
+                if (callable->is_owner()) cond_cleanup_vars.push_back(var);
+            }
+        }
+    }
+
+    // Protect the entire condition, not just the then body. Slots and flags
+    // are neutralized at function entry and armed as initialization succeeds.
+    if (!cond_cleanup_vars.empty()) {
+        if (!func->hasPersonalityFn()) {
+            auto personality = _context->module().getOrInsertFunction(
+                "__gxx_personality_v0", llvm::FunctionType::get(_builder->getInt32Ty(), true));
+            func->setPersonalityFn(llvm::cast<llvm::Constant>(personality.getCallee()));
+        }
+        if (!_exc_ptr_slot) {
+            llvm::IRBuilder<> entry(&func->getEntryBlock(), func->getEntryBlock().begin());
+            _exc_ptr_slot = entry.CreateAlloca(llvm::PointerType::get(entry.getContext(), 0),
+                                               nullptr, "exc_ptr_cleanup_slot");
+            _exc_sel_slot = entry.CreateAlloca(entry.getInt32Ty(), nullptr, "exc_sel_cleanup_slot");
+        }
+        cleanup_lpad_context ctx{};
+        ctx.lpad_bb = llvm::BasicBlock::Create(**_context, "if_cond_cleanup_lpad");
+        ctx.cleanup_code_bb = llvm::BasicBlock::Create(**_context, "if_cond_cleanup_unwind");
+        const unsigned cleanup_depth = _cleanup_lpad_stack.empty() ? 0 : _cleanup_lpad_stack.top().depth;
+        const unsigned catch_depth = _landing_pad_stack.empty() ? 0 : _landing_pad_stack.top().depth;
+        if (cleanup_depth > catch_depth) {
+            ctx.continuation = cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP;
+            ctx.chain_target_bb = _cleanup_lpad_stack.top().cleanup_code_bb;
+        } else if (catch_depth > 0) {
+            ctx.continuation = cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH;
+            ctx.chain_target_bb = _landing_pad_stack.top().dispatch_bb;
+            ctx.catch_exc_alloca = _landing_pad_stack.top().exc_ptr_alloca;
+            ctx.catch_exc_sel_alloca = _landing_pad_stack.top().exc_sel_alloca;
+        } else {
+            ctx.continuation = cleanup_lpad_context::RESUME;
+        }
+        ctx.depth = ++_lpad_depth_counter;
+        _cleanup_lpad_stack.push(ctx);
+    }
 
     if(is_multi_softfail || has_cond_var_with_test) {
         // =====================================================================
@@ -2632,7 +3187,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
                     func->insert(func->end(), this_fail_bb);
                     _builder->SetInsertPoint(this_fail_bb);
                     for(int j = (int)i; j >= 0; --j) {
-                        emit_cond_var_cleanup(vars[j]);
+                        emit_scope_variable_cleanup({vars[j]}, "if_cond_var_cleanup", true);
                     }
                     set_debug_location(if_lexeme);
                     _builder->CreateBr(fail_dest);
@@ -2648,7 +3203,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
                 func->insert(func->end(), trampoline);
                 _builder->SetInsertPoint(trampoline);
                 for(int j = (int)i - 1; j >= 0; --j) {
-                    emit_cond_var_cleanup(vars[j]);
+                    emit_scope_variable_cleanup({vars[j]}, "if_cond_var_cleanup", true);
                 }
                 set_debug_location(if_lexeme);
                 _builder->CreateBr(fail_dest);
@@ -2676,7 +3231,7 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
 
             _builder->SetInsertPoint(test_failed_bb);
             for(int j = (int)vars.size() - 1; j >= 0; --j) {
-                emit_cond_var_cleanup(vars[j]);
+                emit_scope_variable_cleanup({vars[j]}, "if_cond_var_cleanup", true);
             }
             set_debug_location(if_lexeme);
             _builder->CreateBr(fail_dest);
@@ -2757,7 +3312,8 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
                     auto cast_fn = funcs[0];
                     auto fn_it = _context->_functions.find(cast_fn);
                     if(fn_it != _context->_functions.end()) {
-                        test_value = _builder->CreateCall(fn_it->second, {alloca}, "if_cond_bool_cast");
+                        test_value = create_call_or_invoke(
+                            fn_it->second->getFunctionType(), fn_it->second, {alloca}, "if_cond_bool_cast");
                     }
                 }
             }
@@ -2769,10 +3325,14 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
             emit_expression_temporaries_cleanup(get_statement_debug_lexeme(stmt));
 
             set_debug_location(if_lexeme);
-            if(has_else) {
+            if (has_else) {
                 _builder->CreateCondBr(test_value, then_block, else_block);
             } else {
-                _builder->CreateCondBr(test_value, then_block, cont_block);
+                auto* test_failed_bb = llvm::BasicBlock::Create(**_context, "if-test-failed", func);
+                _builder->CreateCondBr(test_value, then_block, test_failed_bb);
+                _builder->SetInsertPoint(test_failed_bb);
+                emit_scope_variable_cleanup(cond_cleanup_vars, "if_cond_var_cleanup", true);
+                _builder->CreateBr(fail_dest);
             }
         }
     } else {
@@ -2803,37 +3363,101 @@ void implementation_generator::visit_if_else_statement(if_else_statement& stmt) 
     // Step 6: Visit then-block, emit cleanup for cond vars, emit branch to merge
     set_debug_location(get_statement_debug_lexeme(stmt));
     _builder->SetInsertPoint(then_block);
+    if (has_cond_var) {
+        _cleanup_vars_stack.push(stmt.get_cond_vars());
+        _cleanup_scope_depth_stack.push(_lpad_depth_counter);
+    }
+
     stmt.get_then_stmt()->accept(*this);
     if(has_cond_var) {
-        // Cleanup in reverse declaration order
-        auto& vars = stmt.get_cond_vars();
-        for(auto it = vars.rbegin(); it != vars.rend(); ++it) {
-            emit_cond_var_cleanup(*it);
-        }
+        _cleanup_vars_stack.pop();
+        _cleanup_scope_depth_stack.pop();
     }
-    set_debug_location(if_lexeme);
-    _builder->CreateBr(cont_block);
+    if (!_builder->GetInsertBlock()->getTerminator()) {
+        emit_scope_variable_cleanup(cond_cleanup_vars, "if_cond_var_cleanup", true);
+        set_debug_location(if_lexeme);
+        _builder->CreateBr(cont_block);
+    }
 
-    // Step 7: Visit else-block (if present), emit cleanup for cond vars, emit branch to merge
-    if(has_else) {
-        if (auto ast_if = stmt.get_ast_if_else_stmt(); ast_if && ast_if->else_kw) {
-            set_debug_location(lex::any_lexeme{*ast_if->else_kw});
-        } else {
-            set_debug_location(get_statement_debug_lexeme(stmt));
+    // A classic non-addressor condition remains live in the else branch.
+    // Pattern soft-fail/test paths have already cleaned their condition vars.
+    const bool cond_live_in_else = is_single_softfail
+        && !type::is_any_indirection(type::canonical(
+            type::remove_const(type::canonical(stmt.get_cond_var()->get_type()))));
+    if (has_else) {
+        std::optional<cleanup_lpad_context> suspended_cleanup;
+        if (!cond_live_in_else && !cond_cleanup_vars.empty()) {
+            suspended_cleanup = _cleanup_lpad_stack.top();
+            _cleanup_lpad_stack.pop();
         }
-        func->insert(func->end(), else_block);
-        _builder->SetInsertPoint(else_block);
-        stmt.get_else_stmt()->accept(*this);
-        // For soft-fail and pattern-like forms (multi-var, single-var with test, or multi-var with test):
-        // no cleanup in else.
-        // On soft-fail paths, trampolines already cleaned up initialized variables.
-        // On test-failed path, test_failed_bb already cleaned up all condition variables.
         if (auto ast_if = stmt.get_ast_if_else_stmt(); ast_if && ast_if->else_kw) {
             set_debug_location(lex::any_lexeme{*ast_if->else_kw});
         } else {
             set_debug_location(if_lexeme);
         }
-        _builder->CreateBr(cont_block);
+        func->insert(func->end(), else_block);
+        _builder->SetInsertPoint(else_block);
+        if (cond_live_in_else) {
+            _cleanup_vars_stack.push(stmt.get_cond_vars());
+            _cleanup_scope_depth_stack.push(_lpad_depth_counter);
+        }
+        stmt.get_else_stmt()->accept(*this);
+        if (cond_live_in_else) {
+            _cleanup_vars_stack.pop();
+            _cleanup_scope_depth_stack.pop();
+        }
+        if (!_builder->GetInsertBlock()->getTerminator()) {
+            if (cond_live_in_else) {
+                emit_scope_variable_cleanup(cond_cleanup_vars, "if_cond_var_cleanup", true);
+            }
+            if (auto ast_if = stmt.get_ast_if_else_stmt(); ast_if && ast_if->else_kw) {
+                set_debug_location(lex::any_lexeme{*ast_if->else_kw});
+            } else {
+                set_debug_location(if_lexeme);
+            }
+            _builder->CreateBr(cont_block);
+        }
+        if (suspended_cleanup) _cleanup_lpad_stack.push(*suspended_cleanup);
+    }
+
+    if (!cond_cleanup_vars.empty()) {
+        auto ctx = _cleanup_lpad_stack.top();
+        _cleanup_lpad_stack.pop();
+        auto& llvm_ctx = _context->llvm_context();
+        auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+        auto* i32_ty = _builder->getInt32Ty();
+        auto* lpad_type = llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty});
+
+        func->insert(func->end(), ctx.lpad_bb);
+        _builder->SetInsertPoint(ctx.lpad_bb);
+        const bool has_local_handler = !_landing_pad_stack.empty() && _landing_pad_stack.top().has_handler;
+        auto* lpad = _builder->CreateLandingPad(lpad_type, has_local_handler ? 1 : 0, "if_cond_exception");
+        lpad->setCleanup(true);
+        if (has_local_handler) lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty));
+        _builder->CreateStore(_builder->CreateExtractValue(lpad, 0), _exc_ptr_slot);
+        _builder->CreateStore(_builder->CreateExtractValue(lpad, 1), _exc_sel_slot);
+        _builder->CreateBr(ctx.cleanup_code_bb);
+
+        func->insert(func->end(), ctx.cleanup_code_bb);
+        _builder->SetInsertPoint(ctx.cleanup_code_bb);
+        auto pending_metadata = save_pending_exception_metadata();
+        emit_scope_variable_cleanup(cond_cleanup_vars, "if_cond_unwind", true);
+        restore_pending_exception_metadata(pending_metadata);
+        if (ctx.continuation == cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP) {
+            _builder->CreateBr(ctx.chain_target_bb);
+        } else {
+            auto* exc = _builder->CreateLoad(ptr_ty, _exc_ptr_slot);
+            auto* sel = _builder->CreateLoad(i32_ty, _exc_sel_slot);
+            if (ctx.continuation == cleanup_lpad_context::CHAIN_TO_CATCH_DISPATCH) {
+                if (ctx.catch_exc_alloca) _builder->CreateStore(exc, ctx.catch_exc_alloca);
+                if (ctx.catch_exc_sel_alloca) _builder->CreateStore(sel, ctx.catch_exc_sel_alloca);
+                _builder->CreateBr(ctx.chain_target_bb);
+            } else {
+                auto* resume = _builder->CreateInsertValue(llvm::UndefValue::get(lpad_type), exc, 0);
+                resume = _builder->CreateInsertValue(resume, sel, 1);
+                _builder->CreateResume(resume);
+            }
+        }
     }
 
     // Step 8: Set insertion point to merge block
@@ -3423,6 +4047,7 @@ void implementation_generator::visit_foreach_statement(foreach_statement& stmt)
     if (auto iterator_var = stmt.get_iterator_var()) {
         iterator_var->accept(*this);
         _cleanup_vars_stack.push({iterator_var});
+        _cleanup_scope_depth_stack.push(_lpad_depth_counter);
         has_iterator_scope = true;
     }
 
@@ -3482,11 +4107,12 @@ void implementation_generator::visit_foreach_statement(foreach_statement& stmt)
     stmt.get_loop_var()->accept(*this);
 
     // Push a cleanup "scope" for the loop var, recording the depth BEFORE the
-    // push so that emit_active_scope_cleanup (used by break/continue/return)
+    // push so that emit_early_exit_cleanup (used by break/continue/return)
     // treats the loop variable's scope as being inside the loop and destroys
     // it correctly on early exit.
     size_t depth_before_loopvar = _cleanup_vars_stack.size();
     _cleanup_vars_stack.push({stmt.get_loop_var()});
+    _cleanup_scope_depth_stack.push(_lpad_depth_counter);
 
     std::unique_ptr<debug_scope_guard> body_debug_scope;
     if (!std::dynamic_pointer_cast<block>(stmt.get_nested_stmt())) {
@@ -3511,6 +4137,7 @@ void implementation_generator::visit_foreach_statement(foreach_statement& stmt)
     // Normal fall-through: destroy the loop variable for this iteration.
     emit_scope_variable_cleanup(_cleanup_vars_stack.top(), "foreach_loopvar_cleanup");
     _cleanup_vars_stack.pop();
+    _cleanup_scope_depth_stack.pop();
 
     set_debug_location(lexeme);
     _builder->CreateBr(step_block);
@@ -3536,6 +4163,7 @@ void implementation_generator::visit_foreach_statement(foreach_statement& stmt)
     if (has_iterator_scope) {
         emit_scope_variable_cleanup(_cleanup_vars_stack.top(), "foreach_iterator_cleanup");
         _cleanup_vars_stack.pop();
+        _cleanup_scope_depth_stack.pop();
     }
 }
 
@@ -3742,7 +4370,7 @@ void type_reference_resolver::visit_variable_statement(variable_statement& var)
             }
         } else {
         auto unres_type = std::dynamic_pointer_cast<unresolved_type>(var.get_type());
-        if (unres_type) {
+        if (unres_type && !unres_type->has_template_args()) {
             std::shared_ptr<type> resolved;
             if (unres_type->type_id().has_root_prefix()) {
                 resolved = resolve_type_from_root(unres_type->type_id().without_root_prefix());
@@ -3839,10 +4467,13 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
         build.CreateStore(llvm::ConstantAggregateZero::get(type), alloca);
     }
 
-    // Create construction flag for struct-with-dtor variables (for exception unwinding safety)
+    // Create construction flags before any exception can reach this scope.
     bool has_dtor_flag = false;
-    if (auto st_type = std::dynamic_pointer_cast<struct_type>(var_type)) {
-        if (st_type->get_struct() && st_type->get_struct()->get_destructor()) {
+    if (auto st_type = std::dynamic_pointer_cast<struct_type>(k::model::type::remove_const(var_type))) {
+        auto agg = st_type->get_struct();
+        auto un = agg ? nullptr : find_union_for_struct_type(_unit, st_type);
+        if ((agg && agg->get_destructor())
+            || (un && un->has_nontrivial_destructor_alternative())) {
             auto* i1_ty = llvm::Type::getInt1Ty(build.getContext());
             auto* flag_alloca = build.CreateAlloca(i1_ty, nullptr, var.get_short_name() + ".constructed");
             // Cleared in the entry block for the same reason as owner slots above.
@@ -3949,136 +4580,341 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
 
 }
 
+llvm::Value* implementation_generator::union_live_state_ptr(llvm::Value* storage, union_type_def& udef) {
+    auto* layout = llvm::dyn_cast<llvm::StructType>(udef.get_struct_type()->get_llvm_type());
+    if (!layout || layout->getNumElements() < 2 || !layout->getElementType(0)->isIntegerTy(64)
+        || !_context->module().getDataLayout().isLittleEndian()) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), {},
+            "Union '{}' has an incompatible lifecycle layout", {udef.get_short_name()});
+    }
+    return _builder->CreateConstGEP1_64(_builder->getInt8Ty(), storage, 4, "union_live_state");
+}
+
+void implementation_generator::set_union_live_state(llvm::Value* storage, union_type_def& udef, bool live) {
+    _builder->CreateStore(_builder->getInt32(live ? 1 : 0), union_live_state_ptr(storage, udef));
+}
+
+void implementation_generator::emit_union_copy_failure() {
+    auto root = _unit.get_root_namespace();
+    auto k_namespace = root && root->get_short_name() == "k" ? root
+        : (root ? root->get_child_namespace("k") : nullptr);
+    auto fatal = k_namespace ? k_namespace->get_aggregate("FatalError") : nullptr;
+    if (!fatal) {
+        fatal = _unit.get_or_create_imported_aggregate(k::name(false, {"k", "FatalError"}), _context);
+    }
+    std::shared_ptr<constructor> ctor;
+    if (fatal) {
+        for (const auto& candidate : fatal->constructors()) {
+            if (candidate && candidate->get_parameter_size() == 1
+                && type::are_equal(candidate->get_parameter(0)->get_type(),
+                                   _context->from_type(primitive_type::INT))) {
+                ctor = candidate;
+                break;
+            }
+        }
+    }
+    if (!fatal || !ctor) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F031), {},
+            "Cannot emit the union-copy runtime error: k::FatalError(int) is unavailable");
+    }
+    auto* llvm_ctor = _context->lookup_llvm_function(ctor);
+    if (!llvm_ctor) {
+        if (auto imported = std::dynamic_pointer_cast<imported_aggregate>(fatal)) {
+            const auto* descriptor = imported->get_kdi_aggregate();
+            const auto& constructors = fatal->constructors();
+            for (size_t i = 0; descriptor && i < constructors.size()
+                    && i < descriptor->constructors.size(); ++i) {
+                if (constructors[i] != ctor) continue;
+                const auto& imported_ctor = descriptor->constructors[i];
+                if (!imported_ctor.llvm_def.empty() && !imported_ctor.mangled_name.empty()) {
+                    llvm_ctor = _context->declare_llvm_function_from_def(
+                        imported_ctor.llvm_def, imported_ctor.mangled_name);
+                }
+                break;
+            }
+        }
+        if (!llvm_ctor) llvm_ctor = ensure_function_declared(*ctor);
+    }
+    _context->_functions[ctor] = llvm_ctor;
+
+    // "UCOP": an unchecked failure to copy the active union alternative.
+    auto code = value_expression::from_value(static_cast<int>(0x55434f50));
+    auto temporary = temporary_construction_expression::make_shared(fatal->get_struct_type(), {code});
+    temporary->set_type(fatal->get_struct_type()->get_reference());
+    temporary->set_constructor(ctor);
+    auto stmt = std::make_shared<throw_statement>(std::shared_ptr<statement>{});
+    stmt->set_expression(temporary);
+
+    auto* fn = _builder->GetInsertBlock()->getParent();
+    llvm::IRBuilder<> entry(&fn->getEntryBlock(), fn->getEntryBlock().begin());
+    auto* exception_storage = entry.CreateAlloca(_context->get_llvm_type(fatal->get_struct_type()),
+                                                  nullptr, "union_copy_error");
+    auto* saved_destination = _sret_destination;
+    _sret_destination = exception_storage;
+    visit_throw_statement(*stmt);
+    _sret_destination = saved_destination;
+    _builder->CreateUnreachable();
+}
+
+void implementation_generator::activate_default_union_alternative(
+    llvm::Value* storage, union_type_def& udef) {
+    auto* live = _builder->CreateLoad(_builder->getInt32Ty(), union_live_state_ptr(storage, udef));
+    auto* fn = _builder->GetInsertBlock()->getParent();
+    auto* activate = llvm::BasicBlock::Create(**_context, "union_default_activate", fn);
+    auto* done = llvm::BasicBlock::Create(**_context, "union_default_activated", fn);
+    _builder->CreateCondBr(_builder->CreateICmpEQ(live, _builder->getInt32(0)), activate, done);
+    _builder->SetInsertPoint(activate);
+    const auto* first = udef.get_alternative_by_global_index(0);
+    auto bare = type::canonical(type::remove_const(type::canonical(first->resolved_type)));
+    if (auto array = std::dynamic_pointer_cast<sized_array_type>(bare)) {
+        // A zero-filled array has no elements to destroy until its size is published.
+        auto* union_type = udef.get_struct_type()->get_llvm_type();
+        auto* payload = _builder->CreateStructGEP(union_type, storage, 1, "union_default_payload");
+        auto* count_ptr = _builder->CreateStructGEP(
+            array->get_llvm_struct_type(), payload, sized_array_type::FIELD_SIZE, "union_default_count");
+        _builder->CreateStore(_builder->getInt32(array->get_size()), count_ptr);
+    }
+    _builder->CreateStore(_builder->getInt32(2), union_live_state_ptr(storage, udef));
+    _builder->CreateBr(done);
+    _builder->SetInsertPoint(done);
+}
+
+void implementation_generator::emit_default_aggregate_cleanup(
+    llvm::Value* storage, const std::shared_ptr<struct_type>& agg_type, bool protect_remaining) {
+    auto profile = zero_state_of(agg_type, _unit.get_root_namespace(), false);
+    if (!profile.valid) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), {},
+            "Cannot release the default state of '{}' field by field", {agg_type->to_string()});
+    }
+    std::vector<llvm::Value*> slots;
+    for (const auto& leaf : profile.leaves) {
+        llvm::Value* slot = storage;
+        for (const auto& [step_type, index] : leaf.steps)
+            slot = _builder->CreateStructGEP(step_type->get_llvm_type(), slot, index, "default_field");
+        slots.push_back(slot);
+    }
+    // A throwing release must not prevent the remaining slots from being released.
+    call_argument_cleanup_scope remaining(*this, protect_remaining);
+    for (size_t i = 0; i < slots.size(); ++i) remaining.track_storage(profile.leaves[i].leaf_type, slots[i]);
+    for (size_t i = slots.size(); i-- > 0;)
+        emit_union_payload_cleanup(slots[i], profile.leaves[i].leaf_type, false);
+    remaining.transfer();
+}
+
+llvm::Value* implementation_generator::emit_default_aggregate_empty(
+    llvm::Value* storage, const std::shared_ptr<struct_type>& agg_type) {
+    auto profile = zero_state_of(agg_type, _unit.get_root_namespace(), false);
+    if (!profile.valid) {
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), {},
+            "Cannot inspect the default state of '{}' field by field", {agg_type->to_string()});
+    }
+    auto* ptr_type = llvm::PointerType::get(_builder->getContext(), 0);
+    auto load_unaligned = [&](llvm::Type* value_type, llvm::Value* ptr) {
+        auto* value = _builder->CreateLoad(value_type, ptr);
+        value->setAlignment(llvm::Align(1));
+        return value;
+    };
+    llvm::Value* empty = _builder->getTrue();
+    for (const auto& leaf : profile.leaves) {
+        llvm::Value* slot = storage;
+        for (const auto& [step_type, index] : leaf.steps)
+            slot = _builder->CreateStructGEP(step_type->get_llvm_type(), slot, index, "default_field");
+        auto leaf_bare = type::canonical(type::remove_const(type::canonical(leaf.leaf_type)));
+        llvm::Value* leaf_empty = nullptr;
+        if (std::dynamic_pointer_cast<callable_type>(leaf_bare)) {
+            auto* callable_llvm = _context->get_or_create_callable_llvm_type();
+            auto* fn_value = load_unaligned(ptr_type, _builder->CreateStructGEP(callable_llvm, slot, 0));
+            auto* ctx_value = load_unaligned(ptr_type, _builder->CreateStructGEP(callable_llvm, slot, 1));
+            leaf_empty = _builder->CreateAnd(_builder->CreateIsNull(fn_value), _builder->CreateIsNull(ctx_value));
+        } else if (type::is_owner(leaf_bare)) {
+            leaf_empty = _builder->CreateIsNull(load_unaligned(ptr_type, slot));
+        } else {
+            auto leaf_struct = std::dynamic_pointer_cast<struct_type>(leaf_bare);
+            auto nested = leaf_struct ? find_union_by_struct_type(_unit.get_root_namespace(), leaf_struct) : nullptr;
+            if (!nested) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), {},
+                    "Cannot find union metadata while inspecting '{}'", {agg_type->to_string()});
+            }
+            auto* nested_type = nested->get_struct_type()->get_llvm_type();
+            auto* disc = load_unaligned(_builder->getInt32Ty(), _builder->CreateStructGEP(nested_type, slot, 0));
+            auto* state = load_unaligned(_builder->getInt32Ty(), union_live_state_ptr(slot, *nested));
+            leaf_empty = _builder->CreateOr(
+                _builder->CreateICmpEQ(disc, _builder->getInt32(-1)),
+                _builder->CreateAnd(_builder->CreateICmpEQ(disc, _builder->getInt32(0)),
+                                    _builder->CreateICmpEQ(state, _builder->getInt32(0))));
+        }
+        empty = _builder->CreateAnd(empty, leaf_empty);
+    }
+    return empty;
+}
+
+void implementation_generator::emit_union_payload_cleanup(
+    llvm::Value* storage, const std::shared_ptr<type>& payload_type, bool protect_remaining,
+    bool default_state) {
+    auto bare = type::canonical(type::remove_const(type::canonical(payload_type)));
+    if (auto owner = std::dynamic_pointer_cast<owner_type>(bare)) {
+        emit_owner_cleanup_if_nonnull(_builder.get(), get_module(), _context->_functions,
+            storage, owner->get_owned_type(), "union_owner", make_virtual_call_emitter());
+    } else if (auto callable = std::dynamic_pointer_cast<callable_type>(bare)) {
+        if (callable->is_owner()) {
+            emit_owned_callable_cleanup_if_nonnull(_builder.get(), get_module(), storage,
+                _context->get_or_create_callable_llvm_type(), "union_callable", make_virtual_call_emitter());
+        }
+    } else if (auto array = std::dynamic_pointer_cast<sized_array_type>(bare)) {
+        // Unwinding would destroy the elements of an unconstructed array as live objects.
+        call_argument_cleanup_scope remaining(*this, protect_remaining && !default_state);
+        remaining.track_storage(bare, storage);
+        auto* array_type = array->get_llvm_struct_type();
+        auto* data_type = array->get_llvm_data_array_type();
+        auto* count_ptr = _builder->CreateStructGEP(
+            array_type, storage, sized_array_type::FIELD_SIZE, "union_array_count");
+        auto* data_ptr = _builder->CreateStructGEP(
+            array_type, storage, sized_array_type::FIELD_DATA, "union_array_data");
+        auto* func = _builder->GetInsertBlock()->getParent();
+        auto* test = llvm::BasicBlock::Create(**_context, "union_array_cleanup_test", func);
+        auto* destroy = llvm::BasicBlock::Create(**_context, "union_array_cleanup_element", func);
+        auto* done = llvm::BasicBlock::Create(**_context, "union_array_cleanup_done", func);
+        _builder->CreateBr(test);
+        _builder->SetInsertPoint(test);
+        auto* count = _builder->CreateLoad(_builder->getInt32Ty(), count_ptr);
+        _builder->CreateCondBr(_builder->CreateICmpNE(count, _builder->getInt32(0)), destroy, done);
+        _builder->SetInsertPoint(destroy);
+        auto* index = _builder->CreateSub(count, _builder->getInt32(1));
+        _builder->CreateStore(index, count_ptr);
+        auto* element = _builder->CreateInBoundsGEP(data_type, data_ptr,
+            {_builder->getInt32(0), index}, "union_array_element");
+        emit_union_payload_cleanup(element, array->get_subtype(), protect_remaining, default_state);
+        _builder->CreateBr(test);
+        _builder->SetInsertPoint(done);
+        remaining.transfer();
+    } else if (auto st = std::dynamic_pointer_cast<struct_type>(bare)) {
+        if (auto agg = st->get_struct()) {
+            if (default_state) {
+                emit_default_aggregate_cleanup(storage, st, protect_remaining);
+            } else if (auto dtor = agg->get_destructor()) {
+                if (auto* llvm_dtor = _context->lookup_llvm_function(dtor)) {
+                    if (agg->has_vtable())
+                        emit_virtual_destructor_call(_builder.get(), *agg, storage, make_virtual_call_emitter());
+                    else
+                        create_call_or_invoke(llvm_dtor->getFunctionType(), llvm_dtor, {storage});
+                }
+            } else if (struct_releases_fields_without_destructor(*agg)) {
+                // Owners of a destructor-less struct are released field by field,
+                // in reverse declaration order.
+                std::vector<std::pair<unsigned, std::shared_ptr<type>>> fields;
+                for (const auto& entry : agg->variables()) {
+                    auto member = std::dynamic_pointer_cast<member_variable_definition>(entry.second);
+                    if (!member || !type_releases_fields_without_destructor(member->get_type())) continue;
+                    auto field = st->get_member(member->get_short_name());
+                    if (field) fields.emplace_back(static_cast<unsigned>(field->index), member->get_type());
+                }
+                std::sort(fields.begin(), fields.end(),
+                    [](const auto& a, const auto& b) { return a.first < b.first; });
+                for (auto it = fields.rbegin(); it != fields.rend(); ++it) {
+                    auto* field_ptr = _builder->CreateStructGEP(
+                        st->get_llvm_type(), storage, it->first, "union_struct_field");
+                    emit_union_payload_cleanup(field_ptr, it->second, protect_remaining);
+                }
+            }
+        } else {
+            auto nested = find_union_for_struct_type(_unit, st);
+            if (!nested) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), {},
+                    "Cannot find union metadata while destroying '{}'", {st->to_string()});
+            }
+            emit_union_cleanup(storage, *nested);
+        }
+    }
+}
+
 void implementation_generator::emit_union_cleanup(llvm::Value* storage, union_type_def& udef) {
-    // Layout: { i32 discriminant, [N x i8] storage }
+    if (!udef.has_nontrivial_destructor_alternative()) return;
     auto* union_llvm_type = udef.get_struct_type()->get_llvm_type();
     auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, storage, 0, "union_dtor_disc_ptr");
     auto* disc_val = _builder->CreateLoad(llvm::Type::getInt32Ty(**_context), disc_ptr, "union_dtor_disc");
 
     auto* cur_fn = _builder->GetInsertBlock()->getParent();
     auto* merge_bb = llvm::BasicBlock::Create(**_context, "union_dtor_done", cur_fn);
-
-    // Count how many alternatives in the FULL CHAIN actually need destruction
-    std::vector<std::pair<size_t, std::shared_ptr<function>>> alt_dtors;
-    for (const auto* alt_ptr : udef.all_alternatives_ptrs()) {
-        if (auto st = std::dynamic_pointer_cast<struct_type>(alt_ptr->resolved_type)) {
-            if (auto agg = st->get_struct()) {
-                if (auto dtor = agg->get_destructor()) {
-                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-                    if (dtor_it != _context->_functions.end()) {
-                        alt_dtors.emplace_back(alt_ptr->index, dtor);
-                    }
-                }
-            }
-        }
+    auto* dispatch_bb = llvm::BasicBlock::Create(**_context, "union_dtor_dispatch", cur_fn);
+    const auto* first = udef.get_alternative_by_global_index(0);
+    auto first_type = first && first->resolved_type
+        ? type::canonical(type::remove_const(type::canonical(first->resolved_type))) : nullptr;
+    auto first_callable = std::dynamic_pointer_cast<callable_type>(first_type);
+    if (has_default_nested_union(udef) || type::is_owner(first_type)
+        || (first_callable && first_callable->is_owner())) {
+        _builder->CreateBr(dispatch_bb);
+    } else {
+        auto* live = _builder->CreateLoad(_builder->getInt32Ty(), union_live_state_ptr(storage, udef));
+        auto* default_unconstructed = _builder->CreateAnd(
+            _builder->CreateICmpEQ(disc_val, _builder->getInt32(0)),
+            _builder->CreateICmpEQ(live, _builder->getInt32(0)));
+        _builder->CreateCondBr(default_unconstructed, merge_bb, dispatch_bb);
     }
-
-    if (alt_dtors.empty()) {
-        // No alternatives actually have destructors — just branch to merge
-        _builder->CreateBr(merge_bb);
-        _builder->SetInsertPoint(merge_bb);
-        return;
-    }
-
-    auto* switch_inst = _builder->CreateSwitch(disc_val, merge_bb, alt_dtors.size());
-
-    for (auto& [alt_idx, dtor] : alt_dtors) {
+    _builder->SetInsertPoint(dispatch_bb);
+    const bool tracks_default = union_first_alternative_tracks_default(udef, _unit.get_root_namespace());
+    auto alternatives = udef.all_alternatives_ptrs();
+    auto* switch_inst = _builder->CreateSwitch(disc_val, merge_bb, alternatives.size());
+    for (const auto* alt : alternatives) {
         auto* case_bb = llvm::BasicBlock::Create(**_context,
-            "union_dtor_alt" + std::to_string(alt_idx), cur_fn);
+            "union_dtor_alt" + std::to_string(alt->index), cur_fn);
         switch_inst->addCase(
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(**_context), alt_idx),
+            llvm::ConstantInt::get(llvm::Type::getInt32Ty(**_context), alt->index),
             case_bb);
 
         _builder->SetInsertPoint(case_bb);
-        // Disarm before any potentially throwing destructor; this alternative
-        // must not be revisited by a later cleanup path.
-        _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
-        auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, storage, 1, "union_dtor_storage");
-        if (dtor->is_virtual()) {
-            auto* vptr_val = _builder->CreateLoad(llvm::PointerType::get(**_context, 0), storage_ptr, "union_dtor_vptr");
-            auto* is_null = _builder->CreateICmpEQ(
-                vptr_val,
-                llvm::ConstantPointerNull::get(llvm::PointerType::get(**_context, 0)),
-                "union_dtor_vptr_null");
-            auto* dtor_call_bb = llvm::BasicBlock::Create(**_context, "union_dtor_call", cur_fn);
-            _builder->CreateCondBr(is_null, merge_bb, dtor_call_bb);
-            _builder->SetInsertPoint(dtor_call_bb);
+        llvm::Value* escaped_default = nullptr;
+        if (alt->index == 0 && tracks_default) {
+            escaped_default = _builder->CreateICmpEQ(
+                _builder->CreateLoad(_builder->getInt32Ty(), union_live_state_ptr(storage, udef)),
+                _builder->getInt32(2));
         }
-        auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-        create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {storage_ptr});
+        _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
+        set_union_live_state(storage, udef, false);
+        auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, storage, 1, "union_dtor_storage");
+        if (escaped_default) {
+            auto* default_bb = llvm::BasicBlock::Create(**_context, "union_dtor_default", cur_fn);
+            auto* live_bb = llvm::BasicBlock::Create(**_context, "union_dtor_live", cur_fn);
+            _builder->CreateCondBr(escaped_default, default_bb, live_bb);
+            _builder->SetInsertPoint(default_bb);
+            emit_union_payload_cleanup(storage_ptr, alt->resolved_type, true, true);
+            _builder->CreateBr(merge_bb);
+            _builder->SetInsertPoint(live_bb);
+        }
+        emit_union_payload_cleanup(storage_ptr, alt->resolved_type, true);
         _builder->CreateBr(merge_bb);
     }
-
     _builder->SetInsertPoint(merge_bb);
 }
 
-
 void implementation_generator::emit_union_cleanup_on_reassign(llvm::Value* union_base, union_type_def& udef, size_t new_alt_idx) {
-    // Destroy the currently-active alternative (if it has a destructor and it
-    // differs from the new one being assigned).
+    if (!udef.has_nontrivial_destructor_alternative()) return;
     auto* union_llvm_type = udef.get_struct_type()->get_llvm_type();
     auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 0, "union_reassign_disc_ptr");
     auto* disc_val = _builder->CreateLoad(llvm::Type::getInt32Ty(**_context), disc_ptr, "union_reassign_disc");
-
-    // Collect alternatives in the FULL CHAIN that have destructors and are NOT the new alternative
-    std::vector<std::pair<size_t, std::shared_ptr<function>>> alt_dtors;
-    for (const auto* alt_ptr : udef.all_alternatives_ptrs()) {
-        if (alt_ptr->index == new_alt_idx) continue;
-        if (auto st = std::dynamic_pointer_cast<struct_type>(alt_ptr->resolved_type)) {
-            if (auto agg = st->get_struct()) {
-                if (auto dtor = agg->get_destructor()) {
-                    auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-                    if (dtor_it != _context->_functions.end()) {
-                        alt_dtors.emplace_back(alt_ptr->index, dtor);
-                    }
-                }
-            }
-        }
-    }
-
-    if (alt_dtors.empty()) {
-        // No alternatives with destructors to clean up — nothing to do
-        return;
-    }
-
     auto* cur_fn = _builder->GetInsertBlock()->getParent();
     auto* merge_bb = llvm::BasicBlock::Create(**_context, "union_reassign_done", cur_fn);
-
-    // If the discriminant already matches the new target, skip destruction
     auto* already_new = _builder->CreateICmpEQ(disc_val,
         llvm::ConstantInt::get(llvm::Type::getInt32Ty(**_context), new_alt_idx), "union_already_new");
     auto* need_cleanup_bb = llvm::BasicBlock::Create(**_context, "union_reassign_cleanup", cur_fn);
-    _builder->CreateCondBr(already_new, merge_bb, need_cleanup_bb);
+    auto* alt = udef.get_alternative_by_global_index(new_alt_idx);
+    auto alt_type = alt ? type::canonical(type::remove_const(alt->resolved_type)) : nullptr;
+    auto callable = std::dynamic_pointer_cast<callable_type>(alt_type);
+    llvm::Value* skip_cleanup = already_new;
+    if (new_alt_idx == 0 && union_first_alternative_tracks_default(udef, _unit.get_root_namespace())) {
+        // An escaped default alternative is not an object that can be reassigned in place.
+        auto* escaped = _builder->CreateICmpEQ(
+            _builder->CreateLoad(_builder->getInt32Ty(), union_live_state_ptr(union_base, udef)),
+            _builder->getInt32(2));
+        skip_cleanup = _builder->CreateAnd(already_new, _builder->CreateNot(escaped));
+    }
+    if (type::is_owner(alt_type) || (callable && callable->is_owner()))
+        _builder->CreateBr(need_cleanup_bb);
+    else
+        _builder->CreateCondBr(skip_cleanup, merge_bb, need_cleanup_bb);
 
     _builder->SetInsertPoint(need_cleanup_bb);
-    auto* switch_inst = _builder->CreateSwitch(disc_val, merge_bb, alt_dtors.size());
-
-    for (auto& [alt_idx, dtor] : alt_dtors) {
-        auto* case_bb = llvm::BasicBlock::Create(**_context,
-            "union_reassign_dtor_alt" + std::to_string(alt_idx), cur_fn);
-        switch_inst->addCase(
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(**_context), alt_idx),
-            case_bb);
-
-        _builder->SetInsertPoint(case_bb);
-        auto* storage_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 1, "union_reassign_storage");
-        // Disarm the old alternative before invoking a destructor that may throw.
-        _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
-        if (dtor->is_virtual()) {
-            auto* vptr_val = _builder->CreateLoad(llvm::PointerType::get(**_context, 0), storage_ptr, "reassign_vptr");
-            auto* is_null = _builder->CreateICmpEQ(
-                vptr_val,
-                llvm::ConstantPointerNull::get(llvm::PointerType::get(**_context, 0)),
-                "reassign_vptr_null");
-            auto* dtor_call_bb = llvm::BasicBlock::Create(**_context, "reassign_dtor_call", cur_fn);
-            _builder->CreateCondBr(is_null, merge_bb, dtor_call_bb);
-            _builder->SetInsertPoint(dtor_call_bb);
-        }
-        auto dtor_it = _context->_functions.find(dtor->shared_as<function>());
-        create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {storage_ptr});
-        _builder->CreateBr(merge_bb);
-    }
-
+    emit_union_cleanup(union_base, udef);
+    _builder->CreateBr(merge_bb);
     _builder->SetInsertPoint(merge_bb);
 }
 

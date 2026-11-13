@@ -165,6 +165,7 @@ TEST_CASE("Member lookup: generic Writer redeclarations bind the first signature
     auto compatibility = k::model::gen::callable_signature_compatible(
         k::model::gen::callable_signature_view::of(*narrow), broad_prototype);
     CHECK(compatibility.result == k::model::gen::callable_compat::status::needs_adjustment);
+    REQUIRE(ensure_libk_loaded());
     auto jit = comp->to_jit();
     REQUIRE(jit != nullptr);
     auto run = jit->lookup_symbol<int(*)()>("run");
@@ -2118,7 +2119,7 @@ TEST_CASE("Deleted default constructor prevents default construction", "[gen][re
 }
 
 TEST_CASE("Deleted parameterized constructor prevents invocation", "[gen][resolution][aliasing][delete]") {
-    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+    REQUIRE_THROWS_MATCHES(gen_jit_throws(R"SRC(
         module __ctor_delete_param__;
 
         struct Foo {
@@ -2130,7 +2131,176 @@ TEST_CASE("Deleted parameterized constructor prevents invocation", "[gen][resolu
             p : Foo(42);   // ERROR: Foo(int) is deleted
             return p.a;
         }
+    )SRC"), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>(
+            [](const auto& error) {
+                return error.get_diagnostic().message.find("deleted") != std::string::npos;
+            }, "selected deleted constructor"));
+}
+
+TEST_CASE("Deleted copy constructor rejects lvalue initialization", "[gen][resolution][copy][delete][regression]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module deleted_local_copy;
+        class Key {
+        public:
+            Key() {}
+            Key(other: const Key&) -> delete;
+        }
+        test(p: const Key&): int { copy: Key = p; return 0; }
     )SRC"));
+}
+
+TEST_CASE("Deleted constructors participate in overload selection", "[gen][resolution][aliasing][delete][regression]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module deleted_ctor_overload;
+        struct Value {
+            Value(value: int) -> delete;
+            Value(value: long) {}
+        }
+        test(): int { v: Value(42); return 0; }
+    )SRC"));
+}
+
+TEST_CASE("Local deleted class and struct copy probes diagnose deletion", "[gen][resolution][copy][delete][regression]") {
+    for (const auto* kind : {"class", "struct"}) {
+        for (const auto* statement : {"b: Counter(a);", "b: Counter = a;",
+                                       "b: Counter; b = a;"}) {
+            std::string source = std::string("module localcopyprobe; private struct NativeCounter {} ") + kind + R"K( Counter {
+                private:
+                    _handle: NativeCounter* = null;
+                public:
+                    Counter() {}
+                    Counter(other: const Counter&) -> delete;
+                    operator =(other: const Counter&) -> delete;
+            }
+            test(): int { a: Counter; )K" + statement + " return 0; }";
+            INFO(kind);
+            INFO(statement);
+            REQUIRE_THROWS_MATCHES(gen_jit_throws(source), k::log::compiler_error,
+                Catch::Matchers::Predicate<k::log::compiler_error>(
+                    [](const auto& error) {
+                        return error.get_diagnostic().message.find("deleted") != std::string::npos;
+                    }, "deleted copy operation"));
+        }
+    }
+}
+
+TEST_CASE("A viable mutable copy overload wins over a deleted const overload",
+          "[gen][resolution][copy][delete][regression]") {
+    auto jit = gen_jit(R"K(
+        module localcopyoverload;
+        class Key {
+        private:
+            Key(other: const Key&) -> delete;
+        public:
+            value: int = 42;
+            Key() {}
+            Key(other: Key&) : value(other.value) {}
+        }
+        consume(value: Key): int { return value.value; }
+        returned(value: Key&): Key { return value; }
+        test(): int { a: Key; b: Key = a; return b.value + consume(a) + consume(returned(a)) - 84; }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("A by-value copy rejects the selected deleted constructor",
+          "[gen][resolution][copy][delete][regression]") {
+    REQUIRE_THROWS_MATCHES(gen_jit_throws(R"K(
+        module localbyvaluecopy;
+        class Key {
+        public:
+            Key() {}
+            Key(other: const Key&) -> delete;
+        }
+        consume(value: Key): int { return 0; }
+        test(value: const Key&): int { return consume(value); }
+    )K"), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>(
+            [](const auto& error) {
+                return error.get_diagnostic().message.find("deleted") != std::string::npos;
+            }, "deleted by-value copy constructor"));
+}
+
+TEST_CASE("A losing by-value overload does not copy its arguments",
+          "[gen][resolution][copy][overload][regression]") {
+    auto jit = gen_jit(R"K(
+        module losing_value_overload;
+        class Key {
+        public:
+            Key() {}
+            Key(other: const Key&) -> delete;
+        }
+        class Other { public: Other() {} }
+        first(value: Key, other: Other&): int { return -1; }
+        first(value: const Key&, number: int): int { return number; }
+        second(value: const Key&, number: int): int { return number; }
+        second(value: Key, other: Other&): int { return -1; }
+        third(value: Key): int { return -1; }
+        third(value: Key&): int { return 1; }
+        fourth(value: Key&): int { return 2; }
+        fourth(value: Key): int { return -1; }
+        test(): int {
+            key: Key;
+            return first(key, 17) + second(key, 22) + third(key) + fourth(key);
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Cached member-template constructor does not compete with concrete copy",
+          "[gen][resolution][copy][template][regression]") {
+    auto jit = gen_jit(R"K(
+        module filtered_copy_template;
+        template<typename T>
+        struct Handle {
+            value: int;
+            Handle() : value(21) {}
+            Handle(other: const Handle<T>&) : value(other.value) {}
+            template<typename U>
+            Handle(other: const Handle<U>&) : value(other.value) {}
+        }
+        class Owner {
+            _owner: Handle<int>;
+        public:
+            Owner(other: const Handle<int>&) : _owner(other) {}
+            const owner(): Handle<int> { return _owner; }
+        }
+        test(): int {
+            source: Handle<int>;
+            owner: Owner(source);
+            result: Handle<int> = owner.owner();
+            return result.value * 2;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("A returned lvalue rejects the selected deleted copy constructor",
+          "[gen][resolution][copy][delete][regression]") {
+    REQUIRE_THROWS_MATCHES(gen_jit_throws(R"K(
+        module localreturncopy;
+        class Key {
+        public:
+            Key() {}
+            Key(other: const Key&) -> delete;
+        }
+        returned(value: const Key&): Key { return value; }
+        test(): int { return 0; }
+    )K"), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>(
+            [](const auto& error) {
+                return error.get_diagnostic().message.find("deleted") != std::string::npos;
+            }, "deleted returned-lvalue copy constructor"));
 }
 
 TEST_CASE("Non-deleted constructor still usable when another overload is deleted", "[gen][resolution][aliasing][delete]") {

@@ -255,8 +255,9 @@ klang_gen_test(klang-tests-gen-core 120 SHARD_COUNT 3
 
 # ---------------------------------------------------------------------------
 # Group 3b — Codegen resolution: symbol resolution, visibility, multi-source
+# Catch2 shards keep this suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-resolution 120
+klang_gen_test(klang-tests-gen-resolution 120 SHARD_COUNT 2
         tests/test-gen-resolution.cpp
         tests/test-gen-visibility.cpp
         tests/test-multi-source.cpp
@@ -355,8 +356,9 @@ klang_gen_test(klang-tests-gen-operators 120 SHARD_COUNT 3
 
 # ---------------------------------------------------------------------------
 # Group 4e — Casts and conversions: scalar casts, indirection casts
+# Catch2 shards keep this suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-casts 120
+klang_gen_test(klang-tests-gen-casts 120 SHARD_COUNT 2
         tests/test-gen-cast.cpp
         tests/test-gen-cast-indirection.cpp
 )
@@ -366,7 +368,7 @@ klang_gen_test(klang-tests-gen-casts 120
 # Split into enums/unions, const, null and metadata/designated-init executables.
 # Catch2 shards keep the enum/union suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-types-enums-unions 120 SHARD_COUNT 3
+klang_gen_test(klang-tests-gen-types-enums-unions 120 SHARD_COUNT 5
         tests/test-gen-enum.cpp
         tests/test-gen-union.cpp
         tests/test-gen-union-template.cpp
@@ -429,8 +431,9 @@ klang_gen_test(klang-tests-gen-virtuality 120 SHARD_COUNT 3
 
 # ---------------------------------------------------------------------------
 # Group 7a — Memory model: ownership, drain, and indirection
+# Catch2 shards keep this suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-memory-ownership 120
+klang_gen_test(klang-tests-gen-memory-ownership 120 SHARD_COUNT 2
         tests/test-gen-owner.cpp
         tests/test-gen-drain.cpp
         tests/test-gen-indirection.cpp
@@ -454,8 +457,9 @@ klang_gen_test(klang-tests-gen-arrays 120 SHARD_COUNT 3
 
 # ---------------------------------------------------------------------------
 # Group 8a — OOP: lifecycle and RVO
+# Catch2 shards keep this suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-oop-lifecycle 120
+klang_gen_test(klang-tests-gen-oop-lifecycle 120 SHARD_COUNT 2
         tests/test-gen-lifecycle.cpp
         tests/test-gen-rvo.cpp
 )
@@ -496,7 +500,7 @@ klang_gen_test(klang-tests-gen-templates-core 120 SHARD_COUNT 2
 # Group 9b — Templates: deduction, constraints, packs, value params
 # Catch2 shards keep the template matrix below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-templates-deduction 120 SHARD_COUNT 3
+klang_gen_test(klang-tests-gen-templates-deduction 120 SHARD_COUNT 5
         tests/test-gen-template-constraints.cpp
         tests/test-gen-template-value-params.cpp
         tests/test-gen-template-aggregate-values.cpp
@@ -523,7 +527,7 @@ klang_gen_test(klang-tests-gen-generics 120
 # Group 11 — KDI import, production libraries, multi-source
 # Split into core import, templates cross-module, and interop test executables.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-import-core 120
+klang_gen_test(klang-tests-import-core 120 SHARD_COUNT 4
         tests/test-import-core.cpp
         tests/test-import-private-concrete.cpp
 )

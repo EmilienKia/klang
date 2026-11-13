@@ -96,6 +96,7 @@ struct base_spec {
 class aggregate : public element, public named_element, public variable_holder, public function_holder, public aggregate_holder, public enum_holder, public union_holder, public using_holder, public alias_holder, public friend_holder, public annotation_holder {
 protected:
     bool _bases_resolved = false;
+    bool _imported_bases_complete = false;
     friend class ns;
     friend class model_builder;
     friend class gen::implementation_generator;
@@ -317,6 +318,16 @@ public:
     bool bases_resolved() const { return _bases_resolved; }
     void set_bases_resolved(bool v) { _bases_resolved = v; }
 
+    /**
+     * True for an imported aggregate whose KDI declares its direct base list
+     * complete and whose bases were all materialised: its hierarchy can then
+     * be walked as a closed world (a type absent from it is proven unrelated).
+     * Always false for a non-imported aggregate, whose hierarchy is described
+     * by its AST declaration instead.
+     */
+    bool imported_bases_complete() const { return _imported_bases_complete; }
+    void set_imported_bases_complete(bool v) { _imported_bases_complete = v; }
+
 
     /** True if this is a non-static inner aggregate (has an implicit parent reference). */
     bool is_inner() const { return is_nested() && !_is_static_nested; }
@@ -390,6 +401,7 @@ public:
 
     /** Returns the copy constructor if one exists, nullptr otherwise. */
     std::shared_ptr<constructor> get_copy_constructor() const;
+    bool is_copy_constructor(const constructor& ctor) const;
 
     //
     // Template support

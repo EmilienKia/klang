@@ -59,6 +59,11 @@ protected:
     /** Map of direct child namespaces. */
     std::map<std::string, std::shared_ptr<ns>> _ns;
 
+    /** Whether this is a source or KDI namespace rather than a synthetic lookup scope. */
+    bool _declared_namespace = false;
+    /** Source declarations remain distinguishable from KDI lookup scopes. */
+    bool _source_declared_namespace = false;
+
     ns(std::shared_ptr<element> parent):
         element(parent) {}
 
@@ -97,6 +102,13 @@ public:
      * @return True if root namespace, false otherwise.
      */
     bool is_root() const { return !!parent<unit>(); }
+    bool is_declared_namespace() const { return _declared_namespace; }
+    void mark_declared_namespace() { _declared_namespace = true; }
+    bool is_source_declared_namespace() const { return _source_declared_namespace; }
+    void mark_source_declared_namespace() {
+        _source_declared_namespace = true;
+        mark_declared_namespace();
+    }
 
     //
     // Children namespace manipulations
@@ -158,10 +170,10 @@ protected:
     std::vector<std::shared_ptr<kdi::kdi_file>> _transitive_kdis;
 
     /**
-     * Cache of imported_function model nodes keyed by mangled name (C1 for ctors).
+     * Cache of imported_function model nodes keyed by their KDI declarations.
      * Created lazily by get_or_create_imported_function().
      */
-    std::unordered_map<std::string, std::shared_ptr<imported_function>>  _imported_functions;
+    std::unordered_map<const kdi::kdi_function*, std::shared_ptr<imported_function>>  _imported_functions;
 
     /**
      * Cache of imported_aggregate model nodes keyed by fully-qualified K name.
@@ -501,7 +513,7 @@ public:
 
     // ── Accessors ────────────────────────────────────────────────────────────
 
-    const std::unordered_map<std::string, std::shared_ptr<imported_function>>&
+    const std::unordered_map<const kdi::kdi_function*, std::shared_ptr<imported_function>>&
     get_imported_functions() const { return _imported_functions; }
 
     const std::unordered_map<std::string, std::shared_ptr<imported_aggregate>>&

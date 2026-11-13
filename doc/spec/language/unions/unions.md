@@ -94,15 +94,25 @@ union Payload {
 A union value occupies:
 
 ```
-{ uint32_t discriminant; [max_size × i8] storage }
+{ uint64_t tag_and_lifecycle; [max_size × i8] storage }
 ```
 
-- **discriminant** — a 32-bit unsigned integer identifying the active alternative.
+- The low 32 bits identify the active alternative; the remaining bits are
+  reserved for lifecycle state.
 - **storage** — a byte array sized to the largest alternative (considering
   alignment). All alternatives share this storage region (overlapping, like a
   C `union`).
 
-The total size is therefore `4 + padding + max(sizeof(alternative_i))`.
+The payload offset and total size follow the target LLVM data layout. The
+current lifecycle implementation requires a little-endian target. Its lifecycle
+state is incompatible with earlier code even when that code uses an identical
+64-bit layout. Rebuild affected libraries, their KDI descriptors, and consumers
+together; regenerating a descriptor alone does not update the library.
+
+The importer rejects, with a diagnostic, descriptors whose union layout is missing,
+malformed, not an `{ i64, [N x i8] }` header/payload pair, or smaller than one of
+its alternatives. It does not yet identify older 64-bit lifecycle semantics, so
+acceptance of a descriptor does not establish binary compatibility.
 
 ---
 
@@ -142,6 +152,59 @@ again. A later member assignment may activate an alternative normally.
 
 Assignment to an already-active struct or class alternative uses its assignment
 operator, when provided, rather than constructing over a live object.
+Copying a live payload must respect the selected copy constructor's checked
+exceptions, including when a union copy dispatches to that payload. A copy of
+a `const` alternative uses const-source copy semantics even if the containing
+union is mutable. Union copy checks the contracts of potentially active
+alternatives; at runtime it copies only the active payload. A default-unconstructed
+first class or struct alternative is not copied as a live object.
+
+#### Default state of a resource-bearing first alternative
+
+A zero-filled first alternative that is a struct, class or sized array and that
+(transitively) contains owners, owning callables or nested resource-bearing unions
+is tracked rather than invisible:
+
+- While it is untouched, the union stays in the cheap *default* state: nothing
+  is constructed, copied byte-wise, or destroyed.
+- Any mutable access to the alternative (non-`const` member access, reference
+  binding, address-of, element or field write) moves the union to the
+  *default, escaped* state. The compiler cannot see what the access writes, so
+  the owned slots are treated as potentially populated. `const` access does not
+  escape the alternative.
+- Cleanup of an escaped default alternative releases the owners and owning
+  callables field by field, in reverse declaration order, exactly once. It does
+  not run the constructor or destructor of the alternative, which never ran. A
+  throwing release does not prevent the remaining slots from being released.
+- Copying an escaped default alternative that has no user copy constructor
+  succeeds, by value, only if every owned slot is empty; otherwise the copy
+  fails with the union-copy `FatalError` (`UCOP`, code `0x55434f50`) and the source
+  keeps its owners. With a user-declared copy constructor, that constructor is
+  used; a deleted copy constructor rejects the copy.
+- Assigning the first alternative of an escaped union releases the escaped
+  owners, then copy-constructs the new value. Assigning the alternative's own
+  storage to itself is a no-op.
+- A destructor-less struct that only holds owner fields is released field by
+  field when it is the active alternative of a union.
+- First alternatives whose default state is trivial (no owned resources) keep
+  byte-wise copy semantics.
+
+```k
+struct Pair { a: Resource!; b: Resource!; }
+union U { pair: Pair; tag: int; }
+
+f() {
+    u: U;
+    p: Pair& = u.pair;   // escapes the default alternative
+    p.a = new Resource();
+}                         // the owner in 'a' is released here
+```
+
+Known limits: aggregates that are imported, have virtual bases or inner
+aggregates, or that nest sized arrays are not tracked in the default state;
+an owner-element array in the escaped default state is rejected when the union
+is copied, and unwinding during its cleanup does not destroy the remaining
+elements.
 
 ---
 
@@ -247,6 +310,12 @@ cr : const int& = (const int&) v; // Cast by const reference
 - **Ambiguity Rule**: If multiple alternatives share the exact same type, casting to that type
   is rejected at compile-time (`ERR_UNION_CAST_AMBIGUOUS`). Explicit member access (`v.alt`)
   must be used instead.
+- **Owner value**: extracting a `T!` alternative transfers its owner and sets the
+  source alternative to `null`, while retaining the active discriminant. This
+  applies to explicit value casts and implicit argument adaptation, including
+  temporary unions. A `const` union or `const` alternative cannot be consumed
+  this way. An owner of a const pointee remains movable from a mutable slot.
+  Reference and observer conversions borrow instead of transferring ownership.
 
 ### 6.2 Implicit Type Adaptation
 
@@ -665,7 +734,12 @@ check() : int {
 ```
 
 - Union layout (discriminant + storage size) is preserved across module
-  boundaries.
+  boundaries. A missing or invalid layout is a compile-time error.
+- A private union nested in an exported struct or class is cleaned up by that
+  aggregate's exported destructor; the importing module never inspects it. An
+  imported aggregate with such hidden resources and no exported copy constructor
+  is not copyable: copying it is a compile-time error, and copying a union that
+  holds it raises the `UCOP` fatal error.
 - Template unions can also be exported and instantiated by importing modules.
 - Union inheritance and polymorphic base relationships are preserved in KDI: a derived
   or polymorphic union's base is recorded and resolved at import time.

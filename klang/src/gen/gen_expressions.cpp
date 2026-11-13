@@ -456,6 +456,7 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
                     parse::ast::identified_type_specifier ast_identified(ast_qid, symbol.get_ast_template_args(), true);
                     auto qualifier_type = _context->from_type_specifier(ast_identified);
                     if (auto unres = std::dynamic_pointer_cast<unresolved_type>(qualifier_type)) {
+                        _generic_qualifier_usages.erase(&symbol);
                         auto resolved_type = try_instantiate_template_type(unres, symbol);
                         if (auto st_type = std::dynamic_pointer_cast<struct_type>(resolved_type)) {
                             if (auto concrete_agg = st_type->get_struct()) {
@@ -491,14 +492,29 @@ void type_reference_resolver::visit_symbol_expression(symbol_expression& symbol)
             // Build the callable_type for this function.
             callable_type_builder builder(_context);
             builder.addresser(callable_type::addresser::link);
+            // A static member of a generic aggregate named through its qualifier
+            // (`Host<char>::text`) is typed with the type arguments substituted: its
+            // erased synthesis only carries opaque pointers.
+            std::vector<std::shared_ptr<type>> concrete_params;
+            std::shared_ptr<type> concrete_return;
+            bool concrete_signature = false;
+            if (const auto* qualifier_usage = find_generic_qualifier_usage(&symbol);
+                qualifier_usage && func->is_member() && func->is_static()) {
+                validate_generic_cstring_contract(*func, *qualifier_usage);
+                check_generic_pointee_access(*func, *qualifier_usage, symbol.first_lexeme());
+                concrete_signature = concrete_generic_signature(
+                    *func, *qualifier_usage, concrete_params, concrete_return);
+            }
             // Return type
-            auto ret_type = func->get_return_type();
+            auto ret_type = concrete_signature ? concrete_return : func->get_return_type();
             if (ret_type) builder.return_type(ret_type);
             // Parameter types
             for (size_t i = 0; i < func->get_parameter_size(); ++i) {
                 auto p = func->get_parameter(i);
-                if (p && p->get_type()) {
-                    builder.append_parameter_type(p->get_type());
+                auto param_type = concrete_signature ? concrete_params[i]
+                                                     : (p ? p->get_type() : nullptr);
+                if (p && param_type) {
+                    builder.append_parameter_type(param_type);
                 }
             }
             // Owner struct (member function)
@@ -638,12 +654,18 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
             auto walk_struct = current_struct;
             while (walk_struct && walk_struct != member_owner) {
                 if (walk_struct->is_inner()) {
-                    // GEP to __parent__ field (always index 0 for inner structs)
                     auto walk_st_type = walk_struct->get_struct_type();
+                    auto parent_field = walk_st_type->get_member("__parent__");
+                    if (!parent_field) {
+                        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F01E),
+                            symbol.first_lexeme(),
+                            "Internal error: inner aggregate '{}' has no enclosing-instance field",
+                            {walk_struct->get_fq_name()});
+                    }
                     this_ptr = _builder->CreateStructGEP(
                             _context->get_llvm_type(walk_st_type),
                             this_ptr,
-                            0, // __parent__ is always field 0
+                            (unsigned)parent_field->index,
                             "parent_field_ptr"
                     );
                     // Load the parent reference (stored as opaque pointer, same as 'this')
@@ -845,21 +867,20 @@ void implementation_generator::visit_symbol_expression(symbol_expression &symbol
         }
 
         if(ptr && type) {
+            place_result slot{ptr};
             bool is_constructed_symbol = false;
             if (auto parent_expr = symbol.get_parent_expression()) {
                 if (auto ctor_inv = std::dynamic_pointer_cast<constructor_invocation_expression>(parent_expr)) {
                     if (ctor_inv->constructed_symbol().get() == &symbol) is_constructed_symbol = true;
                 }
             }
+            place_result result = slot;
             if (!is_constructed_symbol && (type::is_reference(var_type) || type::is_drain(var_type))) {
-                // Type is a reference/drain (indirection), so value is loaded from the alloca
-                _value = _builder->CreateLoad(type, ptr, name + "_ref");
-            } else {
-                // Value of a symbol (as a reference) is always its address.
-                // This includes callable_type variables: the caller that needs
-                // the actual function pointer (e.g. indirect call) must load from this address.
-                _value = ptr;
+                // A reference/drain slot stores an address of the referenced place.
+                result = dereference_address(load_place(slot, type, name + "_ref"));
             }
+            // Other symbols, including pointer and callable variables, name their slot.
+            publish_expression_result(symbol, result);
         } else if (ptr && !type) {
             throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F020), symbol.first_lexeme(),
                 "Internal error: cannot map variable '{}' type '{}' to LLVM while generating symbol access",

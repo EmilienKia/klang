@@ -49,6 +49,12 @@ class context;
 
 namespace k::model {
 
+enum class kdi_type_conversion {
+    ordinary,
+    template_signature,
+    concrete_contract
+};
+
 /**
  * Convert @p kdi_t into the matching k::model::type.
  *
@@ -56,6 +62,7 @@ namespace k::model {
  * @param owner   Compilation unit (needed for aggregate-ref resolution).
  * @param ctx     Compilation context (needed for primitive lookup and
  *                struct_type registration).
+ * @param mode    Preserve template placeholders or reject them in concrete contracts.
  * @return        Resolved k::model::type, or nullptr if conversion is not
  *                possible (e.g. unsupported form, forward reference that
  *                could not be resolved yet).
@@ -63,7 +70,8 @@ namespace k::model {
 std::shared_ptr<type>
 kdi_type_to_model_type(const kdi::kdi_type& kdi_t,
                        unit& owner,
-                       std::shared_ptr<context> ctx);
+                       std::shared_ptr<context> ctx,
+                       kdi_type_conversion mode = kdi_type_conversion::ordinary);
 
 } // namespace k::model
 

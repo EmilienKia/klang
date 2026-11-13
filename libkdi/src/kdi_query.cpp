@@ -68,6 +68,7 @@ std::string params_to_string(const std::vector<kdi_param>& params) {
     out << "(";
     for (std::size_t i = 0; i < params.size(); ++i) {
         if (i) out << ", ";
+        if (params[i].is_ffi_cstring) out << "@ffi::CString ";
         out << params[i].name;
         if (params[i].is_varargs) out << "...";
         out << ": " << kdi_type_to_string(params[i].type);
@@ -90,6 +91,7 @@ std::string throws_to_string(const std::vector<kdi_type>& throws_spec) {
 
 std::string function_signature(const kdi_function& fn) {
     std::ostringstream out;
+    if (fn.is_extern) out << "@ffi::Extern(\"C\") ";
     if (fn.is_static) out << "static ";
     if (fn.is_operator) out << "operator ";
     out << fn.name << params_to_string(fn.params) << " : " << kdi_type_to_string(fn.return_type)
@@ -99,10 +101,13 @@ std::string function_signature(const kdi_function& fn) {
 
 std::string method_signature(const kdi_method& method) {
     std::ostringstream out;
+    if (method.is_extern) out << "@ffi::Extern(\"C\") ";
+    if (method.is_private) out << "private ";
     if (method.is_static) out << "static ";
     if (method.is_virtual) out << "virtual ";
     if (method.is_abstract) out << "abstract ";
     if (method.is_final) out << "final ";
+    if (method.is_deleted) out << "deleted ";
     if (method.is_const_member) out << "const ";
     if (method.is_operator) out << "operator ";
     out << method.name << params_to_string(method.params) << " : "
@@ -112,10 +117,13 @@ std::string method_signature(const kdi_method& method) {
 
 std::string constructor_signature(const kdi_constructor& ctor, const kdi_aggregate& owner) {
     std::ostringstream out;
+    if (ctor.is_private) out << "private ";
     if (ctor.is_copy_constructor) out << "copy ";
     if (ctor.is_defaulted) out << "default ";
     if (ctor.is_deleted) out << "deleted ";
     out << owner.name << params_to_string(ctor.params);
+    if (ctor.throws_spec) out << throws_to_string(*ctor.throws_spec);
+    else out << " [throws contract unknown]";
     return out.str();
 }
 
