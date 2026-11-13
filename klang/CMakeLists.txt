@@ -325,7 +325,7 @@ klang_gen_test(klang-tests-gen-ternary 120
 # Group 4a — Arithmetic operators: 8/16-bit integers (byte, ubyte, short, ushort)
 # Catch2 shards keep this single-source suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-arithmetic-int8-16 120 SHARD_COUNT 2
+klang_gen_test(klang-tests-gen-arithmetic-int8-16 120 SHARD_COUNT 3
         tests/test-gen-arithmetic-int8-16.cpp
 )
 
@@ -340,7 +340,7 @@ klang_gen_test(klang-tests-gen-arithmetic-int32-64 120 SHARD_COUNT 2
 # ---------------------------------------------------------------------------
 # Group 4c — Arithmetic operators: floating-point, boolean, increment/decrement
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-arithmetic-float 120
+klang_gen_test(klang-tests-gen-arithmetic-float 120 SHARD_COUNT 2
         tests/test-gen-arithmetic-float.cpp
 )
 
@@ -377,13 +377,13 @@ klang_gen_test(klang-tests-gen-types-enums-unions 120 SHARD_COUNT 5
         tests/test-gen-union-polymorphic.cpp
         tests/test-gen-union-cast.cpp
 )
-klang_gen_test(klang-tests-gen-types-const 120
+klang_gen_test(klang-tests-gen-types-const 120 SHARD_COUNT 2
         tests/test-gen-const.cpp
 )
 klang_gen_test(klang-tests-gen-types-null 120
         tests/test-gen-null-semantics.cpp
 )
-klang_gen_test(klang-tests-gen-types-meta-designated 120
+klang_gen_test(klang-tests-gen-types-meta-designated 120 SHARD_COUNT 2
         tests/test-gen-annotation-meta.cpp
         tests/test-gen-designated-init.cpp
 )
@@ -477,7 +477,7 @@ klang_gen_test(klang-tests-gen-oop-temporary 120 SHARD_COUNT 3
 # Group 8c — Using declarations and friend: heavier because of import overhead
 # Catch2 shards keep the import-heavy scope cases below the 120-second budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-scoping 120 SHARD_COUNT 2
+klang_gen_test(klang-tests-gen-scoping 120 SHARD_COUNT 3
         tests/test-gen-using.cpp
         tests/test-gen-friend.cpp
 )
