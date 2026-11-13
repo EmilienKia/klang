@@ -132,6 +132,16 @@ operation failures throw crypto exceptions. `algorithm()`, `hashSize()`, and
 `maxOutputSize()` report the digest name, digest length, and maximum output
 length in bytes.
 
+Any fixed-output digest the selected provider offers can be used with `create`,
+for example SHA-1, SHA-224, SHA-384, SHA-512/224, SHA-512/256 and SHA-3;
+extendable-output digests such as SHAKE are reported as unavailable (null).
+`CryptoCapabilities::hkdfDigestAlgorithms()` lists the digests on which a mode
+was witnessed. Results match RFC 5869 Appendix A, including the SHA-1 cases.
+
+A `Hkdf` and an `HkdfPrk` are immutable after construction. Their operations
+may run concurrently from several threads on the same object; the object must
+not be destroyed while another thread is using it.
+
 `extract(ikm, salt)` returns an owned `HkdfPrk`; `extract(ikm)` supplies the
 RFC default salt of `hashSize()` zero bytes. IKM can be an unsigned byte array,
 an `HmacKey`, or a `SymmetricKey`. The operation borrows its inputs and does
@@ -142,8 +152,9 @@ represent omitted `info`; there is no separate no-info overload.
 An `HkdfPrk` owns secret material independently of the original descriptor and
 is non-copyable: its copy constructor and assignment are deleted, so copies
 and drain-to-value conversions are compile errors, and copying a union whose
-active alternative is a PRK raises a `FatalError`. `algorithm()` and `keySize()` describe it. `expand(info,
-length)` derives an owned byte array. `expandSymmetricKey(cipher, info)` derives
+active alternative is a PRK raises a `FatalError`. `algorithm()` and
+`keySize()` describe it. `expand(info, length)` derives an owned byte array.
+`expandSymmetricKey(cipher, info)` derives
 exactly `cipher.keySize()` bytes and applies the cipher's key validation;
 `expandHmacKey(info, length)` derives an `HmacKey`. A PRK can expand multiple
 outputs. Internal secret buffers are cleared on destruction or failure.

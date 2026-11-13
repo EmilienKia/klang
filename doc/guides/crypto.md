@@ -247,6 +247,13 @@ call `OPENSSL_thread_stop_ex` after its last use before the context is freed.
 Existing OpenSSL errors in the caller may force provider execution on a worker
 thread to preserve the error queue, which can affect thread-affine providers.
 
+`Hkdf::create` accepts any fixed-output digest the provider offers (SHA-1,
+SHA-224, SHA-384, SHA-3, and others); `SHA256()` and `SHA512()` are shortcuts.
+Prefer SHA-256 or stronger for new protocols. Derived bytes are secrets: compare
+them with `Hmac::constantTimeEquals`, never with a short-circuiting loop. A
+descriptor or PRK can be shared by several threads for concurrent operations, as
+long as none destroys it while another thread still uses it.
+
 ## 4. Discovering supported algorithms
 
 `CryptoCapabilities::snapshot()` produces an eager snapshot. The global
