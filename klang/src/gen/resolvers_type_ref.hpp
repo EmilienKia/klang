@@ -102,6 +102,9 @@ protected:
      */
     std::unordered_map<const variable_definition*, tpl_info::generic_usage_descriptor> _generic_usage_by_site;
 
+    /** Generic bindings of a qualifier template (`Host<int>::f`), keyed by the call/symbol using it. */
+    std::unordered_map<const element*, tpl_info::generic_usage_descriptor> _generic_qualifier_usages;
+
     struct generic_constructor_usage {
         std::shared_ptr<aggregate> definition;
         tpl_info::generic_usage_descriptor bindings;
@@ -387,15 +390,54 @@ protected:
     void check_generic_call_arguments(const function& called_func,
                                       const std::shared_ptr<expression>& receiver_expr,
                                       const std::vector<std::shared_ptr<expression>>& args,
-                                      const lex::opt_any_lexeme& lexeme);
+                                      const lex::opt_any_lexeme& lexeme,
+                                      const tpl_info::generic_usage_descriptor* usage_override = nullptr);
 
     /**
-     * Compute a concrete return type for generic member calls using receiver bindings.
+     * Compute a concrete return type for generic member calls using receiver bindings
+     * (or @p usage_override, e.g. the bindings of a `Host<int>::f()` qualifier).
      * Falls back to nullptr when no generic mapping can be inferred.
      */
     std::shared_ptr<type> resolve_generic_call_return_type(
         const function& called_func,
-        const std::shared_ptr<expression>& receiver_expr);
+        const std::shared_ptr<expression>& receiver_expr,
+        const tpl_info::generic_usage_descriptor* usage_override = nullptr);
+
+    /** Generic bindings recorded for the qualifier (`Host<int>::`) of a call or symbol, if any. */
+    const tpl_info::generic_usage_descriptor* find_generic_qualifier_usage(const element* site) const;
+
+    /** Declared (unspecialised) parameter types of a generic member, from its source or KDI signature. */
+    std::vector<std::shared_ptr<type>> declared_generic_param_types(const function& called_func);
+
+    /**
+     * Reject a use of @p called_func whose erased body moves a value through an addresser of a
+     * type parameter (see function::get_generic_pointee_value_params) when @p usage binds that
+     * parameter to a type that is not pointer-like.
+     */
+    void check_generic_pointee_access(const function& called_func,
+                                      const tpl_info::generic_usage_descriptor& usage,
+                                      const lex::opt_any_lexeme& lexeme);
+
+    /** Substitute @p usage into the declared parameter types; false when any stays unresolved. */
+    bool concrete_generic_param_types(const function& called_func,
+                                      const tpl_info::generic_usage_descriptor& usage,
+                                      std::vector<std::shared_ptr<type>>& params);
+
+    /**
+     * Validate the @ffi::CString parameters of a generic host's extern member against the
+     * concrete type arguments of @p usage (the erased synthesis only carries a placeholder).
+     */
+    void validate_generic_cstring_contract(const function& called_func,
+                                           const tpl_info::generic_usage_descriptor& usage);
+
+    /**
+     * Substitute @p usage into the declared signature of @p called_func. Returns false (leaving
+     * the outputs untouched) when any type stays unresolved, so callers keep the erased signature.
+     */
+    bool concrete_generic_signature(const function& called_func,
+                                    const tpl_info::generic_usage_descriptor& usage,
+                                    std::vector<std::shared_ptr<type>>& params,
+                                    std::shared_ptr<type>& return_type);
 
     /**
      * Strip the spurious reference(array(T)) → array(T) layer that resolve_type
@@ -776,6 +818,8 @@ protected:
      * @param direct_args    Optional full args for Mode B (free/static direct call). If null, uses args.
      *                       Pass full args (including obj) here to enable direct matching of free functions
      *                       alongside member/unified matching in the same scorer invocation.
+     * @param static_usage   Optional generic bindings of a qualifier (`Host<int>::f(...)`): the parameter
+     *                       types of the candidates are then matched with the type arguments substituted.
      * @return FunctionCandidate with the best match, or {nullptr,...} on failure.
      */
     FunctionCandidate
@@ -785,7 +829,8 @@ protected:
                                const std::vector<std::shared_ptr<expression>>* direct_args = nullptr,
                                const std::string& callee_name = "",
                                const lex::opt_any_lexeme& call_lexeme = std::nullopt,
-                               const std::vector<std::pair<std::shared_ptr<function>, std::string>>& rejected_tpl_candidates = {});
+                               const std::vector<std::pair<std::shared_ptr<function>, std::string>>& rejected_tpl_candidates = {},
+                               const tpl_info::generic_usage_descriptor* static_usage = nullptr);
 
     /**
      * Check all groups of same-named functions in a function_holder for identical supplied-prefix
@@ -901,7 +946,8 @@ protected:
         const std::vector<std::shared_ptr<function>>& candidates,
         const std::shared_ptr<callable_type>& tgt,
         const std::string& what,
-        const lex::opt_any_lexeme& where);
+        const lex::opt_any_lexeme& where,
+        const tpl_info::generic_usage_descriptor* generic_usage = nullptr);
 
     /**
      * Enforce the callable co/contravariance rules between two *declared* callable

@@ -143,24 +143,28 @@ std::string find_owner_or_drain_of_param(
 }
 
 /**
- * True when @p t designates an erased generic type parameter behind one or
- * more addressers or array levels (e.g. 'T*', 'T&', 'T?', 'T+', 'T[]').
+ * Position of @p t relative to an erased generic type parameter behind zero or more
+ * addresser or array levels ('T*' -> depth 1, 'T**' -> depth 2); depth -1 otherwise.
  */
-bool is_erased_param_type(std::shared_ptr<type> t,
-                          const std::unordered_set<std::string>& pnames) {
+erased_slot erased_slot_of_type(std::shared_ptr<type> t,
+                                const std::unordered_set<std::string>& pnames) {
+    int depth = 0;
     while (t != nullptr) {
         t = strip_const_layers(t);
         if (type::is_any_indirection(t) || std::dynamic_pointer_cast<array_type>(t)) {
             t = t->get_subtype();
+            ++depth;
             continue;
         }
         break;
     }
     auto unresolved = std::dynamic_pointer_cast<unresolved_type>(t);
-    if (unresolved == nullptr) return false;
+    if (unresolved == nullptr) return {};
     const auto& id = unresolved->type_id();
-    if (id.has_root_prefix() || id.empty()) return false;
-    return pnames.count(id[id.size() - 1]) != 0;
+    if (id.has_root_prefix() || id.empty()) return {};
+    const std::string& name = id[id.size() - 1];
+    if (pnames.count(name) == 0) return {};
+    return {depth, name};
 }
 
 } // namespace
@@ -236,7 +240,7 @@ void generic_constraint_validator::validate_generic_aggregate(aggregate& agg) {
     _member_scope.clear();
     for (auto& child : agg.get_children()) {
         if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(child)) {
-            _member_scope[mv->get_short_name()] = is_erased_param_type(mv->get_type(), pnames);
+            _member_scope[mv->get_short_name()] = erased_slot_of_type(mv->get_type(), pnames);
         }
     }
 
@@ -314,6 +318,8 @@ void generic_constraint_validator::validate_generic_function(
         validate_type_usage(param->get_type(), ctx, pnames, pdescs, param_lexeme);
     }
 
+    auto* previous_function = _current_function;
+    _current_function = &fn;
     push_scope();
     for (size_t i = 0; i < fn.get_parameter_size(); ++i) {
         if (auto param = fn.get_parameter(i)) {
@@ -322,6 +328,7 @@ void generic_constraint_validator::validate_generic_function(
     }
     validate_statement_tree(fn.get_existing_block(), pnames, pdescs);
     pop_scope();
+    _current_function = previous_function;
 }
 
 void generic_constraint_validator::push_scope() {
@@ -338,44 +345,58 @@ void generic_constraint_validator::declare_local(
     const std::unordered_set<std::string>& pnames)
 {
     if (_scopes.empty()) return;
-    _scopes.back()[name] = is_erased_param_type(t, pnames);
+    _scopes.back()[name] = erased_slot_of_type(t, pnames);
 }
 
-bool generic_constraint_validator::is_erased_expression(
+erased_slot generic_constraint_validator::erased_slot_of(
     const std::shared_ptr<expression>& expr,
     const std::unordered_set<std::string>& pnames) const
 {
-    if (expr == nullptr) return false;
+    if (expr == nullptr) return {};
 
     if (auto sym = std::dynamic_pointer_cast<symbol_expression>(expr)) {
         const auto& nm = sym->get_name();
-        if (nm.has_root_prefix() || nm.size() != 1) return false;
+        if (nm.has_root_prefix() || nm.size() != 1) return {};
         const std::string ident = std::string(nm.front());
         for (auto it = _scopes.rbegin(); it != _scopes.rend(); ++it) {
             auto found = it->find(ident);
             if (found != it->end()) return found->second;
         }
         auto member = _member_scope.find(ident);
-        return member != _member_scope.end() && member->second;
+        return member != _member_scope.end() ? member->second : erased_slot{};
     }
 
     if (auto mem = std::dynamic_pointer_cast<member_of_expression>(expr)) {
         auto base = std::dynamic_pointer_cast<symbol_expression>(mem->sub_expr());
-        if (base == nullptr || base->get_name().to_string() != "this") return false;
+        if (base == nullptr || base->get_name().to_string() != "this") return {};
         auto member = _member_scope.find(mem->symbol().get_name().to_string());
-        return member != _member_scope.end() && member->second;
+        return member != _member_scope.end() ? member->second : erased_slot{};
     }
 
-    if (std::dynamic_pointer_cast<dereference_expression>(expr) ||
-        std::dynamic_pointer_cast<load_value_expression>(expr)) {
-        return is_erased_expression(std::static_pointer_cast<unary_expression>(expr)->sub_expr(), pnames);
+    if (std::dynamic_pointer_cast<load_value_expression>(expr)) {
+        return erased_slot_of(std::static_pointer_cast<unary_expression>(expr)->sub_expr(), pnames);
     }
 
-    if (auto sub = std::dynamic_pointer_cast<subscript_expression>(expr)) {
-        return is_erased_expression(sub->left(), pnames);
+    std::shared_ptr<expression> indexed;
+    if (std::dynamic_pointer_cast<dereference_expression>(expr)) {
+        indexed = std::static_pointer_cast<unary_expression>(expr)->sub_expr();
+    } else if (auto sub = std::dynamic_pointer_cast<subscript_expression>(expr)) {
+        indexed = sub->left();
+    }
+    if (indexed) {
+        auto slot = erased_slot_of(indexed, pnames);
+        if (slot.depth > 0) --slot.depth;
+        return slot;
     }
 
-    return false;
+    return {};
+}
+
+bool generic_constraint_validator::is_erased_expression(
+    const std::shared_ptr<expression>& expr,
+    const std::unordered_set<std::string>& pnames) const
+{
+    return erased_slot_of(expr, pnames).depth >= 0;
 }
 
 void generic_constraint_validator::validate_type_usage(
@@ -485,6 +506,30 @@ void generic_constraint_validator::validate_expression_tree(
 
     if (auto cast_expr = std::dynamic_pointer_cast<cast_expression>(expr)) {
         validate_type_usage(cast_expr->get_cast_type(), "cast target type", pnames, pdescs, cast_expr->first_lexeme());
+    }
+
+    // `&*p` / `&p[i]` only forward the address: they do not move a value of the erased type.
+    if (auto addr_expr = std::dynamic_pointer_cast<address_of_expression>(expr)) {
+        const auto operand = addr_expr->sub_expr();
+        if (auto deref = std::dynamic_pointer_cast<dereference_expression>(operand)) {
+            validate_expression_tree(deref->sub_expr(), pnames, pdescs);
+            return;
+        }
+        if (auto sub = std::dynamic_pointer_cast<subscript_expression>(operand)) {
+            validate_expression_tree(sub->left(), pnames, pdescs);
+            validate_expression_tree(sub->right(), pnames, pdescs);
+            return;
+        }
+    }
+
+    if (_current_function) {
+        std::shared_ptr<expression> indexed;
+        if (auto deref = std::dynamic_pointer_cast<dereference_expression>(expr)) indexed = deref->sub_expr();
+        else if (auto sub = std::dynamic_pointer_cast<subscript_expression>(expr)) indexed = sub->left();
+        if (indexed) {
+            if (auto slot = erased_slot_of(indexed, pnames); slot.depth == 1)
+                _current_function->add_generic_pointee_value_param(slot.param);
+        }
     }
 
     if (auto tmp_ctor_expr = std::dynamic_pointer_cast<temporary_construction_expression>(expr)) {

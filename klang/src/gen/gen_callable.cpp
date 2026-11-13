@@ -287,7 +287,8 @@ std::shared_ptr<function> type_reference_resolver::select_callable_target(
     const std::vector<std::shared_ptr<function>>& candidates,
     const std::shared_ptr<callable_type>& tgt,
     const std::string& what,
-    const lex::opt_any_lexeme& where)
+    const lex::opt_any_lexeme& where,
+    const tpl_info::generic_usage_descriptor* generic_usage)
 {
     std::vector<std::shared_ptr<function>> compatible;
     // Kept to build an informative message when nothing qualifies: an offset
@@ -299,7 +300,18 @@ std::shared_ptr<function> type_reference_resolver::select_callable_target(
 
     for (const auto& cand : candidates) {
         if (!cand) continue;
-        auto compat = callable_signature_compatible(*cand, *tgt);
+        auto src_view = callable_signature_view::of(*cand);
+        if (generic_usage) {
+            // The erased synthesis only carries opaque pointers: compare the signature
+            // with the type arguments of the qualifier substituted.
+            std::vector<std::shared_ptr<type>> concrete_params;
+            std::shared_ptr<type> concrete_return;
+            if (concrete_generic_signature(*cand, *generic_usage, concrete_params, concrete_return)) {
+                src_view.parameter_types = std::move(concrete_params);
+                src_view.return_type = std::move(concrete_return);
+            }
+        }
+        auto compat = callable_signature_compatible(src_view, callable_signature_view::of(*tgt));
         if (compat.ok()) {
             compatible.push_back(cand);
             continue;

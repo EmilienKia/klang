@@ -578,6 +578,41 @@ TEST_CASE("FFI CString native callable on a generic host validates its type",
     }
 }
 
+TEST_CASE("FFI CString native direct call on a generic host validates its type",
+          "[ffi][cstring][generic][regression]") {
+    SECTION("char is accepted") {
+        REQUIRE(compile_model_with_stdlib(R"K(
+            module cstring_generic_direct_char;
+            generic<typename T> struct Host {
+                @ffi::Extern("C") static text(@ffi::CString value : T*) : int;
+            }
+            run() : int {
+                value : char;
+                return Host<char>::text(&value);
+            }
+        )K"));
+    }
+    SECTION("int is rejected with a CString diagnostic") {
+        REQUIRE_THROWS_MATCHES(gen_jit_throws(R"K(
+            module cstring_generic_direct_int;
+            generic<typename T> struct Host {
+                @ffi::Extern("C") static text(@ffi::CString value : T*) : int;
+            }
+            run() : int {
+                value : int;
+                return Host<int>::text(&value);
+            }
+        )K"), k::log::compiler_error,
+            Catch::Matchers::Predicate<k::log::compiler_error>([](const auto& error) {
+                const auto& diagnostic = error.get_diagnostic();
+                return diagnostic.code == static_cast<unsigned int>(
+                    k::diag::function_diag::ERR_PARAM_DEFAULT_TYPE_MISMATCH)
+                    && diagnostic.message.find("@ffi::CString") != std::string::npos
+                    && diagnostic.args.size() == 2 && diagnostic.args[1] == "int";
+            }, "CString int element diagnostic"));
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  @ffi::CString — valid addresser combinations
 // ═══════════════════════════════════════════════════════════════════════════

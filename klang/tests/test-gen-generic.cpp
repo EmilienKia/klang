@@ -900,6 +900,93 @@ TEST_CASE("Generic host permits null write through a pointer-valued pointee",
     REQUIRE(loaded_from_argument_slot(clear_call->getArgOperand(0), probe_ir->getArg(0)));
 }
 
+TEST_CASE("Generic host static and instance calls use the concrete type arguments",
+          "[gen][generic][erasure][static-call][regression]") {
+    const auto error_code = [](const std::string& source) -> unsigned int {
+        auto compiler = k::compiler::create();
+        try {
+            compiler->parse_source("generic_host_concrete_call.k", source, false, false);
+        } catch (const k::log::compiler_error& error) {
+            return error.get_diagnostic().code;
+        }
+        return 0;
+    };
+    SECTION("static call forwards a typed pointer and returns the concrete pointee") {
+        auto jit = gen_jit(R"K(
+            module gen_generic_static_concrete_1;
+            generic<typename T> struct Host {
+                static keep(value : T*) : T* { return value; }
+            }
+            test_static() : int {
+                v : int = 7;
+                p : int* = Host<int>::keep(&v);
+                return *p == 7 ? 0 : 1;
+            }
+        )K");
+        REQUIRE(jit);
+        auto fn = jit->lookup_symbol<int(*)()>("test_static");
+        REQUIRE(fn);
+        CHECK(fn() == 0);
+    }
+    SECTION("static call rejects an argument of another pointee type") {
+        CHECK(error_code(R"K(
+            module k;
+            generic<typename T> struct Host {
+                static keep(value : T*) : T* { return value; }
+            }
+            probe(value : char*) { Host<int>::keep(value); }
+        )K") != 0);
+    }
+    SECTION("pointer-valued type argument accepts a pointer to pointer") {
+        CHECK(error_code(R"K(
+            module k;
+            generic<typename T> struct Host {
+                static keep(value : T*) : T* { return value; }
+            }
+            probe(value : int* *) { Host<int*>::keep(value); }
+        )K") == 0);
+    }
+    SECTION("instance call rejects a null write through an int pointee") {
+        CHECK(error_code(R"K(
+            module k;
+            generic<typename T> struct Host {
+                clear(value : T*) { *value = null; }
+            }
+            probe(value : int*) { h : Host<int>; h.clear(value); }
+        )K") == static_cast<unsigned int>(
+            k::diag::generic_diag::ERR_GENERIC_POINTEE_ACCESS_ON_NON_POINTER));
+    }
+    SECTION("static call rejects a null write through an int pointee") {
+        CHECK(error_code(R"K(
+            module k;
+            generic<typename T> struct Host {
+                static clear(value : T*) { *value = null; }
+            }
+            probe(value : int*) { Host<int>::clear(value); }
+        )K") == static_cast<unsigned int>(
+            k::diag::generic_diag::ERR_GENERIC_POINTEE_ACCESS_ON_NON_POINTER));
+    }
+    SECTION("callable binding rejects a null write through an int pointee") {
+        CHECK(error_code(R"K(
+            module k;
+            generic<typename T> struct Host {
+                static clear(value : T*) { *value = null; }
+            }
+            probe() { callable : &(int*) = Host<int>::clear; }
+        )K") == static_cast<unsigned int>(
+            k::diag::generic_diag::ERR_GENERIC_POINTEE_ACCESS_ON_NON_POINTER));
+    }
+    SECTION("forwarding the address of the pointee does not move a value") {
+        CHECK(error_code(R"K(
+            module k;
+            generic<typename T> struct Host {
+                static same(value : T*) : T* { return &*value; }
+            }
+            probe(value : int*) { Host<int>::same(value); }
+        )K") == 0);
+    }
+}
+
 TEST_CASE("Single synthesis: generic function is compiled once for all type arguments",
           "[gen][generic][synthesis]") {
     auto jit = gen_jit(R"K(

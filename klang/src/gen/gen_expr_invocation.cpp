@@ -290,6 +290,12 @@ void type_reference_resolver::record_generic_cstring_obligations(
     for (size_t i = 0; i < params.size() && i < args.size(); ++i) {
         if (!params[i]->is_ffi_cstring()) continue;
         if (!type::is_erased_param(cstring_addressed_type(params[i]->get_type()))) continue;
+        // A concretely typed argument needs no tracing: the host's concrete type arguments
+        // are validated against the parameter declaration at the call (see
+        // validate_generic_cstring_contract).
+        if (args[i] && args[i]->get_type() && !type::contains_unresolved(args[i]->get_type())
+            && !type::is_erased_param(cstring_addressed_type(args[i]->get_type()))
+            && cstring_addressed_type(args[i]->get_type())) continue;
 
         auto arg = args[i];
         while (arg) {
@@ -1501,7 +1507,9 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
             }
         };
 
+        std::optional<tpl_info::generic_usage_descriptor> qualifier_usage;
         if (is_qualified_call && callee->has_qualifier_template_args()) {
+            _generic_qualifier_usages.erase(&expr);
             const auto qualifier_name = callee->get_name().without_back();
 
             std::optional<lex::punctuator> root_prefix;
@@ -1523,6 +1531,7 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                 auto qualifier_type = _context->from_type_specifier(ast_identified);
                 if (auto unres = std::dynamic_pointer_cast<unresolved_type>(qualifier_type)) {
                     auto resolved_type = try_instantiate_template_type(unres, expr);
+                    if (const auto* usage = find_generic_qualifier_usage(&expr)) qualifier_usage = *usage;
                     if (auto st_type = std::dynamic_pointer_cast<struct_type>(resolved_type)) {
                         if (auto owner_struct = st_type->get_struct()) {
                             for (auto& fn : owner_struct->functions()) {
@@ -2166,7 +2175,8 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
                                                             this_candidate ? &args : nullptr,
                                                             func_name,
                                                             expr.first_lexeme(),
-                                                            rejected_constraint_candidates);
+                                                            rejected_constraint_candidates,
+                                                            qualifier_usage ? &*qualifier_usage : nullptr);
         bool is_free_to_member_call = false;
 
         // Step 6: Adapt arguments to match selected function's parameter types
@@ -2192,13 +2202,20 @@ void type_reference_resolver::visit_function_invocation_expression(function_invo
         // Check visibility of the resolved function
         check_function_visibility(*best.func, expr);
         check_typedef_arguments(*best.func, expr.arguments(), expr.first_lexeme());
+        const auto* qualifier_bindings = qualifier_usage && best.func->is_member() && best.func->is_static()
+            ? &*qualifier_usage : nullptr;
+        if (qualifier_bindings) {
+            check_generic_call_arguments(*best.func, nullptr, expr.arguments(), expr.first_lexeme(),
+                                         qualifier_bindings);
+        }
 
         if (this_candidate && best.func->is_member() && !best.func->is_static() && !best.is_unified_call) {
             is_free_to_member_call = true;
         }
 
         callee->set_target(best.func);
-        auto resolved_return_type = resolve_generic_call_return_type(*best.func, this_candidate);
+        auto resolved_return_type = resolve_generic_call_return_type(
+            *best.func, this_candidate, qualifier_bindings);
         expr.set_type(resolved_return_type ? resolved_return_type : best.func->get_return_type());
 
         // If the resolved return type is still an unresolved template type — e.g. a

@@ -226,7 +226,8 @@ type_reference_resolver::adapt_callable_type(
                         }
                     }
                     fn = select_callable_target(cands, tgt_frt, fn->get_short_name(),
-                                                expr->first_lexeme());
+                                                expr->first_lexeme(),
+                                                find_generic_qualifier_usage(sym.get()));
                     auto bind = callable_bind_expression::make_shared(
                         fn->is_static() || !fn->parent<aggregate>()
                             ? (fn->parent<aggregate>() ? callable_bind_expression::kind::static_method

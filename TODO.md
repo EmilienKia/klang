@@ -877,28 +877,21 @@
       select different inner overloads for different concrete arguments; define
       uniform selection semantics or provide suitable dispatch. Recursive calls
       may encounter an in-progress synthesis before its obligations are known.
-    - [ ] **Investigate generic erased-pointee operations before enabling generic-host
-      callables.** Static analysis indicates that `generic<typename T> struct Host {
-      static clear(value : T*) { *value = null; } }` can be synthesized with
-      `T` represented as `byte*`, so the assignment writes a pointer through
-      `value`. Binding `Host<int>::clear` to `&(int*)` and invoking it on an
-      `int` would expose that body to an `int*`; the erased and source call
-      parameters are both LLVM pointers, but their pointee operations are not
-      equivalent. `generic_constraint_validator::validate_expression_tree`
-      only rejects member access, and `visit_dereference_expression` plus
-      pointer assignment appear to accept the erased operation. Reproduce in a
-      dedicated regression before changing the compiler; no executable
-      reproduction has been run. A sound solution must also account for
-      imported signature-only generic bodies and cases where `T` really is a
-      pointer, without silently dropping type or ownership obligations.
-    - [ ] **Generic-host static callables and direct calls (D8, 4 tests pending).**
-      `Host<char>::text(&c)` and `callable : &(char*):int = Host<char>::text` on a
-      body-less `@ffi::Extern("C")` static of `generic<typename T> struct Host` fail with
-      00510/01305 because overload selection and callable compatibility use the erased
-      `byte**` signature. `test-gen-extern.cpp` case "FFI CString native callable on a
-      generic host validates its type" (4 sections) and `test-gen-generic.cpp` null-write
-      cases depend on the same erased-pointee design. CString validation itself is
-      already concrete-use based; it only needs concrete signatures at generic-host members.
+    - [x] **Generic erased-pointee operations.** `generic<typename T> struct Host {
+      static clear(value : T*) { *value = null; } }` moves a pointer-sized value through
+      `value`, which is only correct for a pointer-like `T`. The generic constraint validator
+      now records, per function, the type parameters whose value is read or written through
+      an addresser (`*p`, `p[i]`; `&*p` excluded), and every use (instance call, static
+      qualified call, callable binding) of a binding that is not pointer/link/view/reference
+      is rejected with `0x110A`. Limitation: signature-only imported generics do not carry the
+      record in KDI (no format change), so they are not checked.
+    - [x] **Generic-host static callables and direct calls (D8).**
+      Overload selection, argument checks, return types, callable compatibility and
+      `@ffi::CString` validation of `Host<char>::text(&c)` and
+      `callable : &(char*):int = Host<char>::text` now use the signature with the type
+      arguments substituted (`type_reference_resolver::concrete_generic_signature`); the
+      erased symbol is still the call target. When the substitution cannot be fully
+      resolved the erased signature is kept.
     - [ ] **CString obligations through nested/imported generic forwarding.** Direct and
       one-level forwarding (`forward<U>(U*)` calling an extern with `@ffi::CString`)
       are replayed per instantiation from `function::get_cstring_obligations()`.

@@ -195,6 +195,30 @@ generic<class T> class Optional {
 }
 ```
 
+### 5.4 Reading or writing a value through an addresser of `T`
+
+The erased slot behind `T` is a pointer. `*p`, `p[i]` with `p : T*` read or write a
+pointer-sized value, which is only correct when the type argument is itself pointer-like
+(a pointer, link, view or reference). The compiler records every body that moves a value this
+way (`*p = null`, `x = *p`) and rejects any use whose binding of that parameter is not
+pointer-like with `0x110A`, for instance `Host<int>::clear(i)` where `clear` executes
+`*value = null`, whereas `Host<int*>::clear(p)` is accepted. Taking the address back
+(`&*p`, `&p[i]`) does not move a value and is always accepted.
+
+The check is performed at instance calls, static calls through a qualifier and callable
+bindings of the member. Imported signature-only generics do not carry this information in the
+KDI, so the check is not applied to them (see §8).
+
+```k
+generic<typename T> struct Host {
+    static clear(value : T*) { *value = null; }   // writes a pointer-sized value
+}
+f(i : int*, p : int* *) {
+    Host<int>::clear(i);      // 0x110A
+    Host<int*>::clear(p);     // accepted
+}
+```
+
 ---
 
 ## 6. Use sites
@@ -216,9 +240,13 @@ test() : int {
 ```
 
 The arguments of generic *functions and methods of non-generic classes* are checked against the
-concrete signature (`ident<Dog>(&cat)` is an error). For the methods of a generic *aggregate*,
-the concrete argument check is not implemented yet: only the results are typed by the concrete
-arguments (see §8, limitation 5).
+concrete signature (`ident<Dog>(&cat)` is an error). The methods of a generic *aggregate* are
+checked the same way at instance calls (`h.set(&cat)` with `h : Optional<Dog>`) and at static
+calls through a qualifier (`Host<Dog>::keep(&cat)`): the erased synthesis only knows opaque
+pointers, so the call is typed with the type arguments substituted into the declared
+signature. A static member named without calling it (`callable : &(Dog*) = Host<Dog>::f`) is
+typed the same way for callable-compatibility checks. If the substituted signature cannot be
+fully resolved, the erased signature is kept.
 
 Generic types are **invariant**: `Optional<Dog>` is not an `Optional<Animal>`. Explicit
 type arguments on member calls of a non-generic class are supported
@@ -240,6 +268,7 @@ The user is responsible for the type checks and casts that the erased body canno
 | `0x1106` | `ERR_GENERIC_DRAIN_NOT_SUPPORTED` | `T#` on a generic parameter |
 | `0x1107` | `ERR_GENERIC_ARG_OWNER_DRAIN_NOT_ALLOWED` | Owner or drain type used as type argument |
 | `0x1108` | `ERR_GENERIC_MEMBER_ACCESS_ON_ERASED_PARAM` | Member access through an erased parameter |
+| `0x110A` | `ERR_GENERIC_POINTEE_ACCESS_ON_NON_POINTER` | Value read or written through `T*` while the type argument is not pointer-like (§5.4) |
 
 `0x1103` (constraint violated), `0x1104` (too many arguments) and `0x1105` (too few
 arguments) are reserved; those situations are currently reported by the template
@@ -283,6 +312,8 @@ This list reflects the state of the implementation and is expected to shrink.
    *method* of a non-generic class is exported as a signature-only member template of its host
    plus the erased synthesis as a regular method. Non-generic member templates
    (`template<...>` methods of a non-template class) are not exported through KDI.
+   The pointee-access record of §5.4 is not exported either, so a signature-only imported
+   generic is not checked for it (the erased body is the exporting module's).
 6. **No default type arguments, no value parameters, no packs, no specialization.**
 7. **Generic methods are never virtual.**
 8. **Owned members of a generic (or non-generic) aggregate are not destroyed

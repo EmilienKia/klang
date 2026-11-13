@@ -648,6 +648,13 @@ enum class generic_diag : unsigned int {
      * importing module cannot use it.
      */
     ERR_GENERIC_IMPORT_NO_SYNTHESIS               = 0x1109,
+
+    /**
+     * The erased body of a generic reads or writes a value through an addresser of a type
+     * parameter (e.g. '*p = null' with 'p : T*'), but the type argument at the use site is
+     * not pointer-like: the erased slot is pointer-sized and would not match its layout.
+     */
+    ERR_GENERIC_POINTEE_ACCESS_ON_NON_POINTER     = 0x110A,
 };
 
 // ────────────────────────────────────────────────────────────────────────────

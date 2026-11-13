@@ -1293,23 +1293,16 @@ type_reference_resolver::find_generic_usage_for_receiver(const std::shared_ptr<e
     return nullptr;
 }
 
-void type_reference_resolver::check_generic_call_arguments(
-    const function& called_func,
-    const std::shared_ptr<expression>& receiver_expr,
-    const std::vector<std::shared_ptr<expression>>& args,
-    const lex::opt_any_lexeme& lexeme)
+const tpl_info::generic_usage_descriptor*
+type_reference_resolver::find_generic_qualifier_usage(const element* site) const
 {
-    if (!receiver_expr || called_func.parameters().empty()) return;
+    auto it = _generic_qualifier_usages.find(site);
+    return it == _generic_qualifier_usages.end() ? nullptr : &it->second;
+}
 
-    const auto* usage = find_generic_usage_for_receiver(receiver_expr);
-    if (!usage || usage->type_bindings.empty()) return;
-
-    type_substitution_map subst;
-    for (const auto& kv : usage->type_bindings) {
-        if (kv.second) subst[kv.first] = kv.second;
-    }
-    if (subst.empty()) return;
-
+std::vector<std::shared_ptr<type>>
+type_reference_resolver::declared_generic_param_types(const function& called_func)
+{
     // Declared (unspecialised) parameter types: from the source for a local generic,
     // from the KDI signature for an imported one.
     std::vector<std::shared_ptr<type>> declared(called_func.parameters().size());
@@ -1345,6 +1338,54 @@ void type_reference_resolver::check_generic_call_arguments(
             }
         }
     }
+    return declared;
+}
+
+void type_reference_resolver::check_generic_pointee_access(
+    const function& called_func,
+    const tpl_info::generic_usage_descriptor& usage,
+    const lex::opt_any_lexeme& lexeme)
+{
+    for (const auto& name : called_func.get_generic_pointee_value_params()) {
+        auto bound = usage.type_bindings.find(name);
+        if (bound == usage.type_bindings.end() || !bound->second) continue;
+        auto inner = type::canonical(bound->second);
+        while (inner && type::is_const(inner)) inner = type::canonical(inner->get_subtype());
+        if (!inner || type::is_erased_param(inner) || type::is_pointer(inner) || type::is_link(inner)
+            || type::is_view(inner) || type::is_reference(inner)) continue;
+        throw_error(static_cast<unsigned int>(k::diag::generic_diag::ERR_GENERIC_POINTEE_ACCESS_ON_NON_POINTER),
+            lexeme,
+            "Cannot write through generic type parameter '{}' bound to '{}': the erased body of '{}' "
+            "assigns a pointer-sized value through an addresser of it, which needs a pointer-like "
+            "type argument",
+            {name, bound->second->to_string(), called_func.get_short_name()});
+    }
+}
+
+void type_reference_resolver::check_generic_call_arguments(
+    const function& called_func,
+    const std::shared_ptr<expression>& receiver_expr,
+    const std::vector<std::shared_ptr<expression>>& args,
+    const lex::opt_any_lexeme& lexeme,
+    const tpl_info::generic_usage_descriptor* usage_override)
+{
+    if (!receiver_expr && !usage_override) return;
+
+    const auto* usage = usage_override ? usage_override : find_generic_usage_for_receiver(receiver_expr);
+    if (!usage || usage->type_bindings.empty()) return;
+
+    check_generic_pointee_access(called_func, *usage, lexeme);
+    if (called_func.parameters().empty()) return;
+
+    type_substitution_map subst;
+    for (const auto& kv : usage->type_bindings) {
+        if (kv.second) subst[kv.first] = kv.second;
+    }
+    if (subst.empty()) return;
+
+    validate_generic_cstring_contract(called_func, *usage);
+
+    const auto declared = declared_generic_param_types(called_func);
 
     for (size_t i = 0; i < declared.size() && i < args.size(); ++i) {
         if (!declared[i] || !args[i]) continue;
@@ -1367,11 +1408,12 @@ void type_reference_resolver::check_generic_call_arguments(
 std::shared_ptr<type>
 type_reference_resolver::resolve_generic_call_return_type(
     const function& called_func,
-    const std::shared_ptr<expression>& receiver_expr)
+    const std::shared_ptr<expression>& receiver_expr,
+    const tpl_info::generic_usage_descriptor* usage_override)
 {
-    if (!called_func.has_return_type() || !receiver_expr) return {};
+    if (!called_func.has_return_type() || (!receiver_expr && !usage_override)) return {};
 
-    const auto* usage = find_generic_usage_for_receiver(receiver_expr);
+    const auto* usage = usage_override ? usage_override : find_generic_usage_for_receiver(receiver_expr);
     if (!usage || usage->type_bindings.empty()) return {};
 
     std::shared_ptr<type> declared_ret;
@@ -1438,6 +1480,74 @@ type_reference_resolver::resolve_generic_call_return_type(
     if (!resolved) resolved = specialized;
     if (!resolved || type::contains_unresolved(resolved) || !type::is_resolved(resolved)) return {};
     return resolved;
+}
+
+bool type_reference_resolver::concrete_generic_param_types(
+    const function& called_func,
+    const tpl_info::generic_usage_descriptor& usage,
+    std::vector<std::shared_ptr<type>>& params)
+{
+    type_substitution_map subst;
+    for (const auto& kv : usage.type_bindings) {
+        if (kv.second) subst[kv.first] = kv.second;
+    }
+    if (subst.empty()) return false;
+
+    const auto declared = declared_generic_param_types(called_func);
+    std::vector<std::shared_ptr<type>> concrete(declared.size());
+    for (size_t i = 0; i < declared.size(); ++i) {
+        if (!declared[i]) return false;
+        auto specialized = substitute_type(declared[i], subst);
+        auto resolved = specialized ? resolve_type_chain(specialized, &called_func) : nullptr;
+        if (!resolved) resolved = specialized;
+        if (!resolved || type::contains_unresolved(resolved) || !type::is_resolved(resolved)) return false;
+        concrete[i] = resolved;
+    }
+    params = std::move(concrete);
+    return true;
+}
+
+void type_reference_resolver::validate_generic_cstring_contract(
+    const function& called_func,
+    const tpl_info::generic_usage_descriptor& usage)
+{
+    if (!called_func.is_extern() || !called_func.is_member()) return;
+    const auto& params = called_func.parameters();
+    if (std::none_of(params.begin(), params.end(), [](const auto& p) { return p && p->is_ffi_cstring(); }))
+        return;
+
+    std::vector<std::shared_ptr<type>> concrete;
+    const bool resolved = concrete_generic_param_types(called_func, usage, concrete);
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (!params[i] || !params[i]->is_ffi_cstring()) continue;
+        if (!resolved) {
+            throw_error(static_cast<unsigned int>(k::diag::function_diag::ERR_PARAM_TYPE_UNRESOLVED),
+                lex::opt_any_lexeme{},
+                "@ffi::CString on parameter '{}' of '{}': cannot validate the concrete element type "
+                "for these generic arguments",
+                {params[i]->get_short_name(), called_func.get_short_name()});
+        }
+        validate_ffi_cstring_parameter(*this, called_func, *params[i], concrete[i]);
+    }
+}
+
+bool type_reference_resolver::concrete_generic_signature(
+    const function& called_func,
+    const tpl_info::generic_usage_descriptor& usage,
+    std::vector<std::shared_ptr<type>>& params,
+    std::shared_ptr<type>& return_type)
+{
+    std::vector<std::shared_ptr<type>> concrete;
+    if (!concrete_generic_param_types(called_func, usage, concrete)) return false;
+
+    std::shared_ptr<type> ret;
+    if (called_func.has_return_type()) {
+        ret = resolve_generic_call_return_type(called_func, nullptr, &usage);
+        if (!ret) return false;
+    }
+    params = std::move(concrete);
+    return_type = std::move(ret);
+    return true;
 }
 
 // ── Template instantiation from type reference ──────────────────────────────
@@ -1663,6 +1773,9 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
         record_generic_usage(*ti, model_args);
         _generic_constructor_usages[&context_elem] = {
             tpl_agg, build_generic_usage_descriptor(*ti, model_args)};
+        if (dynamic_cast<const expression*>(&context_elem)) {
+            _generic_qualifier_usages[&context_elem] = build_generic_usage_descriptor(*ti, model_args);
+        }
         if (auto site_var = dynamic_cast<const variable_definition*>(&context_elem)) {
             _generic_usage_by_site[site_var] = build_generic_usage_descriptor(*ti, model_args);
         }
@@ -1676,6 +1789,9 @@ std::shared_ptr<type> type_reference_resolver::instantiate_template_aggregate(
             const auto key = build_instantiation_key(model_args);
             ti->instantiations[key] = concrete_agg;
             record_generic_usage(*ti, model_args);
+            if (dynamic_cast<const expression*>(&context_elem)) {
+                _generic_qualifier_usages[&context_elem] = build_generic_usage_descriptor(*ti, model_args);
+            }
             if (auto site_var = dynamic_cast<const variable_definition*>(&context_elem)) {
                 _generic_usage_by_site[site_var] = build_generic_usage_descriptor(*ti, model_args);
             }
@@ -4822,7 +4938,8 @@ type_reference_resolver::get_best_matching_function(
         const std::vector<std::shared_ptr<expression>>* direct_args,
         const std::string& callee_name,
         const lex::opt_any_lexeme& call_lexeme,
-        const std::vector<std::pair<std::shared_ptr<function>, std::string>>& rejected_tpl_candidates)
+        const std::vector<std::pair<std::shared_ptr<function>, std::string>>& rejected_tpl_candidates,
+        const tpl_info::generic_usage_descriptor* static_usage)
 {
     struct CandInfo {
         std::shared_ptr<function> func;
@@ -4843,11 +4960,19 @@ type_reference_resolver::get_best_matching_function(
         std::vector<std::shared_ptr<type>> result;
         if (!func) return result;
 
-        const auto* usage = find_generic_usage_for_receiver(this_expr);
+        const auto* usage = static_usage ? static_usage : find_generic_usage_for_receiver(this_expr);
         if (!usage || usage->type_bindings.empty()) return result;
 
         auto ast_decl = func->get_ast_function_decl();
-        if (!ast_decl) return result;
+        if (!ast_decl) {
+            // Imported generic: the declared signature only exists in its KDI metadata.
+            std::vector<std::shared_ptr<type>> imported_params;
+            std::shared_ptr<type> imported_return;
+            if (concrete_generic_signature(*func, *usage, imported_params, imported_return)) {
+                return imported_params;
+            }
+            return result;
+        }
 
         result.reserve(func->parameters().size());
 
@@ -5062,7 +5187,8 @@ type_reference_resolver::get_best_matching_function(
         if ((!func->is_member() || func->is_static()) && (!this_expr || direct_args)) {
             const auto& b_args = direct_args ? *direct_args : args;
             if (b_args.size() <= params.size() || func_has_varargs) {
-                auto [w, adapted] = score_with_defaults(b_args, params, nullptr, 0);
+                auto [w, adapted] = score_with_defaults(b_args, params,
+                    func->is_member() && static_usage ? member_param_types : nullptr, 0);
                 if (w != CAST_IMPOSSIBLE) {
                     size_t def = (b_args.size() < params.size()) ? params.size() - b_args.size() : 0;
                     valid.push_back({func, std::move(adapted), w, false, nullptr, 1, def, func_is_tpl});
@@ -5288,7 +5414,7 @@ type_reference_resolver::get_best_matching_function(
     auto* b = best[0];
     const auto& selected_params = b->func->parameters();
     const auto concrete_param_types = build_concrete_member_param_types(b->func);
-    const auto* param_types = b->func->is_member() && !b->func->is_static()
+    const auto* param_types = b->func->is_member() && (!b->func->is_static() || static_usage)
         && !concrete_param_types.empty() ? &concrete_param_types : nullptr;
     const auto& selected_args = !b->is_unified && (!b->func->is_member() || b->func->is_static()) && direct_args
         ? *direct_args : args;

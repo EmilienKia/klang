@@ -190,9 +190,11 @@ time. The contract is validated against the **original** (pre-erasure)
 signature at each concrete use instead:
 
 - a call through a generic host or an imported generic is checked with the
-  concrete template arguments, and a non-`char` argument is rejected with the
-  same diagnostic as a direct call (the `@ffi::CString` parameter-type mismatch
-  error);
+  concrete template arguments — at instance calls, at static calls through a
+  qualifier (`Host<char>::text(&c)`) and at callable bindings
+  (`callable : &(char*):int = Host<char>::text`) — and a non-`char` argument is
+  rejected with the same diagnostic as a direct call (the `@ffi::CString`
+  parameter-type mismatch error);
 - a generic function that forwards its own type-parameter argument to such a
   native function records the obligation, and each instantiation replays it
   with the substituted type;

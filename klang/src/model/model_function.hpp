@@ -278,6 +278,12 @@ protected:
         std::shared_ptr<const generic_source_type> argument_source;
     };
     std::vector<cstring_obligation> _cstring_obligations;
+    /**
+     * Names of the generic type parameters whose value this body reads or writes through an
+     * addresser (`*p`, `p[i]` with `p : T*`). The erased synthesis moves a pointer-sized
+     * slot there, so each binding of these parameters must be pointer-like.
+     */
+    std::vector<std::string> _generic_pointee_value_params;
     std::shared_ptr<ns> _template_definition_scope;
 
      /**
@@ -591,6 +597,15 @@ public:
     void add_cstring_obligation(std::shared_ptr<function> callee, size_t parameter_index,
                                 std::shared_ptr<const generic_source_type> argument_source) {
         _cstring_obligations.push_back({std::move(callee), parameter_index, std::move(argument_source)});
+    }
+
+    const std::vector<std::string>& get_generic_pointee_value_params() const {
+        return _generic_pointee_value_params;
+    }
+    void add_generic_pointee_value_param(const std::string& name) {
+        if (std::find(_generic_pointee_value_params.begin(), _generic_pointee_value_params.end(), name)
+            == _generic_pointee_value_params.end())
+            _generic_pointee_value_params.push_back(name);
     }
 
 };

@@ -1622,6 +1622,7 @@ void template_instantiator::populate_function_from_template(
     dst->set_has_explicit_return_type(src.has_explicit_return_type());
     dst->set_lambda(src.is_lambda());
     auto source_scopes = generic_source_scopes(src);
+    dst->_generic_pointee_value_params = src._generic_pointee_value_params;
     dst->_generic_source_return_type = src._generic_source_return_type;
     if (!dst->_generic_source_return_type && !source_scopes.empty())
         dst->_generic_source_return_type = generic_source_type::capture(
