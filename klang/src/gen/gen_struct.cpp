@@ -77,7 +77,7 @@ bool enum_constant_safe_type(const std::shared_ptr<type>& source, bool nested = 
     auto dtor = agg->get_destructor();
     if (dtor && !dtor->is_compiler_generated()) return false;
     auto copy = agg->get_copy_constructor();
-    if (copy && !copy->is_compiler_generated()) return false;
+    if (copy && !copy->is_generated_bytewise_copy()) return false;
     if (nested) {
         const auto& ctors = agg->constructors();
         if (std::none_of(ctors.begin(), ctors.end(), [](const auto& ctor) {
@@ -812,7 +812,6 @@ void symbol_resolver::visit_aggregate(aggregate& st) {
             copy_ctor->accept(*this);
         }
     }
-
     // ── Implicit copy assignment operator for structs: generate if absent and not deleted ──
     // Only for structs (not classes/interfaces/annotations). If the user explicitly declares
     // __operator_aS_ (with body or -> delete), we don't generate one.

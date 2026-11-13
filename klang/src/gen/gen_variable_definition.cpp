@@ -686,7 +686,7 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
             // For lvalue copies: reject non-trivial structs that have no copy constructor.
             if (is_lvalue_copy && struct_model) {
                 auto copy_ctor = struct_model->get_copy_constructor();
-                if (copy_ctor && !copy_ctor->is_compiler_generated()) {
+                if (copy_ctor && !copy_ctor->is_generated_bytewise_copy()) {
                     auto [selected, adapted] = get_best_matching_constructor(
                         copy_constructors_of(*struct_model), ctor_args, true, ctx.var_lexeme);
                     if (auto var_elem = dynamic_cast<const element*>(&ctx.var))
@@ -706,10 +706,12 @@ void type_reference_resolver::validate_struct_variable(var_init_context& ctx) {
                         type::is_const(arg_type_nc->get_subtype()), ctx.var_lexeme);
                 }
                 bool has_cc = copy_ctor != nullptr;
+                // A constructor-call initializer is a prvalue: it is moved into the variable.
+                const bool is_prvalue_init = std::dynamic_pointer_cast<temporary_construction_expression>(ctor_args[0]) != nullptr;
                 // Check for a resource-referencing field (owner/pointer/link/view,
                 // recursively through nested struct members) — such a field makes
                 // shallow copy unsafe even without a direct owner-typed field.
-                if (!has_cc && aggregate_type_has_resource_field(st_type)) {
+                if (!has_cc && !is_prvalue_init && aggregate_type_has_resource_field(st_type)) {
                     throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_TYPE_NOT_COPYABLE),
                         ctx.var_lexeme,
                         "Type '{}' is not copyable: variable initialisation from a lvalue requires a copy constructor",

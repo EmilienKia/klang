@@ -574,6 +574,7 @@ protected:
     friend class model_builder;
     friend class gen::symbol_resolver;
     friend class gen::type_reference_resolver;
+    friend class gen::aggregate_type_resolver;
     friend class template_instantiator;
 
 public:
@@ -587,6 +588,9 @@ public:
 protected:
     std::vector<member_init_spec> _member_inits;
     bool _is_copy_constructor = false;
+    // Compiler-generated copy constructor that copies each non-trivial member or base
+    // with its own copy constructor instead of copying the object bytewise.
+    bool _is_memberwise_copy = false;
     bool _inits_injected = false;
     // Guards template_instantiator::inject_constructor_member_inits() against
     // being invoked more than once for the same (freshly-instantiated)
@@ -620,6 +624,12 @@ public:
 
     bool is_copy_constructor() const { return _is_copy_constructor; }
     void set_copy_constructor(bool v) { _is_copy_constructor = v; }
+    bool is_memberwise_copy() const { return _is_memberwise_copy; }
+    void set_memberwise_copy(bool v) { _is_memberwise_copy = v; }
+    /** True for a generated copy constructor that is a plain memcpy of the object. */
+    bool is_generated_bytewise_copy() const {
+        return _is_copy_constructor && is_compiler_generated() && !_is_memberwise_copy;
+    }
     // True once base/member init statements were injected into the body (re-resolution guard).
     bool inits_injected() const { return _inits_injected; }
     void set_inits_injected(bool v) { _inits_injected = v; }

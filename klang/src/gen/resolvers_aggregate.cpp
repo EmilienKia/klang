@@ -1577,6 +1577,34 @@ void aggregate_type_resolver::resolve() {
             changed = true;
         }
     } while (changed);
+
+    // A struct or class whose base or member has its own copy constructor (for instance a
+    // k::String) cannot be copied bytewise: synthesize a memberwise copy constructor that
+    // copy-constructs each such sub-object. Member types are only fully resolved here.
+    // Aggregates holding raw resources (owner, pointer, link, view) still require an
+    // explicit copy constructor. The classification recurses through members lacking a
+    // constructor yet, so the result does not depend on the declaration order.
+    for (const auto& agg : aggregates) {
+        auto agg_type = agg->get_struct_type();
+        if (!agg_type || !aggregate_needs_memberwise_copy(*agg)) continue;
+        // An earlier pass may have generated a bytewise copy before member types were resolved:
+        // replace it, the memberwise one takes a const reference like a user-written copy.
+        if (auto existing = agg->get_copy_constructor()) {
+            if (existing->is_memberwise_copy()) continue;
+            std::erase(agg->_constructors, existing);
+            std::erase(agg->_children, std::static_pointer_cast<element>(existing));
+        }
+        auto copy_ctor = constructor::make_shared(agg);
+        copy_ctor->set_compiler_generated(true);
+        copy_ctor->set_copy_constructor(true);
+        copy_ctor->set_memberwise_copy(true);
+        copy_ctor->append_parameter("other", agg_type->get_const()->get_reference());
+        agg->_constructors.push_back(copy_ctor);
+        agg->_children.push_back(copy_ctor);
+        symbol_resolver sr(*this, _context, _unit);
+        copy_ctor->accept(sr);
+        copy_ctor->accept(*this);
+    }
     trace("[aggregate_type_resolver::resolve] done");
 }
 

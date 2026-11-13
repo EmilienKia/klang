@@ -1934,6 +1934,12 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
                         other_ptr, llvm::MaybeAlign(),
                         _builder->getInt64(size)
                     );
+                    if (ctor->is_memberwise_copy()) {
+                        emit_memberwise_copy_fields(st, this_ptr, other_ptr);
+                        if (auto kl = std::dynamic_pointer_cast<klass>(st); kl && kl->has_vtable()) {
+                            emit_vptr_store(*_builder, *kl, this_ptr, _context);
+                        }
+                    }
                 }
             }
         }
@@ -2019,6 +2025,80 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
 }
 
 /**
+ * Finish a synthesized memberwise copy: the whole object was already copied bytewise, so
+ * every base or member that has its own copy constructor is re-initialised in place
+ * (zeroed, then copy-constructed from the source) to replace the aliased bytes.
+ */
+void implementation_generator::emit_memberwise_copy_fields(const std::shared_ptr<aggregate>& st,
+                                                           llvm::Value* dest, llvm::Value* source) {
+    auto st_type = st->get_struct_type();
+    auto st_llvm = _context->get_llvm_type(st_type);
+
+    std::function<void(const std::shared_ptr<type>&, llvm::Value*, llvm::Value*)> copy_value;
+    copy_value = [&](const std::shared_ptr<type>& t, llvm::Value* d, llvm::Value* s) {
+        auto nt = type::canonical(type::remove_const(t));
+        if (member_copy_kind_of(nt) != member_copy_kind::constructed) return;
+        if (auto arr = std::dynamic_pointer_cast<sized_array_type>(nt)) {
+            auto* arr_type = arr->get_llvm_struct_type();
+            auto* data_type = arr->get_llvm_data_array_type();
+            auto* dst_data = _builder->CreateStructGEP(arr_type, d, sized_array_type::FIELD_DATA, "mwc_dst_data");
+            auto* src_data = _builder->CreateStructGEP(arr_type, s, sized_array_type::FIELD_DATA, "mwc_src_data");
+            auto* fn = _builder->GetInsertBlock()->getParent();
+            auto* entry = _builder->GetInsertBlock();
+            auto* test = llvm::BasicBlock::Create(**_context, "mwc_test", fn);
+            auto* body = llvm::BasicBlock::Create(**_context, "mwc_elem", fn);
+            auto* done = llvm::BasicBlock::Create(**_context, "mwc_done", fn);
+            _builder->CreateBr(test);
+            _builder->SetInsertPoint(test);
+            auto* index = _builder->CreatePHI(_builder->getInt32Ty(), 2, "mwc_index");
+            index->addIncoming(_builder->getInt32(0), entry);
+            _builder->CreateCondBr(_builder->CreateICmpULT(index, _builder->getInt32((uint32_t)arr->get_size())),
+                                   body, done);
+            _builder->SetInsertPoint(body);
+            auto* dst_elem = _builder->CreateInBoundsGEP(data_type, dst_data, {_builder->getInt32(0), index});
+            auto* src_elem = _builder->CreateInBoundsGEP(data_type, src_data, {_builder->getInt32(0), index});
+            copy_value(arr->get_subtype(), dst_elem, src_elem);
+            auto* next = _builder->CreateAdd(index, _builder->getInt32(1), "mwc_next");
+            index->addIncoming(next, _builder->GetInsertBlock());
+            _builder->CreateBr(test);
+            _builder->SetInsertPoint(done);
+            return;
+        }
+        auto member_type = std::dynamic_pointer_cast<struct_type>(nt);
+        auto agg = member_type ? member_type->get_struct() : nullptr;
+        auto copy = agg ? agg->get_copy_constructor() : nullptr;
+        if (!copy) return;
+        auto it = _context->_functions.find(copy->shared_as<function>());
+        if (it == _context->_functions.end()) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F031), {},
+                "LLVM declaration not found for the copy constructor of member type '{}'",
+                {nt->to_string()});
+        }
+        _builder->CreateStore(llvm::Constant::getNullValue(_context->get_llvm_type(member_type)), d);
+        create_call_or_invoke(it->second->getFunctionType(), it->second, {d, s});
+    };
+
+    auto copy_field = [&](const std::string& field_name, const std::shared_ptr<type>& field_type) {
+        auto field = st_type->get_member(field_name);
+        if (!field) return;
+        auto* d = _builder->CreateStructGEP(st_llvm, dest, (unsigned)field->index, "mwc_dst_" + field_name);
+        auto* s = _builder->CreateStructGEP(st_llvm, source, (unsigned)field->index, "mwc_src_" + field_name);
+        copy_value(field_type, d, s);
+    };
+
+    for (const auto& bs : st->get_bases()) {
+        if (bs.base && bs.base->get_struct_type()) {
+            copy_field("__base_" + bs.sanitised_name() + "__", bs.base->get_struct_type());
+        }
+    }
+    for (const auto& entry : st->variables()) {
+        auto mv = std::dynamic_pointer_cast<member_variable_definition>(entry.second);
+        if (!mv || entry.first.rfind("__", 0) == 0) continue;
+        copy_field(entry.first, mv->get_type());
+    }
+}
+
+/**
  * Emit compiler-generated copy assignment operator (operator=) memberwise copy.
  *
  * Steps:
@@ -2057,7 +2137,32 @@ bool implementation_generator::emit_copy_assignment_operator(function& function,
             auto other_ref_type = _context->get_llvm_type(st->get_struct_type()->get_reference());
             auto other_ptr = _builder->CreateLoad(other_ref_type, other_alloca_it->second, "other_ref");
             auto st_llvm_type = _context->get_llvm_type(st->get_struct_type());
-            if (!emit_scalar_union_wrapper_copy(this_ptr, other_ptr, st, true, true)) {
+            auto copy_ctor = st->get_copy_constructor();
+            if (copy_ctor && copy_ctor->is_memberwise_copy()) {
+                // Resource-owning members: destroy the old value, then copy-construct in place.
+                auto copy_it = _context->_functions.find(copy_ctor->shared_as<model::function>());
+                if (copy_it == _context->_functions.end()) {
+                    throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F031),
+                        function.get_first_lexeme(),
+                        "LLVM declaration not found for the copy constructor of type '{}'",
+                        {st->get_struct_type()->to_string()});
+                }
+                auto* assign_fn = _builder->GetInsertBlock()->getParent();
+                auto* copy_bb = llvm::BasicBlock::Create(**_context, "assign_copy", assign_fn);
+                auto* done_bb = llvm::BasicBlock::Create(**_context, "assign_done", assign_fn);
+                _builder->CreateCondBr(_builder->CreateICmpNE(this_ptr, other_ptr), copy_bb, done_bb);
+                _builder->SetInsertPoint(copy_bb);
+                if (auto dtor = st->get_destructor()) {
+                    auto dtor_it = _context->_functions.find(dtor->shared_as<model::function>());
+                    if (dtor_it != _context->_functions.end()) {
+                        create_call_or_invoke(dtor_it->second->getFunctionType(), dtor_it->second, {this_ptr});
+                    }
+                }
+                _builder->CreateStore(llvm::Constant::getNullValue(st_llvm_type), this_ptr);
+                create_call_or_invoke(copy_it->second->getFunctionType(), copy_it->second, {this_ptr, other_ptr});
+                _builder->CreateBr(done_bb);
+                _builder->SetInsertPoint(done_bb);
+            } else if (!emit_scalar_union_wrapper_copy(this_ptr, other_ptr, st, true, true)) {
                 auto& dl = _context->_module->getDataLayout();
                 uint64_t size = dl.getTypeAllocSize(st_llvm_type);
                 _builder->CreateMemCpy(

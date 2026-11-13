@@ -5252,7 +5252,7 @@ std::shared_ptr<expression> type_reference_resolver::adapt_reference_load_value(
             check_union_payload_copy_contract(st, type::is_const(type->get_subtype()),
                                               expr->first_lexeme());
         }
-        if (first_copy && !first_copy->is_compiler_generated()
+        if (first_copy && !first_copy->is_generated_bytewise_copy()
             && !std::dynamic_pointer_cast<temporary_construction_expression>(expr)) {
             auto access_site = expr->parent<element>();
             std::vector<std::shared_ptr<constructor>> copies;

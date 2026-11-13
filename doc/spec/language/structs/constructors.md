@@ -220,6 +220,26 @@ struct NonCopyable {
   copy constructors of that type. A converting constructor such as `Box(base : Base&)` is never preferred
   over `Box(other : const Box&)`, even though the base-reference binding has a cheaper conversion weight.
 
+### Implicit copy constructor
+
+A struct or class that declares no copy constructor still copies correctly when its bases and members
+can be copied implicitly:
+
+- If every base and member is trivially copyable, the value is copied bytewise.
+- If at least one base or member has its own copy constructor (for instance a `k::String` member) and
+  none of the others owns or aliases a resource (owner, pointer, link, view, union), the compiler
+  synthesizes a *memberwise* copy constructor. It copies the object bytewise, then re-initialises each
+  such base or member through its own copy constructor. Classes receive it as well as structs. The
+  compiler-generated copy assignment of a struct then destroys the old value and copy-constructs the
+  new one. The synthesized constructor takes `const T&`, like a user-written copy constructor, and is
+  exported as an ordinary copy constructor.
+- Otherwise (a raw resource member, or a deleted member copy constructor) no copy constructor is
+  synthesized: copying an lvalue of that type is rejected (`00F06`) until a copy constructor is declared.
+- A constructor-call initializer (`a : Box = Box()`) is a prvalue, not an lvalue copy: it is moved into
+  the variable and never requires a copy constructor.
+
+A copy that throws part-way does not destroy the sub-objects already copied (documented limitation).
+
 ---
 ## 8. Examples
 ### Basic constructor

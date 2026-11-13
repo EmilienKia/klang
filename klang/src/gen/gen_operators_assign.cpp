@@ -1074,7 +1074,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                         && type::is_reference(source_type)
                         && !std::dynamic_pointer_cast<temporary_construction_expression>(right)) {
                         auto first_copy = agg->get_copy_constructor();
-                        if (first_copy && !first_copy->is_compiler_generated()) {
+                        if (first_copy && !first_copy->is_generated_bytewise_copy()) {
                             std::vector<std::shared_ptr<constructor>> copies;
                             for (const auto& ctor : agg->constructors()) {
                                 if (ctor && agg->is_copy_constructor(*ctor)) copies.push_back(ctor);
@@ -1185,7 +1185,7 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                     check_union_payload_copy_contract(st_type,
                         type::is_const(source_type->get_subtype()), expr.first_lexeme());
                 }
-                if (first_copy && !first_copy->is_compiler_generated()) {
+                if (first_copy && !first_copy->is_generated_bytewise_copy()) {
                     std::vector<std::shared_ptr<constructor>> copies;
                     for (const auto& ctor : owner->constructors()) {
                         if (ctor && owner->is_copy_constructor(*ctor)) copies.push_back(ctor);
