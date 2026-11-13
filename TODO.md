@@ -850,6 +850,62 @@
   restrictions; its body is synthesised once with every type parameter erased to an opaque
   pointer (today `byte*`), only non-owning addressers (`& * ? +`) may be applied to a
   parameter, and users of the generic keep the concrete types and perform the checks/casts.
+    - [ ] **Preserve constraints through erased generic forwarding.**
+      The compiler currently accepts this invalid program without a diagnostic,
+      even though `Wrong` does not derive from `Bound`:
+      ```k
+      class Bound {}
+      class Good : Bound {}
+      class Wrong {}
+      generic<class T : Bound> sink(value : T*) : int { return 1; }
+      generic<class U> forward(value : U*) : int { return sink(value); }
+      test() : int {
+          good : Good;
+          wrong : Wrong;
+          sink<Good>(&good);
+          return forward<Wrong>(&wrong);
+      }
+      ```
+      The equivalent `forward<Good>(&good)` compiles. Deduction inside the
+      erased body loses `U`'s concrete source identity, and
+      `validate_template_arg_constraints` skips erased arguments. A sound fix
+      needs declaration-scoped binder identities, deferred obligation replay
+      for every concrete call and cached synthesis, overload selection and
+      recursion handling. Signature-only imported generics also need retained
+      obligations and provenance in KDI; unknown metadata must not be treated
+      as proof that no constraints apply. A single erased body cannot directly
+      select different inner overloads for different concrete arguments; define
+      uniform selection semantics or provide suitable dispatch. Recursive calls
+      may encounter an in-progress synthesis before its obligations are known.
+    - [ ] **Investigate generic erased-pointee operations before enabling generic-host
+      callables.** Static analysis indicates that `generic<typename T> struct Host {
+      static clear(value : T*) { *value = null; } }` can be synthesized with
+      `T` represented as `byte*`, so the assignment writes a pointer through
+      `value`. Binding `Host<int>::clear` to `&(int*)` and invoking it on an
+      `int` would expose that body to an `int*`; the erased and source call
+      parameters are both LLVM pointers, but their pointee operations are not
+      equivalent. `generic_constraint_validator::validate_expression_tree`
+      only rejects member access, and `visit_dereference_expression` plus
+      pointer assignment appear to accept the erased operation. Reproduce in a
+      dedicated regression before changing the compiler; no executable
+      reproduction has been run. A sound solution must also account for
+      imported signature-only generic bodies and cases where `T` really is a
+      pointer, without silently dropping type or ownership obligations.
+    - [ ] **Generic-host static callables and direct calls (D8, 4 tests pending).**
+      `Host<char>::text(&c)` and `callable : &(char*):int = Host<char>::text` on a
+      body-less `@ffi::Extern("C")` static of `generic<typename T> struct Host` fail with
+      00510/01305 because overload selection and callable compatibility use the erased
+      `byte**` signature. `test-gen-extern.cpp` case "FFI CString native callable on a
+      generic host validates its type" (4 sections) and `test-gen-generic.cpp` null-write
+      cases depend on the same erased-pointee design. CString validation itself is
+      already concrete-use based; it only needs concrete signatures at generic-host members.
+    - [ ] **CString obligations through nested/imported generic forwarding.** Direct and
+      one-level forwarding (`forward<U>(U*)` calling an extern with `@ffi::CString`)
+      are replayed per instantiation from `function::get_cstring_obligations()`.
+      Still unsupported (fail closed with an unresolved-parameter-type error): forwarding
+      through another generic whose substituted type is still erased, calls through a
+      qualified member call inside a generic body, generic aggregate methods, and
+      signature-only imported generics (obligations are not exported in KDI).
     - [x] **Owners and drains as generic parameters/arguments**: not supported, by design
       (`T!`, `T#`, `Box<Dog!>` are rejected with `0x1102` / `0x1106` / `0x1107`). Possible
       future support through an owned destruction callable passed to the generic (under study).
@@ -1414,7 +1470,9 @@
   On a destructor exception that return value is unavailable. This batch makes
   the call unwind-aware and clears the owner before it, but cannot safely free
   a nonzero-offset base pointer on the exceptional path without additional ABI
-  information. Candidate repro: own a multiply-derived object through a
+  information. This is a pre-existing, source-level suspicion affecting
+  ordinary owner cleanup as well as partial union cleanup; it has not been
+  reproduced or fixed. Candidate repro: own a multiply-derived object through a
   secondary base, let its destructor throw inside `try { delete owner; }`,
   then check both catch continuation and allocation release. Non-virtual struct
   destroy/free and closure environment release now have exceptional cleanup;
