@@ -30,9 +30,12 @@
 #include "../src/model/mangler.hpp"
 
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/GlobalVariable.h>
 
 #include <algorithm>
 #include <cerrno>
+#include <exception>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -4137,6 +4140,428 @@ void check_bounded_exception_probe(int (*probe)()) {
     if (WIFEXITED(status)) CHECK(WEXITSTATUS(status) == 0);
 }
 
+}
+
+TEST_CASE("Exception unwinding: displaced pending exceptions release their objects",
+          "[gen][exceptions][finally][lifetime][regression]") {
+    const bool optimize = GENERATE(false, true);
+    CAPTURE(optimize);
+    auto comp = compile_model_with_stdlib(R"K(
+        module pending_exception_lifetime;
+        outerDrops: int = 0;
+        primaryDrops: int = 0;
+        cleanupDrops: int = 0;
+        replacementDrops: int = 0;
+        class Outer : public FatalError {
+        public:
+            Outer() : FatalError(41) {}
+        }
+        class Primary : public FatalError {
+        public:
+            Primary() : FatalError(42) {}
+        }
+        class Cleanup : public FatalError {
+        public:
+            Cleanup(cause: Throwable?) : FatalError(43, cause) {}
+        }
+        class Replacement : public FatalError {
+        public:
+            Replacement(cause: Throwable?) : FatalError(44, cause) {}
+        }
+        struct Guard {
+            cause: Throwable?;
+            Guard(value: Throwable?) : cause(value) {}
+            ~Guard() { throw Cleanup(cause); }
+        }
+        replace(cause: Throwable?): int {
+            try { throw Primary(); }
+            catch (e: Primary&) {
+                guard: Guard(e);
+                return -1;
+            } finally { throw Replacement(cause); }
+            return -2;
+        }
+        replaceInOuter(): int {
+            try {
+                try { throw Outer(); }
+                catch (outer: Outer&) {
+                    try { replace(outer); }
+                    catch (e: Replacement&) {
+                        cause: Throwable* = e.getCause();
+                        if (e.getCode() != 44 || cause == null || cause->getCode() != 41) return 1;
+                    }
+                }
+            } catch (wrong: Throwable&) { return 2; }
+            return 0;
+        }
+        propagate(): int {
+            try {
+                try { throw Primary(); }
+                catch (e: Primary&) {
+                    guard: Guard(e);
+                    return 3;
+                } finally {}
+            } catch (e: Cleanup&) {
+                cause: Throwable* = e.getCause();
+                return e.getCode() == 43 && cause != null && cause->getCode() == 42 ? 0 : 4;
+            }
+            return 5;
+        }
+        handledInsideFinally(): int {
+            try {
+                try { throw Primary(); }
+                catch (e: Primary&) {
+                    guard: Guard(e);
+                    return 15;
+                } finally {
+                    try { throw Replacement(null); }
+                    catch (ignored: Replacement&) {}
+                }
+            } catch (e: Cleanup&) {
+                cause: Throwable* = e.getCause();
+                return e.getCode() == 43 && cause != null && cause->getCode() == 42 ? 0 : 16;
+            }
+            return 17;
+        }
+        suppressReturn(): int {
+            try { throw Primary(); }
+            catch (e: Primary&) {
+                guard: Guard(e);
+                return 6;
+            } finally { return 0; }
+            return 7;
+        }
+        suppressLoop(mode: int): int {
+            i: int = 0;
+            while (i < 1) {
+                ++i;
+                try { throw Primary(); }
+                catch (e: Primary&) {
+                    guard: Guard(e);
+                    return 8;
+                } finally {
+                    if (mode == 0) break;
+                    continue;
+                }
+            }
+            return 0;
+        }
+        unmatched(): int {
+            try {
+                try { throw Cleanup(null); }
+                finally { throw Replacement(null); }
+            } catch (e: Replacement&) { return e.getCode() == 44 ? 0 : 9; }
+            return 10;
+        }
+        rethrowOuter(): int {
+            try {
+                try { throw Outer(); }
+                catch (outer: Outer&) {
+                    try { throw Primary(); }
+                    catch (e: Primary&) {
+                        guard: Guard(e);
+                        return 11;
+                    } finally { throw; }
+                }
+            } catch (e: Outer&) { return e.getCode() == 41 ? 0 : 12; }
+            catch (wrong: Throwable&) { return 13; }
+            return 14;
+        }
+        breakExit(): int { return suppressLoop(0); }
+        continueExit(): int { return suppressLoop(1); }
+    )K");
+    REQUIRE(comp);
+    auto& mod = comp->get_context_for_test()->module();
+    auto* i32 = llvm::Type::getInt32Ty(mod.getContext());
+    struct counter_mapping { const char* exception; const char* counter; };
+    for (const auto& mapping : {
+             counter_mapping{"Outer", "outerDrops"}, counter_mapping{"Primary", "primaryDrops"},
+             counter_mapping{"Cleanup", "cleanupDrops"}, counter_mapping{"Replacement", "replacementDrops"}}) {
+        auto agg = find_aggregate(comp, mapping.exception);
+        REQUIRE(agg);
+        auto* dtor = mod.getFunction("__k_exc_dtor_" + k::model::mangler::mangle_rtti(agg->get_name()));
+        REQUIRE(dtor);
+        auto* counter = mod.getNamedGlobal(comp->get_element_mangled_name(mapping.counter));
+        REQUIRE(counter);
+        REQUIRE(counter->getValueType() == i32);
+        llvm::IRBuilder<> builder(&dtor->getEntryBlock(), dtor->getEntryBlock().begin());
+        auto* count = builder.CreateLoad(i32, counter);
+        builder.CreateStore(builder.CreateAdd(count, llvm::ConstantInt::get(i32, 1)), counter);
+    }
+    if (optimize) comp->optimize_gen_code();
+    REQUIRE(comp->verify_gen_code());
+    auto jit = comp->to_jit();
+    REQUIRE(jit);
+    auto* outer = jit->lookup_symbol<int*>("outerDrops");
+    auto* primary = jit->lookup_symbol<int*>("primaryDrops");
+    auto* cleanup = jit->lookup_symbol<int*>("cleanupDrops");
+    auto* replacement = jit->lookup_symbol<int*>("replacementDrops");
+    REQUIRE(outer);
+    REQUIRE(primary);
+    REQUIRE(cleanup);
+    REQUIRE(replacement);
+    struct probe { const char* name; int outer; int primary; int cleanup; int replacement; };
+    for (const auto& test : {
+             probe{"replaceInOuter", 1, 1, 1, 1}, probe{"propagate", 0, 1, 1, 0},
+             probe{"handledInsideFinally", 0, 1, 1, 1},
+             probe{"suppressReturn", 0, 1, 1, 0}, probe{"breakExit", 0, 1, 1, 0},
+             probe{"continueExit", 0, 1, 1, 0}, probe{"unmatched", 0, 0, 1, 1},
+             probe{"rethrowOuter", 1, 1, 1, 0}}) {
+        INFO(test.name);
+        auto fn = jit->lookup_symbol<int (*)()>(test.name);
+        REQUIRE(fn);
+        const pid_t child = fork();
+        REQUIRE(child >= 0);
+        if (child == 0) {
+            alarm(10);
+            const int baseline = std::uncaught_exceptions();
+            const int result = fn();
+            _exit(result == 0 && std::uncaught_exceptions() == baseline &&
+                  *outer == test.outer && *primary == test.primary &&
+                  *cleanup == test.cleanup && *replacement == test.replacement ? 0 : 1);
+        }
+        int status = 0;
+        pid_t waited;
+        do {
+            waited = waitpid(child, &status, 0);
+        } while (waited < 0 && errno == EINTR);
+        REQUIRE(waited == child);
+        INFO("child status=" << status);
+        REQUIRE(WIFEXITED(status));
+        CHECK(WEXITSTATUS(status) == 0);
+    }
+}
+
+TEST_CASE("Exception unwinding: catch-local cleanup crosses its catch boundary",
+          "[gen][exceptions][finally][unwinding][regression]") {
+    const bool optimize = GENERATE(false, true);
+    CAPTURE(optimize);
+    auto jit = gen_jit(R"K(
+        module catch_local_exit_cleanup;
+        order: int = 0;
+        noiseSeen: int = 0;
+        quietDrops: int = 0;
+        resultDrops: int = 0;
+        failCleanup: bool = false;
+
+        class Outer : public FatalError {
+        public:
+            Outer() : FatalError(41) {}
+        }
+        class Primary : public FatalError {
+        public:
+            Primary() : FatalError(42) {}
+        }
+        class Cleanup : public FatalError {
+        public:
+            Cleanup() : FatalError(43) {}
+        }
+        class Noise : public FatalError {
+        public:
+            Noise() : FatalError(44) {}
+        }
+        struct Guard {
+            id: int;
+            Guard(value: int) : id(value) {}
+            ~Guard() {
+                order = order * 10 + id;
+                if (id == 2 && failCleanup) throw Cleanup();
+            }
+        }
+        struct Quiet {
+            Quiet() {}
+            ~Quiet() { ++quietDrops; }
+        }
+        struct Result {
+            id: int;
+            Result(value: int) : id(value) {}
+            ~Result() { ++resultDrops; order = order * 10 + 4; }
+        }
+        reset(fail: bool) {
+            order = 0;
+            noiseSeen = 0;
+            quietDrops = 0;
+            resultDrops = 0;
+            failCleanup = fail;
+        }
+        exitCatch(mode: int): int {
+            i: int = 0;
+            while (i < 1) {
+                ++i;
+                try { throw Primary(); }
+                catch (e: Primary&) {
+                    first: Guard = Guard(1);
+                    second: Guard = Guard(2);
+                    if (mode == 0) return 17;
+                    if (mode == 2) break;
+                    if (mode == 3) continue;
+                }
+                finally {
+                    try {
+                        quiet: Quiet = Quiet();
+                        throw Noise();
+                    } catch (e: Noise&) { ++noiseSeen; }
+                    order = order * 10 + 3;
+                }
+                return 19;
+            }
+            return 21;
+        }
+        returnResult(): Result {
+            while (true) {
+                if (r: Result = Result(42); true) {
+                    try { throw Primary(); }
+                    catch (e: Primary&) {
+                        first: Guard = Guard(1);
+                        second: Guard = Guard(2);
+                        return r;
+                    }
+                    finally {
+                        try {
+                            quiet: Quiet = Quiet();
+                            throw Noise();
+                        } catch (e: Noise&) { ++noiseSeen; }
+                        order = order * 10 + 3;
+                    }
+                    return r;
+                }
+            }
+        }
+        noFinally(fail: bool): int {
+            try { throw Primary(); }
+            catch (e: Primary&) {
+                if (fail) {
+                    second: Guard = Guard(2);
+                    return 17;
+                }
+                return 17;
+            }
+            return 19;
+        }
+        throwFromCatch() {
+            try { throw Primary(); }
+            catch (e: Primary&) {
+                first: Guard = Guard(1);
+                second: Guard = Guard(2);
+                throw Cleanup();
+            }
+            finally { order = order * 10 + 3; }
+        }
+        replacingFinally(): int {
+            try { throw Primary(); }
+            catch (e: Primary&) {
+                first: Guard = Guard(1);
+                second: Guard = Guard(2);
+                return 17;
+            }
+            finally { order = order * 10 + 3; throw Noise(); }
+            return 19;
+        }
+        testExit(mode: int): int {
+            reset(true);
+            code: int = 0;
+            try { exitCatch(mode); }
+            catch (wrong: Noise&) { return 1; }
+            catch (e: Cleanup&) { code = e.getCode(); }
+            catch (wrong: Throwable&) { return 2; }
+            return code == 43 && order == 213 && noiseSeen == 1 &&
+                quietDrops == 1 ? 0 : 3;
+        }
+        testNormal(mode: int): int {
+            reset(false);
+            value: int = exitCatch(mode);
+            expected: int = mode == 0 ? 17 : (mode == 1 ? 19 : 21);
+            return value == expected && order == 213 && noiseSeen == 1 &&
+                quietDrops == 1 ? 0 : 4;
+        }
+        testNested(): int {
+            reset(true);
+            code: int = 0;
+            try {
+                try { throw Outer(); }
+                catch (outer: Outer&) {
+                    try { exitCatch(0); }
+                    catch (e: Cleanup&) { if (e.getCode() != 43) return 5; }
+                    throw;
+                }
+            } catch (e: Outer&) { code = e.getCode(); }
+            catch (wrong: Throwable&) { return 6; }
+            return code == 41 && order == 213 && noiseSeen == 1 &&
+                quietDrops == 1 ? 0 : 7;
+        }
+        testNoFinally(fail: bool): int {
+            reset(fail);
+            code: int = 0;
+            try {
+                try { throw Outer(); }
+                catch (outer: Outer&) {
+                    try {
+                        if (noFinally(fail) != 17) return 8;
+                    } catch (e: Cleanup&) { code = e.getCode(); }
+                    throw;
+                }
+            } catch (e: Outer&) {
+                if (e.getCode() != 41) return 9;
+            } catch (wrong: Throwable&) { return 10; }
+            return code == (fail ? 43 : 0) && order == (fail ? 2 : 0) ? 0 : 11;
+        }
+        testResult(): int {
+            reset(true);
+            code: int = 0;
+            try { value: Result = returnResult(); }
+            catch (wrong: Noise&) { return 12; }
+            catch (e: Cleanup&) { code = e.getCode(); }
+            catch (wrong: Throwable&) { return 13; }
+            return code == 43 && order == 2134 && resultDrops == 1 &&
+                noiseSeen == 1 && quietDrops == 1 ? 0 : 14;
+        }
+        testNormalResult(): int {
+            reset(false);
+            {
+                value: Result = returnResult();
+                if (value.id != 42 || order != 213 || resultDrops != 0) return 19;
+            }
+            return order == 2134 && resultDrops == 1 &&
+                noiseSeen == 1 && quietDrops == 1 ? 0 : 20;
+        }
+        testThrowFromCatch(): int {
+            reset(false);
+            code: int = 0;
+            try { throwFromCatch(); }
+            catch (e: Cleanup&) { code = e.getCode(); }
+            catch (wrong: Throwable&) { return 15; }
+            return code == 43 && order == 213 ? 0 : 16;
+        }
+        testReplacingFinally(): int {
+            reset(true);
+            code: int = 0;
+            try { replacingFinally(); }
+            catch (e: Noise&) { code = e.getCode(); }
+            catch (wrong: Throwable&) { return 17; }
+            return code == 44 && order == 213 ? 0 : 18;
+        }
+        failingReturn(): int { return testExit(0); }
+        failingFallthrough(): int { return testExit(1); }
+        failingBreak(): int { return testExit(2); }
+        failingContinue(): int { return testExit(3); }
+        normalReturn(): int { return testNormal(0); }
+        normalFallthrough(): int { return testNormal(1); }
+        normalBreak(): int { return testNormal(2); }
+        normalContinue(): int { return testNormal(3); }
+        noFinallyReturn(): int { return testNoFinally(false); }
+        noFinallyThrowingCleanup(): int { return testNoFinally(true); }
+    )K", false, optimize);
+    REQUIRE(jit);
+    for (const auto* name : {"failingReturn", "failingFallthrough", "failingBreak",
+                             "failingContinue", "normalReturn", "normalFallthrough",
+                             "normalBreak", "normalContinue", "testNested",
+                             "noFinallyReturn", "noFinallyThrowingCleanup", "testResult", "testNormalResult",
+                             "testThrowFromCatch", "testReplacingFinally"}) {
+        INFO(name);
+        auto test = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(test);
+        check_bounded_exception_probe(test);
+    }
 }
 
 TEST_CASE("Exception unwinding: nested finally cleans intervening scopes before catch",

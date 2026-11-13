@@ -36,7 +36,659 @@
  */
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include "helpers.hpp"
+
+TEST_CASE("if-local-var: NRVO condition survives only the returned iteration",
+          "[gen][if-local-var][nrvo][regression]") {
+    const bool optimize = GENERATE(false, true);
+    CAPTURE(optimize);
+    auto jit = gen_jit(R"K(
+        module if_nrvo_iteration_cleanup;
+        made: int = 0;
+        drops: int = 0;
+        struct Result {
+            id: int;
+            Result(value: int): id(value) { ++made; }
+            ~Result() { ++drops; }
+        }
+        fallthrough(): Result {
+            i: int = 0;
+            while (true) {
+                ++i;
+                if (r: Result = Result(i); true) {
+                    if (i == 2) { return r; }
+                }
+            }
+        }
+        continuing(): Result {
+            i: int = 0;
+            while (true) {
+                ++i;
+                if (r: Result = Result(i); true) {
+                    if (i == 1) { continue; }
+                    return r;
+                }
+            }
+        }
+        breaking(): Result {
+            i: int = 0;
+            while (true) {
+                ++i;
+                while (true) {
+                    if (r: Result = Result(i); true) {
+                        if (i == 1) { break; }
+                        return r;
+                    }
+                }
+            }
+        }
+        ordinary(): Result { return Result(9); }
+        testFallthrough(): int {
+            made = 0;
+            drops = 0;
+            if (true) {
+                r: Result = fallthrough();
+                if (r.id != 2 || made != 2 || drops != 1) return -1;
+            }
+            return drops == 2 ? 42 : -2;
+        }
+        testContinue(): int {
+            made = 0;
+            drops = 0;
+            if (true) {
+                r: Result = continuing();
+                if (r.id != 2 || made != 2 || drops != 1) return -1;
+            }
+            return drops == 2 ? 42 : -2;
+        }
+        testBreak(): int {
+            made = 0;
+            drops = 0;
+            if (true) {
+                r: Result = breaking();
+                if (r.id != 2 || made != 2 || drops != 1) return -1;
+            }
+            return drops == 2 ? 42 : -2;
+        }
+        testOrdinary(): int {
+            made = 0;
+            drops = 0;
+            if (true) {
+                r: Result = ordinary();
+                if (r.id != 9 || made != 1 || drops != 0) return -1;
+            }
+            return drops == 1 ? 42 : -2;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    for (const auto* name : {"testFallthrough", "testContinue", "testBreak", "testOrdinary"}) {
+        INFO(name);
+        auto fn = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(fn);
+        CHECK(fn() == 42);
+    }
+}
+
+TEST_CASE("if-local-var: pending NRVO result is destroyed when outer cleanup throws",
+          "[gen][if-local-var][nrvo][exceptions][regression]") {
+    const bool optimize = GENERATE(false, true);
+    CAPTURE(optimize);
+    auto jit = gen_jit(R"K(
+        module if_nrvo_pending_result_cleanup;
+        made: int = 0;
+        drops: int = 0;
+        badDrops: int = 0;
+        catchInside: bool = false;
+        innerCode: int = 0;
+        struct Result {
+            id: int;
+            Result(value: int): id(value) { ++made; }
+            ~Result() {
+                ++drops;
+                if (catchInside) {
+                    try { throw FatalError(932); }
+                    catch (e: FatalError&) { innerCode = e.getCode(); }
+                }
+            }
+        }
+        struct BadGuard {
+            BadGuard() {}
+            ~BadGuard() { ++badDrops; throw FatalError(930); }
+        }
+        class BadOwner {
+        public:
+            BadOwner() {}
+            ~BadOwner() { ++badDrops; throw FatalError(931); }
+        }
+        outer(): Result {
+            bad: BadGuard = BadGuard();
+            while (true) {
+                if (r: Result = Result(42); true) { return r; }
+            }
+        }
+        sameScope(): Result {
+            while (true) {
+                if (bad: BadGuard = BadGuard(); r: Result = Result(42); true) {
+                    return r;
+                }
+            }
+        }
+        parameter(bad: BadOwner!): Result {
+            while (true) {
+                if (r: Result = Result(42); true) { return r; }
+            }
+        }
+        named(bad: BadOwner!) r: Result(42) {}
+        namedFinally(bad: BadOwner!) r: Result(42) {
+            try { return; }
+            finally {
+                try { throw FatalError(934); }
+                catch (e: FatalError&) { innerCode = e.getCode(); }
+            }
+        }
+        testOuter(): int {
+            made = 0;
+            drops = 0;
+            badDrops = 0;
+            innerCode = 0;
+            catchInside = true;
+            code: int = 0;
+            try { value: Result = outer(); }
+            catch (e: FatalError&) { code = e.getCode(); }
+            catchInside = false;
+            return code == 930 && innerCode == 932 && made == 1 &&
+                drops == 1 && badDrops == 1 ? 42 : -1;
+        }
+        testParameter(): int {
+            made = 0;
+            drops = 0;
+            badDrops = 0;
+            code: int = 0;
+            try { value: Result = parameter(new BadOwner()); }
+            catch (e: FatalError&) { code = e.getCode(); }
+            return code == 931 && made == 1 && drops == 1 && badDrops == 1 ? 42 : -2;
+        }
+        testSameScope(): int {
+            made = 0;
+            drops = 0;
+            badDrops = 0;
+            code: int = 0;
+            try { value: Result = sameScope(); }
+            catch (e: FatalError&) { code = e.getCode(); }
+            return code == 930 && made == 1 && drops == 1 && badDrops == 1 ? 42 : -5;
+        }
+        testNamed(): int {
+            made = 0;
+            drops = 0;
+            badDrops = 0;
+            code: int = 0;
+            try { value: Result = named(new BadOwner()); }
+            catch (e: FatalError&) { code = e.getCode(); }
+            return code == 931 && made == 1 && drops == 1 && badDrops == 1 ? 42 : -3;
+        }
+        testNamedFinally(): int {
+            made = 0;
+            drops = 0;
+            badDrops = 0;
+            innerCode = 0;
+            code: int = 0;
+            try { value: Result = namedFinally(new BadOwner()); }
+            catch (e: FatalError&) { code = e.getCode(); }
+            return code == 931 && innerCode == 934 && made == 1 &&
+                drops == 1 && badDrops == 1 ? 42 : -4;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    for (const auto* name : {"testOuter", "testSameScope", "testParameter",
+                             "testNamed", "testNamedFinally"}) {
+        INFO(name);
+        auto fn = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(fn);
+        CHECK(fn() == 42);
+    }
+}
+
+TEST_CASE("if-local-var: owner cleanup on control-flow exits",
+          "[gen][if-local-var][owner][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module if_owner_control_flow_cleanup;
+        drops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++drops; }
+        }
+        earlyReturn(): int {
+            if (value: Resource! = new Resource()) {
+                return 42;
+            }
+            return -1;
+        }
+        multiReturn(): int {
+            if (first: Resource! = new Resource(); second: Resource! = new Resource()) {
+                return 42;
+            }
+            return -1;
+        }
+        test(): int {
+            drops = 0;
+            if (earlyReturn() != 42 || drops != 1) return -1;
+            if (multiReturn() != 42 || drops != 3) return -2;
+            while (true) {
+                if (value: Resource! = new Resource()) {
+                    break;
+                }
+                return -3;
+            }
+            if (drops != 4) return -4;
+            iterations: int = 0;
+            while (iterations < 2) {
+                ++iterations;
+                if (value: Resource! = new Resource()) {
+                    continue;
+                }
+                return -5;
+            }
+            return drops == 6 ? 42 : -6;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("if-local-var: constructed conditions unwind in reverse order",
+          "[gen][if-local-var][exceptions][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module if_condition_unwind_cleanup;
+        order: int = 0;
+        struct Guard {
+            id: int;
+            Guard(value: int) : id(value) {}
+            ~Guard() { order = order * 10 + id; }
+        }
+        class Resource {
+        public:
+            id: int;
+            Resource(value: int) : id(value) {}
+            ~Resource() { order = order * 10 + id; }
+        }
+        test(): int {
+            order = 0;
+            code: int = 0;
+            try {
+                if (first: Resource! = new Resource(1);
+                    guard: Guard = Guard(2);
+                    last: Resource! = new Resource(3)) {
+                    nested: Guard(4);
+                    throw Exception(923);
+                }
+            } catch (e: Throwable&) {
+                code = e.getCode();
+            }
+            if (code != 923 || order != 4321) return -1;
+
+            order = 0;
+            code = 0;
+            if (value: Resource! = new Resource(1)) {
+                try { throw Exception(924); }
+                catch (e: Throwable&) { code = e.getCode(); }
+                if (order != 0) return -2;
+            }
+            return code == 924 && order == 1 ? 42 : -3;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+static const std::string throwing_if_guard_declarations = R"K(
+    module if_condition_throwing_destructor;
+    drops: int = 0;
+    inner: int = 0;
+    struct Guard {
+        Guard() {}
+        ~Guard() {
+            ++drops;
+            if (drops == 1) throw FatalError(915);
+        }
+    }
+)K";
+
+TEST_CASE("if-local-var: throwing condition destructor on normal exit",
+          "[gen][if-local-var][exceptions][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(throwing_if_guard_declarations + R"K(
+        test(): int {
+            drops = 0;
+            inner = 0;
+            outer: int = 0;
+            try {
+                if (guard: Guard = Guard(); true) {
+                    try { throw FatalError(914); }
+                    catch (e: FatalError&) { inner = e.getCode(); }
+                }
+            } catch (e: FatalError&) { outer = e.getCode(); }
+            if (inner != 914) return -1;
+            if (outer != 915) return -2;
+            return drops == 1 ? 42 : -10 - drops;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("if-local-var: throwing condition destructor on return",
+          "[gen][if-local-var][exceptions][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(throwing_if_guard_declarations + R"K(
+        early(): int {
+            if (guard: Guard = Guard(); true) {
+                try { return 7; }
+                catch (e: FatalError&) { ++inner; }
+            }
+            return 17;
+        }
+        test(): int {
+            drops = 0;
+            inner = 0;
+            outer: int = 0;
+            try { early(); }
+            catch (e: FatalError&) { outer = e.getCode(); }
+            if (inner != 0) return -10 - inner;
+            if (outer != 915) return -2;
+            return drops == 1 ? 42 : -20 - drops;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("if-local-var: throwing later condition cleans earlier owner",
+          "[gen][if-local-var][exceptions][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module if_condition_partial_unwind;
+        drops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++drops; }
+        }
+        fail(): Resource! { throw FatalError(916); }
+        test(): int {
+            drops = 0;
+            code: int = 0;
+            try {
+                if (first: Resource! = new Resource(); second: Resource! = fail()) {}
+            } catch (e: FatalError&) { code = e.getCode(); }
+            if (code != 916) return -1;
+            return drops == 1 ? 42 : -10 - drops;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("if-local-var: partial initialization and soft-fail unwind",
+          "[gen][if-local-var][exceptions][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module if_partial_condition_cleanup;
+        order: int = 0;
+        throwGuard: bool = false;
+        catchInside: bool = false;
+        struct Guard {
+            Guard() {}
+            ~Guard() {
+                order = order * 10 + 2;
+                if (catchInside) {
+                    try { throw FatalError(925); }
+                    catch (e: FatalError&) { if (e.getCode() != 925) order = -1; }
+                }
+                if (throwGuard) throw FatalError(918);
+            }
+        }
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { order = order * 10 + 1; }
+        }
+        failOwner(): Resource! { throw FatalError(916); }
+        failTest(): bool { throw FatalError(917); }
+        test(): int {
+            order = 0;
+            code: int = 0;
+            try {
+                if (first: Resource! = new Resource();
+                    second: Guard = Guard();
+                    third: Resource! = failOwner()) {}
+            } catch (e: FatalError&) { code = e.getCode(); }
+            if (code != 916 || order != 21) return -1;
+
+            order = 0;
+            code = 0;
+            try {
+                if (first: Resource! = new Resource();
+                    second: Guard = Guard(); failTest()) {}
+            } catch (e: FatalError&) { code = e.getCode(); }
+            if (code != 917 || order != 21) return -2;
+
+            order = 0;
+            code = 0;
+            try {
+                if (first: Resource! = failOwner();
+                    second: Guard = Guard(); true) {}
+            } catch (e: FatalError&) { code = e.getCode(); }
+            if (code != 916 || order != 0) return -5;
+
+            order = 0;
+            code = 0;
+            catchInside = true;
+            try {
+                if (first: Resource! = new Resource();
+                    second: Guard = Guard();
+                    third: Resource! = failOwner()) {}
+            } catch (e: FatalError&) { code = e.getCode(); }
+            catchInside = false;
+            if (code != 916 || order != 21) return -6;
+
+            iterations: int = 0;
+            while (iterations < 2) {
+                ++iterations;
+                order = 0;
+                code = 0;
+                throwGuard = true;
+                try {
+                    if (first: Resource! = new Resource();
+                        second: Guard = Guard();
+                        third: Resource! = null) { return -3; }
+                } catch (e: FatalError&) { code = e.getCode(); }
+                throwGuard = false;
+                if (code != 918 || order != 21) return -4;
+            }
+            return 42;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("if-local-var: early exits leave inner catch after finally",
+          "[gen][if-local-var][exceptions][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module if_cleanup_exit_handler_scope;
+        order: int = 0;
+        inner: int = 0;
+        struct Guard {
+            Guard() {}
+            ~Guard() { order = order * 10 + 1; throw FatalError(919); }
+        }
+        testBreak(): int {
+            order = 0;
+            inner = 0;
+            code: int = 0;
+            iterations: int = 0;
+            try {
+                while (iterations < 1) {
+                    ++iterations;
+                    if (guard: Guard = Guard(); true) {
+                        try { break; }
+                        catch (e: FatalError&) { ++inner; }
+                        finally { order = order * 10 + 2; }
+                    }
+                }
+            } catch (e: FatalError&) { code = e.getCode(); }
+            return code == 919 && inner == 0 && order == 21 ? 42 : -1;
+        }
+        testContinue(): int {
+            order = 0;
+            inner = 0;
+            code: int = 0;
+            iterations: int = 0;
+            try {
+                while (iterations < 1) {
+                    ++iterations;
+                    if (guard: Guard = Guard(); true) {
+                        try { continue; }
+                        catch (e: FatalError&) { ++inner; }
+                        finally { order = order * 10 + 2; }
+                    }
+                }
+            } catch (e: FatalError&) { code = e.getCode(); }
+            return code == 919 && inner == 0 && order == 21 ? 42 : -2;
+        }
+        earlyReturn(): int {
+            if (guard: Guard = Guard(); true) {
+                try { return 7; }
+                catch (e: FatalError&) { ++inner; }
+                finally { order = order * 10 + 2; }
+            }
+            return -1;
+        }
+        testReturn(): int {
+            order = 0;
+            inner = 0;
+            code: int = 0;
+            try { earlyReturn(); }
+            catch (e: FatalError&) { code = e.getCode(); }
+            return code == 919 && inner == 0 && order == 21 ? 42 : -3;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    for (const auto* name : {"testBreak", "testContinue", "testReturn"}) {
+        INFO(name);
+        auto fn = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(fn);
+        CHECK(fn() == 42);
+    }
+}
+
+TEST_CASE("if-local-var: inner cleanup still reaches its enclosing catch",
+          "[gen][if-local-var][exceptions][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module if_cleanup_inner_handler_scope;
+        outerDrops: int = 0;
+        innerDrops: int = 0;
+        caught: int = 0;
+        struct Outer {
+            Outer() {}
+            ~Outer() { ++outerDrops; }
+        }
+        struct Inner {
+            Inner() {}
+            ~Inner() { ++innerDrops; throw FatalError(920); }
+        }
+        early(): int {
+            if (guard: Outer = Outer(); true) {
+                try {
+                    local: Inner = Inner();
+                    return 7;
+                } catch (e: FatalError&) {
+                    caught = e.getCode();
+                    if (outerDrops != 0) return -1;
+                }
+            }
+            return 42;
+        }
+        test(): int {
+            outerDrops = 0;
+            innerDrops = 0;
+            caught = 0;
+            value: int = early();
+            return value == 42 && caught == 920 && innerDrops == 1 &&
+                outerDrops == 1 ? 42 : -2;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("if-local-var: boolean condition cleans on false and throw",
+          "[gen][if-local-var][exceptions][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module if_bool_condition_cleanup;
+        drops: int = 0;
+        shouldThrow: bool = false;
+        struct Guard {
+            id: int;
+            Guard(): id(7) {}
+            operator(): bool {
+                if (shouldThrow) throw FatalError(921);
+                return false;
+            }
+            ~Guard() { ++drops; }
+        }
+        returnFromElse(): int {
+            if (guard: Guard = Guard()) { return -1; }
+            else { return guard.id; }
+        }
+        test(): int {
+            drops = 0;
+            shouldThrow = false;
+            selected: int = 0;
+            if (guard: Guard = Guard()) { return -1; }
+            else { selected = guard.id + drops; }
+            if (selected != 7 || drops != 1) return -2;
+            if (returnFromElse() != 7 || drops != 2) return -3;
+            code: int = 0;
+            try {
+                if (guard: Guard = Guard()) { return -4; }
+                else { throw FatalError(922); }
+            } catch (e: FatalError&) { code = e.getCode(); }
+            if (code != 922 || drops != 3) return -5;
+            shouldThrow = true;
+            code = 0;
+            try {
+                if (guard: Guard = Guard()) { return -6; }
+            } catch (e: FatalError&) { code = e.getCode(); }
+            return code == 921 && drops == 4 ? 42 : -7;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
 
 
 // =============================================================================
