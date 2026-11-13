@@ -109,6 +109,7 @@ protected:
     std::shared_ptr<k::model::context> _context;
     bool _building_imported_declarations = false;
     std::shared_ptr<ns> _imported_definition_namespace;
+    bool _constraint_source_provenance_unknown = false;
     std::shared_ptr<type> from_type_specifier(const parse::ast::type_specifier& spec);
 
     /** Stack of contexts. */

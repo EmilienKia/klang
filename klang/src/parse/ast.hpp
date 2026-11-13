@@ -1671,6 +1671,8 @@ namespace k::parse {
             /// keyword through the closing ';'. Round-tripped through KDI so an
             /// importing module can re-parse the declaration.
             std::string template_source_text;
+            /// Original source buffer range corresponding to template_source_text.
+            std::string_view template_source_span;
             std::optional<lex::operator_> colon;
             std::optional<lex::punctuator> semicolon;
 
@@ -1930,6 +1932,10 @@ namespace k::parse {
             /** Raw K source text of the complete template declaration (from 'template' keyword
              *  through closing '}'), captured for KDI export. Empty if not a template. */
             std::string template_source_text;
+            /// Original source buffer range corresponding to template_source_text.
+            std::string_view template_source_span;
+            /// Source preceding the template keyword, starting at its first annotation.
+            std::string_view template_annotation_prefix_span;
             std::vector <lex::keyword> specifiers;
             lex::keyword kw_aggregate_type;
             lex::punctuator open_brace, close_brace;
@@ -1945,6 +1951,7 @@ namespace k::parse {
                 std::optional<lex::keyword> visibility_kw; ///< 'public', 'protected', 'private' or absent
                 lex::identifier name;                      ///< first component of the base-class name
                 std::string     qualified_name;            ///< full qualified name "ns::Base" (or just "Base")
+                std::shared_ptr<type_specifier> type;       ///< complete source type, including arguments
             };
             /** Base-class clause entries, in declaration order. Empty if no inheritance. */
             std::vector<base_clause_entry> bases;
@@ -2223,6 +2230,10 @@ namespace k::parse {
             /** Raw K source text of the complete template function declaration (from 'template' keyword
              *  through closing '}'), captured for KDI export. Empty if not a template. */
             std::string template_source_text;
+            /// Original source buffer range corresponding to template_source_text.
+            std::string_view template_source_span;
+            /// Source preceding the template keyword, starting at its first annotation.
+            std::string_view template_annotation_prefix_span;
             std::vector<lex::keyword> specifiers;
             lex::identifier name;
             lex::opt_any_lexeme operator_; /** Lexeme for the operator keyword, if this is an operator function declaration. */

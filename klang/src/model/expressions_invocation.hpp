@@ -560,6 +560,7 @@ public:
     std::shared_ptr<expression> clone() const override {
         std::shared_ptr<callable_bind_expression> c{new callable_bind_expression()};
         c->_type = _type;
+        c->_ast_node = _ast_node;
         c->_target = _target;
         c->_vtable_slot = _vtable_slot;
         c->_dispatch_base = _dispatch_base;

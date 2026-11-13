@@ -1003,7 +1003,8 @@ void type_reference_resolver::visit_aggregate(aggregate& st) {
     materialize_aliases(st, st);
 
     // Visit nested aggregate and union children first
-    for(auto& child : st.get_children()) {
+    const auto nested_children = st.get_children();
+    for(const auto& child : nested_children) {
         if(auto nested_st = std::dynamic_pointer_cast<aggregate>(child)) {
             nested_st->accept(*this);
         } else if(auto nested_un = std::dynamic_pointer_cast<union_type_def>(child)) {
@@ -1015,7 +1016,8 @@ void type_reference_resolver::visit_aggregate(aggregate& st) {
     // Resolve their value fields and finish that skeleton before visiting bodies.
     for (auto& [name, var] : st.variables()) {
         auto member = std::dynamic_pointer_cast<member_variable_definition>(var);
-        if (!member || !member->get_type() || type::is_resolved(member->get_type())) continue;
+        if (!member || name == "__parent__" || !member->get_type()
+            || type::is_resolved(member->get_type())) continue;
         auto resolved = resolve_type_chain(member->get_type(), member.get());
         if (resolved && (type::is_resolved(resolved)
                          || std::dynamic_pointer_cast<struct_type>(resolved))) {

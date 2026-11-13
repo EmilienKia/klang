@@ -1693,6 +1693,10 @@ max(a: T&, b: T&) : T {
 | `interface` | Must be an `interface` type                    |
 
 Optional base-type constraint: `class T : Animal` — T must be or derive from `Animal`.
+An earlier type parameter may be the bound: in `template<class Base, class T : Base>`,
+`T` must be or derive from the type supplied for `Base`.
+Checking this dependent bound is currently limited to certain concrete local
+template uses with complete hierarchy information; generic obligations remain incomplete.
 
 Optional default type: `typename T = int`.
 

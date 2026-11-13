@@ -667,7 +667,8 @@ std::shared_ptr<ast::alias_decl> parser::parse_alias_decl()
     // Capture the source text of a parameterised alias for KDI export: from the
     // 'template' keyword through the closing ';'.
     if (result->is_template() && tpl_kw_start && src_end && src_end > tpl_kw_start) {
-        result->template_source_text = std::string(tpl_kw_start, static_cast<size_t>(src_end - tpl_kw_start));
+        result->template_source_span = std::string_view(tpl_kw_start, static_cast<size_t>(src_end - tpl_kw_start));
+        result->template_source_text = result->template_source_span;
     }
 
     return result;
@@ -1584,7 +1585,8 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
                     throw_error(static_cast<unsigned int>(k::diag::parser_diag::ERR_EXPECTED_BASE_CLASS_NAME), _lexer.pick_current(), "Expected base class name in inheritance clause");
                 }
 
-                ast::aggregate_decl::base_clause_entry entry{vis_kw, base_ident->name.names.front(), encode_type_specifier(base_type)};
+                ast::aggregate_decl::base_clause_entry entry{
+                    vis_kw, base_ident->name.names.front(), encode_type_specifier(base_type), base_type};
                 bases.push_back(std::move(entry));
 
                 lex::lex_holder comma_holder(_lexer);
@@ -1642,7 +1644,13 @@ std::shared_ptr<ast::aggregate_decl> parser::parse_aggregate_decl()
     if (result->is_template() && !result->is_generic && tpl_kw_start) {
         const char* src_end = close_brace->content.data() + close_brace->content.size();
         if (src_end > tpl_kw_start) {
-            result->template_source_text = std::string(tpl_kw_start, static_cast<size_t>(src_end - tpl_kw_start));
+            result->template_source_span = std::string_view(tpl_kw_start, static_cast<size_t>(src_end - tpl_kw_start));
+            result->template_source_text = result->template_source_span;
+            if (!result->annotations.empty()) {
+                const char* prefix = result->annotations.front()->at_sign.content.data();
+                if (prefix < tpl_kw_start)
+                    result->template_annotation_prefix_span = std::string_view(prefix, static_cast<size_t>(tpl_kw_start - prefix));
+            }
         }
     }
 
@@ -2713,7 +2721,13 @@ std::shared_ptr<ast::function_decl> parser::parse_function_decl() {
     if (decl->is_template() && !decl->is_generic && tpl_kw_start && statements) {
         const char* src_end = statements->close_brace.content.data() + statements->close_brace.content.size();
         if (src_end > tpl_kw_start) {
-            decl->template_source_text = std::string(tpl_kw_start, static_cast<size_t>(src_end - tpl_kw_start));
+            decl->template_source_span = std::string_view(tpl_kw_start, static_cast<size_t>(src_end - tpl_kw_start));
+            decl->template_source_text = decl->template_source_span;
+            if (!decl->annotations.empty()) {
+                const char* prefix = decl->annotations.front()->at_sign.content.data();
+                if (prefix < tpl_kw_start)
+                    decl->template_annotation_prefix_span = std::string_view(prefix, static_cast<size_t>(tpl_kw_start - prefix));
+            }
         }
     }
 

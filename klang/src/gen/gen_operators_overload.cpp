@@ -92,8 +92,8 @@ type_reference_resolver::resolve_named_binary_operator_overload(
         if (!deduction.success) continue;
         size_t constraint_error_index = 0;
         std::string constraint_error_reason;
-        if (!validate_template_arg_constraints(
-                *ti, deduction.deduced_args, constraint_error_index, constraint_error_reason)) {
+        if (!validate_function_template_constraints(
+                *func, deduction.deduced_args, constraint_error_index, constraint_error_reason)) {
             continue;
         }
 
@@ -197,8 +197,8 @@ type_reference_resolver::resolve_named_binary_operator_overload(
         if (!deduction.success) continue;
         size_t constraint_error_index = 0;
         std::string constraint_error_reason;
-        if (!validate_template_arg_constraints(
-                *ti, deduction.deduced_args, constraint_error_index, constraint_error_reason)) continue;
+        if (!validate_function_template_constraints(
+                *func, deduction.deduced_args, constraint_error_index, constraint_error_reason)) continue;
 
         const auto key = build_instantiation_key(deduction.deduced_args);
         std::shared_ptr<function> concrete;

@@ -22,6 +22,7 @@
 #include "../common/common.hpp"
 
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -36,10 +37,30 @@ struct expression;
 namespace k::model {
 
 class type;
+class generic_source_type;
 class aggregate;
 class function;
 class union_type_def;
 class ns;
+
+// Identity is local to this model, not a serialized declaration origin.
+// Different specializations of one source declaration require separate binding
+// environments even though their source binder identities are the same.
+struct template_binder_scope final {};
+
+struct template_binder_id {
+    std::shared_ptr<const template_binder_scope> scope;
+    size_t ordinal = 0;
+
+    bool operator==(const template_binder_id&) const = default;
+};
+
+struct template_binder_id_hash {
+    size_t operator()(const template_binder_id& id) const {
+        return std::hash<const template_binder_scope*>{}(id.scope.get())
+            ^ (std::hash<size_t>{}(id.ordinal) << 1);
+    }
+};
 
 inline std::string template_private_scope_name(const std::string& origin) {
     static constexpr char hex[] = "0123456789abcdef";
@@ -92,6 +113,14 @@ struct template_param_descriptor {
      * "template<class T : Base>"). nullptr if unconstrained.
      */
     std::shared_ptr<type> constraint_type;
+
+    /**
+     * Compilation-local source identity of the declared constraint, captured
+     * before enclosing substitutions. A null value with a non-null constraint
+     * means provenance is unavailable, not that the constraint is satisfied.
+     * This metadata is neither a resolved constraint nor proof.
+     */
+    std::shared_ptr<generic_source_type> constraint_source_type;
 
     /**
      * For type parameters: optional default type. nullptr if no default.
@@ -232,6 +261,10 @@ using template_instantiation_key = std::string;
  * so that the same <Args> combination is not instantiated twice.
  */
 struct tpl_info {
+    /** Shared by clones of this source declaration; never a KDI origin key. */
+    std::shared_ptr<const template_binder_scope> binder_scope =
+        std::make_shared<const template_binder_scope>();
+
     /** Template parameter descriptors (in declaration order). */
     std::vector<template_param_descriptor> params;
 

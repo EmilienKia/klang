@@ -863,7 +863,9 @@ deduction_result deduce_template_arguments(
 
 ctad_deduction_result deduce_aggregate_ctad_candidates(
     const aggregate& tpl_agg,
-    const std::vector<std::shared_ptr<type>>& arg_types)
+    const std::vector<std::shared_ptr<type>>& arg_types,
+    const std::function<bool(const std::vector<template_argument>&, ctad_guide_kind)>&
+        validate_constraints)
 {
     ctad_deduction_result result;
     auto* ti = tpl_agg.get_tpl_info();
@@ -887,9 +889,7 @@ ctad_deduction_result deduce_aggregate_ctad_candidates(
         if (auto st = std::dynamic_pointer_cast<struct_type>(clean)) {
             if (st->get_struct() && st->get_struct()->has_tpl_args() &&
                 st->get_struct()->get_tpl_base_name() == tpl_agg.get_short_name()) {
-                size_t err_idx;
-                std::string err_reason;
-                if (validate_template_arg_constraints(ti->params, st->get_struct()->get_tpl_args(), err_idx, err_reason)) {
+                if (candidate_constraints_valid(st->get_struct()->get_tpl_args(), ctad_guide_kind::copy)) {
                     ctad_candidate copy_cand;
                     copy_cand.ctor = nullptr;
                     copy_cand.deduced_args = st->get_struct()->get_tpl_args();
@@ -926,9 +926,7 @@ ctad_deduction_result deduce_aggregate_ctad_candidates(
         if (!deduction.success) continue;
 
         // Validate template constraints
-        size_t err_idx;
-        std::string err_reason;
-        if (!validate_template_arg_constraints(ti->params, deduction.deduced_args, err_idx, err_reason)) {
+        if (!candidate_constraints_valid(deduction.deduced_args, ctad_guide_kind::constructor)) {
             continue;
         }
 
@@ -964,9 +962,7 @@ ctad_deduction_result deduce_aggregate_ctad_candidates(
             }
         }
         if (all_defaulted) {
-            size_t err_idx;
-            std::string err_reason;
-            if (validate_template_arg_constraints(ti->params, default_args, err_idx, err_reason)) {
+            if (candidate_constraints_valid(default_args, ctad_guide_kind::default_)) {
                 ctad_candidate def_cand;
                 def_cand.ctor = nullptr;
                 def_cand.deduced_args = std::move(default_args);

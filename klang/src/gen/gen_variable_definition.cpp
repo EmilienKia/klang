@@ -34,6 +34,8 @@
 #include "../parse/ast.hpp"
 #include "../errors.hpp"
 
+#include <unordered_set>
+
 namespace k::model::gen {
 
 
@@ -391,6 +393,18 @@ void type_reference_resolver::resolve_variable_type(
         const element* var_elem = dynamic_cast<const element*>(&var);
         if (var_elem) {
             resolved = resolve_type_by_name(unres_type->type_id(), *var_elem);
+            // A nested clone can be found before its LLVM layout has been
+            // materialized, especially when its enclosing specialization was
+            // created by the declaration resolver.
+            if (auto nested_type = std::dynamic_pointer_cast<struct_type>(resolved);
+                nested_type && !nested_type->is_resolved()) {
+                auto nested = nested_type->get_struct();
+                if (nested && nested->is_instantiation() && nested->is_nested()
+                    && !nested->is_imported()) {
+                    std::unordered_set<struct_type*> in_progress;
+                    _context->resolve_struct_type(nested_type, in_progress);
+                }
+            }
         }
         if ((!resolved || !type::is_resolved(resolved)) && !unres_type->get_definition_namespace()) {
             auto root_ns = _unit.get_root_namespace();

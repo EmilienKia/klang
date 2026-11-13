@@ -772,6 +772,396 @@ TEST_CASE("Nested template member arguments are resolved before class layout",
     CHECK(test() == 1);
 }
 
+TEST_CASE("Nested template uses retain distinct outer specialization types",
+          "[gen][template][instantiation][nested-template-descriptor]") {
+    auto jit = gen_jit(R"SRC(
+        module nested_template_descriptor_use;
+
+        template<typename T>
+        struct Host {
+            public:
+            template<typename U> static struct Inner {
+                public:
+                outer : T;
+                own : U;
+            }
+
+            roundtrip(value : T) : T {
+                item : Inner<int>;
+                item.outer = value;
+                return item.outer;
+            }
+        }
+
+        test() : bool {
+            small : Host<int>;
+            large : Host<long>;
+            return small.roundtrip(42) == 42 &&
+                   large.roundtrip(1234567890123L) == 1234567890123L;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<bool(*)()>("test");
+    REQUIRE(test);
+    CHECK(test());
+}
+
+TEST_CASE("Nested generic uses retain distinct outer specialization types",
+          "[gen][template][instantiation][nested-generic-descriptor]") {
+    auto jit = gen_jit(R"SRC(
+        module nested_generic_descriptor_use;
+
+        template<typename T>
+        struct Host {
+            public:
+            generic<typename U> static struct Inner {
+                public:
+                outer : T;
+                own : U*;
+            }
+
+            roundtrip(value : T) : T {
+                item : Inner<int>;
+                item.outer = value;
+                return item.outer;
+            }
+        }
+
+        test() : bool {
+            small : Host<int>;
+            large : Host<long>;
+            return small.roundtrip(42) == 42 &&
+                   large.roundtrip(1234567890123L) == 1234567890123L;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<bool(*)()>("test");
+    REQUIRE(test);
+    CHECK(test());
+}
+
+TEST_CASE("Nested inner templates retain their enclosing instance",
+          "[gen][template][instantiation][nested-template-descriptor]") {
+    auto jit = gen_jit(R"SRC(
+        module nested_inner_template_instance;
+
+        initializations : int = 0;
+        initialize(v : int) : int {
+            initializations += 1;
+            return v;
+        }
+
+        template<typename T>
+        struct Host {
+            public:
+            value : T;
+            struct Plain {
+                public:
+                get() : T { return value; }
+            }
+            template<typename U> struct Inner {
+                public:
+                get() : T { return value; }
+            }
+            template<typename U> struct Stored {
+                public:
+                own : U;
+                Stored(v : U) : own(initialize(v)) {}
+                get() : T { return value; }
+            }
+            read(v : T) : T {
+                value = v;
+                item : Inner<int>;
+                return item.get();
+            }
+            read_stored(v : T) : T {
+                value = v;
+                item : Stored<int>(7);
+                if (item.own == 7) return item.get();
+                return 0;
+            }
+            read_plain(v : T) : T {
+                value = v;
+                item : Plain;
+                return item.get();
+            }
+        }
+
+        test() : bool {
+            initializations = 0;
+            small : Host<int>;
+            other : Host<int>;
+            large : Host<long>;
+            return small.read(42) == 42 &&
+                   other.read(64) == 64 &&
+                   small.read(43) == 43 &&
+                   large.read(1234567890123L) == 1234567890123L &&
+                   small.read_stored(83) == 83 &&
+                   large.read_stored(9876543210123L) == 9876543210123L &&
+                   small.read_plain(19) == 19 &&
+                   large.read_plain(2345678901234L) == 2345678901234L &&
+                   small.read(21) == 21 &&
+                   initializations == 2;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<bool(*)()>("test");
+    REQUIRE(test);
+    CHECK(test());
+}
+
+TEST_CASE("Nested inner generics retain their enclosing instance",
+          "[gen][template][instantiation][nested-generic-descriptor]") {
+    auto jit = gen_jit(R"SRC(
+        module nested_inner_generic_instance;
+
+        template<typename T>
+        struct Host {
+            public:
+            value : T;
+            generic<typename U> struct Inner {
+                public:
+                get() : T { return value; }
+            }
+            read(v : T) : T {
+                value = v;
+                item : Inner<int>;
+                return item.get();
+            }
+        }
+
+        test() : bool {
+            first : Host<int>;
+            second : Host<int>;
+            large : Host<long>;
+            return first.read(42) == 42 &&
+                   second.read(73) == 73 &&
+                   first.read(19) == 19 &&
+                   large.read(1234567890123L) == 1234567890123L;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<bool(*)()>("test");
+    REQUIRE(test);
+    CHECK(test());
+}
+
+TEST_CASE("Nested member types survive sibling instantiation during resolution",
+          "[gen][template][instantiation][nested-template-descriptor]") {
+    auto jit = gen_jit(R"SRC(
+        module nested_member_instantiation_iteration;
+
+        template<typename T>
+        struct Host {
+            public:
+            template<typename U> static struct First {
+                public: value : U;
+            }
+            template<typename U> static struct Second {
+                public: value : U;
+            }
+            static struct Holder {
+                public:
+                first : First<T>;
+                second : Second<T>;
+            }
+            read(v : T) : T {
+                item : Holder;
+                item.first.value = v;
+                item.second.value = v;
+                if (item.first.value == item.second.value) return item.first.value;
+                return 0;
+            }
+        }
+
+        test() : bool {
+            small : Host<int>;
+            large : Host<long>;
+            return small.read(42) == 42 &&
+                   large.read(1234567890123L) == 1234567890123L;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<bool(*)()>("test");
+    REQUIRE(test);
+    CHECK(test());
+}
+
+TEST_CASE("Nested inner templates support templated constructors",
+          "[gen][template][instantiation][nested-template-descriptor]") {
+    auto jit = gen_jit(R"SRC(
+        module nested_inner_template_constructor;
+
+        explicit_initializations : int = 0;
+        default_initializations : int = 0;
+        initialize(v : int) : int {
+            explicit_initializations += 1;
+            return v;
+        }
+        initialize_default() : int {
+            default_initializations += 1;
+            return 11;
+        }
+
+        template<typename T>
+        struct Host {
+            public:
+            value : T;
+            template<typename V> struct Inner {
+                public:
+                own : int;
+                fallback : int = initialize_default();
+                template<typename U> Inner(v : U) : own(initialize(v)) {}
+                get() : T { return value; }
+            }
+            read(v : T) : T {
+                value = v;
+                item : Inner<int>(7);
+                if (item.own == 7 && item.fallback == 11) return item.get();
+                return 0;
+            }
+        }
+
+        test() : bool {
+            explicit_initializations = 0;
+            default_initializations = 0;
+            small : Host<int>;
+            large : Host<long>;
+            return small.read(42) == 42 &&
+                   large.read(1234567890123L) == 1234567890123L &&
+                   explicit_initializations == 2 &&
+                   default_initializations == 2;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<bool(*)()>("test");
+    REQUIRE(test);
+    CHECK(test());
+}
+
+TEST_CASE("Nested inner templates reject a selected deleted constructor",
+          "[gen][template][instantiation][nested-template-descriptor]") {
+    REQUIRE_THROWS_MATCHES(gen_jit_throws(R"SRC(
+        module nested_inner_deleted_constructor;
+
+        template<typename T>
+        struct Host {
+            public:
+            template<typename U> struct Inner {
+                public:
+                Inner(v : long) {}
+                Inner(v : int) -> delete;
+            }
+            read() : int {
+                item : Inner<int>(42);
+                return 1;
+            }
+        }
+
+        test() : int {
+            host : Host<int>;
+            return host.read();
+        }
+    )SRC"), k::log::compiler_error,
+        Catch::Matchers::Predicate<k::log::compiler_error>(
+            [](const auto& error) {
+                return error.get_diagnostic().message.find("deleted") != std::string::npos;
+            }, "selected deleted constructor"));
+}
+
+TEST_CASE("Nested template parameters shadow outer parameters",
+          "[gen][template][instantiation][nested-template-descriptor]") {
+    auto jit = gen_jit(R"SRC(
+        module nested_template_shadow;
+
+        template<typename T>
+        struct Host {
+            public:
+            template<typename T> static struct Inner {
+                public: value : T;
+            }
+            template<typename U = T> static struct Default {
+                public: value : U;
+            }
+            static test() : bool {
+                inner : Inner<long>;
+                inner.value = 1234567890123L;
+                fallback : Default<>;
+                fallback.value = 42;
+                return inner.value == 1234567890123L && fallback.value == 42;
+            }
+        }
+
+        test() : bool { return Host<int>::test(); }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<bool(*)()>("test");
+    REQUIRE(test);
+    CHECK(test());
+}
+
+TEST_CASE("Nested template defaults retain enclosing binders despite aliases",
+          "[gen][template][instantiation][nested-template-default-alias]") {
+    auto jit = gen_jit(R"SRC(
+        module nested_template_default_alias;
+
+        struct Marker { wrong : int; }
+        namespace alias_types {
+            struct Marker { value : int; }
+            using Choice = Marker;
+        }
+        using T = alias_types::Marker;
+        using Choice = alias_types::Marker;
+
+        template<typename T>
+        struct Host {
+            public:
+            template<typename T> static struct Shadow {
+                public: value : T;
+            }
+            template<typename U = T> static struct Default {
+                public: value : U;
+            }
+            template<typename U = Choice> static struct Named {
+                public: value : U;
+            }
+            template<typename U = alias_types::Choice> static struct Qualified {
+                public: value : U;
+            }
+            template<typename U = ::alias_types::Choice> static struct Rooted {
+                public: value : U;
+            }
+            static test(v : T) : bool {
+                shadow : Shadow<long>;
+                shadow.value = 1234567890123L;
+                fallback : Default<>;
+                fallback.value = v;
+                explicit_value : Default<long>;
+                explicit_value.value = 1234567890123L;
+                named : Named<>;
+                named.value.value = 17;
+                qualified : Qualified<>;
+                qualified.value.value = 19;
+                rooted : Rooted<>;
+                rooted.value.value = 23;
+                return shadow.value == 1234567890123L && fallback.value == v &&
+                       explicit_value.value == 1234567890123L &&
+                       named.value.value == 17 && qualified.value.value == 19 &&
+                       rooted.value.value == 23;
+            }
+        }
+
+        test() : bool {
+            return Host<int>::test(42) && Host<long>::test(1234567890123L) &&
+                   Host<int>::test(73);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<bool(*)()>("test");
+    REQUIRE(test);
+    CHECK(test());
+}
+
 TEST_CASE("Nested temporary constructor overloads preserve member argument context",
           "[gen][template][instantiation][nested-constructor-member-context]") {
     auto jit = gen_jit(R"SRC(

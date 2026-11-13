@@ -26,6 +26,7 @@
 
 #include "../common/common.hpp"
 #include "../lex/lexemes.hpp"
+#include "template.hpp"
 
 namespace llvm {
     class ArrayType;
@@ -59,6 +60,7 @@ namespace gen {
 class kdi_importer;
 
 class context;
+class element;
 class ns;
 
 class aggregate;
@@ -282,6 +284,7 @@ protected:
      * Used to suppress cosmetic "cannot resolve type" diagnostics.
      */
     bool _is_template_param_placeholder = false;
+    std::optional<template_binder_id> _source_binder;
 
     /**
      * Pre-resolved model-level template arguments, set by substitute_type() when
@@ -304,6 +307,8 @@ protected:
 public:
     static std::shared_ptr<unresolved_type> make_model_template(
         const name& type_id, std::vector<std::shared_ptr<type>> args);
+    static std::shared_ptr<unresolved_type> make_source_binder(
+        const name& type_id, template_binder_id binder);
 
     const name& type_id() const {return _type_id;}
     void set_type_id(const name& n) { _type_id = n; }
@@ -318,6 +323,7 @@ public:
     /** True if this unresolved type is a template parameter placeholder (e.g. "T"). */
     bool is_template_param_placeholder() const { return _is_template_param_placeholder; }
     void set_template_param_placeholder(bool v = true) { _is_template_param_placeholder = v; }
+    const std::optional<template_binder_id>& source_binder() const { return _source_binder; }
 
     /** True if '<>' or '<args>' was explicitly written (even if args is empty). */
     bool has_explicit_template_args() const { return _has_explicit_template_args; }
@@ -369,6 +375,8 @@ public:
      */
     std::shared_ptr<unresolved_type> clone_with_substituted_model_args(
         const std::unordered_map<std::string, std::shared_ptr<type>>& subst) const;
+    std::shared_ptr<unresolved_type> clone_with_model_args(
+        std::vector<std::shared_ptr<type>> args) const;
 
     llvm::Type* get_llvm_type() const override {
         return _resolved ? _resolved->get_llvm_type() : nullptr;
@@ -1458,6 +1466,44 @@ inline bool type::are_layout_equal(const std::shared_ptr<type>& type1, const std
 
 /** Map from template parameter name to concrete type. */
 using type_substitution_map = std::unordered_map<std::string, std::shared_ptr<type>>;
+
+using source_type_substitution_map =
+    std::unordered_map<template_binder_id, std::shared_ptr<type>, template_binder_id_hash>;
+
+/**
+ * Source type retained independently of generic ABI erasure. Binder identities
+ * are local to the model and must not be used as KDI origin identities.
+ * This is retained syntax, not a resolved type or a proof of any contract.
+ */
+class generic_source_type {
+    std::shared_ptr<type> _type;
+    type_substitution_map _lexical_bindings;
+    std::vector<std::shared_ptr<type>> _anchors;
+    bool _has_unknown_bindings = false;
+
+public:
+    static std::shared_ptr<generic_source_type> capture(
+        const std::shared_ptr<type>& source,
+        const std::vector<const tpl_info*>& scopes);
+
+    /** Capture a declaration's constraint before its own binders enter scope. */
+    static std::shared_ptr<generic_source_type> capture_enclosing(
+        const std::shared_ptr<type>& source, const element& declaration);
+
+    /** Retain a type whose original binding provenance is unavailable. */
+    static std::shared_ptr<generic_source_type> capture_unknown(
+        const std::shared_ptr<type>& source);
+
+    std::shared_ptr<generic_source_type> substitute(
+        const source_type_substitution_map& bindings) const;
+
+    const std::shared_ptr<type>& get_type() const { return _type; }
+    const type_substitution_map& lexical_bindings() const { return _lexical_bindings; }
+    /** A requested binding was unavailable; this sticky state is not a proof. */
+    bool has_unknown_bindings() const { return _has_unknown_bindings; }
+    /** Unmodelled AST arguments must not be treated as resolved contracts. */
+    bool has_unmodelled_arguments() const;
+};
 
 /**
  * A bound template value argument: the concrete underlying primitive value,

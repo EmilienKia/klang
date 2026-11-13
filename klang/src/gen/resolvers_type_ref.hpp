@@ -174,6 +174,12 @@ protected:
      */
     std::shared_ptr<type> resolve_type_by_name(const k::name& type_name, const element& context_elem);
 
+    bool validate_function_template_constraints(
+        const function& declaration, const std::vector<template_argument>& args,
+        size_t& error_index, std::string& error_kind,
+        bool* proven_bound_violation = nullptr, bool legacy_generic_rules = true,
+        std::shared_ptr<type>* proven_bound = nullptr);
+
     /** Resolve a struct type from a given element, without climbing to parents. */
     static std::shared_ptr<aggregate> resolve_struct_from(const element& elem, const k::name& qualified_name);
 
@@ -304,6 +310,20 @@ protected:
      */
     void link_generic_facade(const std::shared_ptr<function>& tpl_func,
                              const std::shared_ptr<function>& facade);
+
+    /**
+     * Inside an erased generic body, a call to a native function whose @ffi::CString
+     * parameter has an erased element type cannot be validated: remember the source-level
+     * type of the argument on the enclosing function so that each facade can check it.
+     * Arguments whose source type is not traceable are rejected.
+     */
+    void record_generic_cstring_obligations(const std::shared_ptr<function>& called,
+                                            const std::vector<std::shared_ptr<expression>>& args,
+                                            const lex::opt_any_lexeme& lexeme);
+
+    /** Validate the obligations of @p synthesis against the concrete arguments of @p facade. */
+    void replay_generic_cstring_obligations(const function& tpl_func, const function& facade,
+                                            const function& synthesis);
 
     /**
      * Build (once) and resolve the single type-erased synthesis of the generic function or
@@ -790,6 +810,8 @@ protected:
     std::shared_ptr<expression> adapt_union_value_copy(
         const std::shared_ptr<expression>& source,
         const std::shared_ptr<type>& target, bool const_source);
+    void check_union_owner_extraction(
+        const std::shared_ptr<expression>& source, const union_alternative& alternative);
 
     /**
      * Adapt an expression to ensure it maps to a given type, by casting it.

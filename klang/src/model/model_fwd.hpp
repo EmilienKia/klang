@@ -82,6 +82,7 @@ class annotation_type;
 class union_type_def;
 class alias_definition;
 class alias_type;
+class generic_source_type;
 class ns;
 class unit;
 

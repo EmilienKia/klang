@@ -71,6 +71,52 @@ TEST_CASE("Parse template function with typename parameter", "[parser][template]
     CHECK(std::string{param->name.content} == "T");
 }
 
+TEST_CASE("Classic template source spans retain their original buffer",
+          "[parser][template][source-span]") {
+    test_logger log;
+    k::source src{R"K(
+        module template_source_spans;
+        @Tag{.value = 42} /* aggregate annotation */
+        template<typename T> struct Host {
+            template<typename U = T> static struct Inner { value : U; }
+        }
+        @Tag(7) /* function annotation */
+        template<typename T> apply(value : T) : T { return value; }
+        template<typename T> alias Alias : Host<T>;
+    )K"};
+    k::parse::parser parser(log, src);
+    auto unit = parser.parse_unit();
+    REQUIRE(unit);
+    REQUIRE(unit->declarations.size() == 3);
+
+    auto host = std::dynamic_pointer_cast<ast::aggregate_decl>(unit->declarations[0]);
+    auto function = std::dynamic_pointer_cast<ast::function_decl>(unit->declarations[1]);
+    auto alias = std::dynamic_pointer_cast<ast::alias_decl>(unit->declarations[2]);
+    REQUIRE(host);
+    REQUIRE(function);
+    REQUIRE(alias);
+    REQUIRE(host->declarations.size() == 1);
+    auto inner = std::dynamic_pointer_cast<ast::aggregate_decl>(host->declarations[0]);
+    REQUIRE(inner);
+
+    auto check_span = [&](std::string_view span, const std::string& text, std::string_view start) {
+        REQUIRE_FALSE(span.empty());
+        CHECK(span == std::string_view(text));
+        const auto offset = src.content.find(start);
+        REQUIRE(offset != std::string::npos);
+        CHECK(span.data() == src.content.data() + offset);
+    };
+    check_span(host->template_source_span, host->template_source_text, "template<typename T> struct Host");
+    check_span(inner->template_source_span, inner->template_source_text, "template<typename U = T>");
+    check_span(function->template_source_span, function->template_source_text, "template<typename T> apply");
+    check_span(alias->template_source_span, alias->template_source_text, "template<typename T> alias");
+    CHECK(host->template_annotation_prefix_span.starts_with("@Tag{.value = 42} /* aggregate annotation */"));
+    CHECK(host->template_annotation_prefix_span.data() == src.content.data() + src.content.find("@Tag{"));
+    CHECK(function->template_annotation_prefix_span.starts_with("@Tag(7) /* function annotation */"));
+    CHECK(function->template_annotation_prefix_span.data() == src.content.data() + src.content.find("@Tag(7)"));
+    CHECK(inner->template_annotation_prefix_span.empty());
+}
+
 TEST_CASE("Parse generic struct with typename parameter", "[parser][template][generic]") {
     test_logger log;
     k::source src{"generic<typename T> struct Box { public value : T&; }"};

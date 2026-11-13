@@ -26,6 +26,7 @@
 #include "../common/common.hpp"
 #include "../common/operator_names.hpp"
 #include "../gen/resolvers_constexpr.hpp"
+#include <functional>
 #include <random>
 #include <sstream>
 #include <iomanip>
@@ -47,6 +48,92 @@ namespace k::model {
                     raw_name += std::string{ast_ann->name->names[i].content};
                 }
                 holder.add_annotation(annotation_instance{std::move(raw_name), ast_ann});
+            }
+        }
+
+        void capture_constraint_sources(tpl_info& info, const element& declaration,
+                                        bool provenance_unknown) {
+            // Parameter descriptors are built before this declaration's scope is
+            // pushed. Capture a plain earlier same-list binder explicitly; more
+            // complicated references and enclosing templates remain conservative.
+            bool enclosing_template = false;
+            for (auto owner = declaration.parent<element>(); owner;
+                 owner = owner->parent<element>()) {
+                if (auto fn = std::dynamic_pointer_cast<const function>(owner))
+                    enclosing_template |= fn->get_tpl_info() != nullptr;
+                else if (auto agg = std::dynamic_pointer_cast<const aggregate>(owner))
+                    enclosing_template |= agg->get_tpl_info() != nullptr;
+                else if (auto un = std::dynamic_pointer_cast<const union_type_def>(owner))
+                    enclosing_template |= un->get_tpl_info() != nullptr;
+                else if (auto alias = std::dynamic_pointer_cast<const alias_definition>(owner))
+                    enclosing_template |= alias->get_tpl_info() != nullptr;
+            }
+            std::unordered_set<std::string> earlier_names;
+            for (size_t index = 0; index < info.params.size(); ++index) {
+                auto& param = info.params[index];
+                if (param.constraint_type) {
+                    auto plain = std::dynamic_pointer_cast<unresolved_type>(param.constraint_type);
+                    if (!provenance_unknown && !enclosing_template && !info.is_generic
+                        && (dynamic_cast<const function*>(&declaration)
+                            || dynamic_cast<const aggregate*>(&declaration))
+                        && info.binder_scope && plain && !plain->has_template_args()
+                        && !plain->has_model_template_args()) {
+                        const auto& id = plain->type_id();
+                        if (!id.has_root_prefix() && id.size() == 1
+                            && earlier_names.contains(id.front())) {
+                            size_t binder = info.params.size();
+                            size_t occurrences = 0;
+                            for (size_t j = 0; j < info.params.size(); ++j) {
+                                if (info.params[j].name != id.front()) continue;
+                                ++occurrences;
+                                if (j < index && info.params[j].is_type_param()
+                                    && !info.params[j].is_pack) binder = j;
+                            }
+                            if (occurrences == 1 && binder < index) {
+                                plain->set_template_param_placeholder();
+                                auto retained = unresolved_type::make_source_binder(
+                                    id, {info.binder_scope, binder});
+                                param.constraint_source_type = generic_source_type::capture(retained, {});
+                                if (param.is_type_param()) earlier_names.insert(param.name);
+                                continue;
+                            }
+                        }
+                    }
+                    std::function<bool(const std::shared_ptr<type>&)> may_reference_earlier;
+                    may_reference_earlier = [&](const std::shared_ptr<type>& t) {
+                        if (!t || earlier_names.empty()) return false;
+                        if (auto unres = std::dynamic_pointer_cast<unresolved_type>(t)) {
+                            const auto& id = unres->type_id();
+                            if (!id.has_root_prefix() && id.size() == 1
+                                && earlier_names.contains(id.front())) return true;
+                            for (const auto& arg : unres->get_model_template_args())
+                                if (may_reference_earlier(arg)) return true;
+                            for (const auto& arg : unres->get_ast_template_args()) {
+                                if (!arg || !arg->is_type() || !arg->type_arg) continue;
+                                auto model = unresolved_type::substitute_ast_type_spec(
+                                    arg->type_arg.get(), {}, unres->get_definition_namespace());
+                                if (model ? may_reference_earlier(model)
+                                          : !dynamic_cast<const parse::ast::keyword_type_specifier*>(
+                                                arg->type_arg.get())) return true;
+                            }
+                            return false;
+                        }
+                        if (auto callable = std::dynamic_pointer_cast<unresolved_callable_type>(t)) {
+                            if (may_reference_earlier(callable->get_return_type())) return true;
+                            for (const auto& p : callable->parameter_types())
+                                if (may_reference_earlier(p)) return true;
+                            for (const auto& th : callable->get_throws())
+                                if (may_reference_earlier(th)) return true;
+                        }
+                        return may_reference_earlier(t->get_subtype());
+                    };
+                    const bool uncertain = provenance_unknown
+                        || may_reference_earlier(param.constraint_type);
+                    param.constraint_source_type = uncertain
+                        ? generic_source_type::capture_unknown(param.constraint_type)
+                        : generic_source_type::capture_enclosing(param.constraint_type, declaration);
+                }
+                if (param.is_type_param()) earlier_names.insert(param.name);
             }
         }
 
@@ -86,6 +173,8 @@ namespace k::model {
         model_builder visitor(logger, context, unit);
         visitor._building_imported_declarations = static_cast<bool>(definition_namespace);
         visitor._imported_definition_namespace = definition_namespace;
+        // A detached member recipe is not entered through its enclosing binder scopes.
+        visitor._constraint_source_provenance_unknown = true;
         stack<struct_context> push(visitor._contexts, std::move(host), vis);
         visitor.visit_function_decl(src);
     }
@@ -439,6 +528,7 @@ namespace k::model {
             std::unordered_set<std::string> param_names;
             for (auto& p : ti->params) param_names.insert(p.name);
             ti->source_text = decl.template_source_text;
+            capture_constraint_sources(*ti, *alias, _constraint_source_provenance_unknown);
             alias->set_tpl_info(std::move(ti));
             _context->push_template_param_scope(param_names);
             tpl_scope_pushed = true;
@@ -765,6 +855,7 @@ namespace k::model {
             // Generic aggregates do not store source text — they are synthesised in place.
             ti->source_text = st.template_source_text;
             ti->is_generic = st.is_generic;
+            capture_constraint_sources(*ti, *agg, _constraint_source_provenance_unknown);
             agg->set_tpl_info(std::move(ti));
             // Push template parameter names so that create_unresolved() marks them
             // as placeholders — suppresses spurious "cannot resolve type: T" messages.
@@ -901,6 +992,7 @@ namespace k::model {
             }
             ti->source_text = st.template_source_text;
             ti->is_generic = st.is_generic;
+            capture_constraint_sources(*ti, *un, _constraint_source_provenance_unknown);
             un->set_tpl_info(std::move(ti));
 
             // Push template parameter names so from_type_specifier marks them as placeholders
@@ -1437,6 +1529,7 @@ namespace k::model {
             // Generic functions do not store source text — they are synthesised in place.
             ti->source_text = func.template_source_text;
             ti->is_generic = func.is_generic;
+            capture_constraint_sources(*ti, *function, _constraint_source_provenance_unknown);
             function->set_tpl_info(std::move(ti));
             // Push template parameter names so that create_unresolved() marks them
             // as placeholders — suppresses spurious "cannot resolve type: T" messages.
@@ -2872,6 +2965,7 @@ namespace k::model {
             // their free template function until its arguments are substituted.
             auto info = std::make_unique<tpl_info>();
             info->params = enclosing_function->get_tpl_info()->params;
+            info->binder_scope = enclosing_function->get_tpl_info()->binder_scope;
             return info;
         };
         std::shared_ptr<model::element> decl_owner;

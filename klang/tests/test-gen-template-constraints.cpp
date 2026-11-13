@@ -35,7 +35,12 @@
 
 #include <catch2/catch_all.hpp>
 
+#include <algorithm>
+#include <optional>
+
 #include "helpers.hpp"
+#include "../src/gen/resolvers_scope_lookup.hpp"
+#include "../src/model/model_builder.hpp"
 #include "../src/model/template.hpp"
 #include "../src/model/template_instantiator.hpp"
 #include "../src/errors.hpp"

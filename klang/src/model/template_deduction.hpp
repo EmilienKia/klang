@@ -22,6 +22,7 @@
 #include "template.hpp"
 #include "type.hpp"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -105,6 +106,8 @@ struct ctad_deduction_result {
     std::string failure_reason;
 };
 
+enum class ctad_guide_kind { constructor, copy, default_ };
+
 /**
  * Perform Class Template Argument Deduction (CTAD) for an aggregate template
  * against a list of call-site argument types.
@@ -116,11 +119,15 @@ struct ctad_deduction_result {
  *
  * @param tpl_agg   The template aggregate to deduce arguments for.
  * @param arg_types Types of the constructor arguments at the construction site.
+ * @param validate_constraints Optional caller-specific filter, called for each
+ *                             guide. The default uses the legacy validator.
  * @return          CTAD result containing all viable deduction candidates.
  */
 ctad_deduction_result deduce_aggregate_ctad_candidates(
     const aggregate& tpl_agg,
-    const std::vector<std::shared_ptr<type>>& arg_types);
+    const std::vector<std::shared_ptr<type>>& arg_types,
+    const std::function<bool(const std::vector<template_argument>&, ctad_guide_kind)>&
+        validate_constraints = {});
 
 } // namespace k::model
 

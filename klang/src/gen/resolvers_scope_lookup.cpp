@@ -19,8 +19,11 @@
 #include "resolvers_aggregate.hpp"
 #include "../model/imported.hpp"
 #include "../model/template.hpp"
+#include "../parse/ast.hpp"
 #include "../errors.hpp"
 
+#include <kdi.hpp>
+#include <algorithm>
 #include <typeinfo>
 
 namespace k::model::gen {
@@ -1343,6 +1346,106 @@ scope_lookup::lookup_alias(std::shared_ptr<const element> elem, const k::name& n
             }
         }
         if (is_definition_namespace_boundary(*current)) break;
+    }
+    return {};
+}
+
+std::optional<scope_lookup::qualified_using_target>
+scope_lookup::lookup_qualified_using(std::shared_ptr<const element> elem, const k::name& name) {
+    if (!elem || name.size() < 2) return {};
+    auto root = root_namespace(*elem);
+    if (!root) return {};
+    auto path = name.without_root_prefix();
+    if (name.has_root_prefix()) {
+        const auto module = root->get_name().without_root_prefix();
+        if (!module.empty() && path.size() > module.size() && path.start_with(module))
+            path = path.without_front(module.size());
+    }
+    if (path.size() < 2) return {};
+    if (!name.has_root_prefix()) {
+        if (is_enclosing_template_param_name(*elem, path.front())) return {};
+        for (auto scope = elem; scope; scope = scope->parent<const element>()) {
+            if (auto owner = std::dynamic_pointer_cast<const aggregate>(scope)) {
+                auto definition = owner->get_tpl_definition();
+                auto info = definition ? definition->get_tpl_info() : nullptr;
+                if (info && std::any_of(info->params.begin(), info->params.end(),
+                    [&](const auto& param) { return param.name == path.front(); })) return {};
+            }
+            if (auto fn = std::dynamic_pointer_cast<const function>(scope);
+                fn && fn->has_tpl_instantiation_subst()
+                && fn->get_tpl_instantiation_subst().contains(path.front())) return {};
+        }
+    }
+
+    auto competing_using = [](const using_holder& holder, const std::string& part) {
+        for (const auto& dir : holder.get_using_directives()) {
+            if (dir.is_namespace() && !dir.has_alias()) {
+                if (dir.ast_node) return true;
+            } else if (dir.has_alias() ? *dir.alias_name == part
+                                      : !dir.target_name.empty() && dir.target_name.back() == part) {
+                return true;
+            }
+        }
+        return false;
+    };
+    auto find_in = [&](const std::shared_ptr<const ns>& first)
+        -> std::optional<qualified_using_target> {
+        auto current = first;
+        for (size_t i = 1; i + 1 < path.size(); ++i) {
+            if (current->get_aggregate(path[i]) || current->get_alias(path[i])
+                || current->get_enum(path[i]) || current->get_union(path[i])
+                || competing_using(*current, path[i])) return {};
+            current = current->get_child_namespace(path[i]);
+            if (!current) return {};
+        }
+        const auto& last = path.back();
+        if (current->get_aggregate(last) || current->get_alias(last)
+            || current->get_enum(last) || current->get_union(last)
+            || current->get_child_namespace(last) || current->get_variable(last)
+            || current->get_function(last)) return {};
+        const using_directive* match = nullptr;
+        for (const auto& dir : current->get_using_directives()) {
+            if (dir.is_namespace()) {
+                if (!dir.has_alias() && dir.ast_node) return {};
+                if (dir.has_alias() && *dir.alias_name == last) return {};
+                continue;
+            }
+            if (dir.target_name.empty()) continue;
+            const auto& exposed = dir.has_alias() ? *dir.alias_name : dir.target_name.back();
+            if (exposed != last) continue;
+            if (match) return {};
+            match = &dir;
+        }
+        if (!match) return {};
+        return qualified_using_target{current, match->target_name};
+    };
+
+    if (name.has_root_prefix()) {
+        std::shared_ptr<const ns> root_scope = root;
+        if (root_scope->get_aggregate(path.front()) || root_scope->get_alias(path.front())
+            || root_scope->get_enum(path.front()) || root_scope->get_union(path.front())
+            || competing_using(*root_scope, path.front())) return {};
+        auto first = root_scope->get_child_namespace(path.front());
+        return first ? find_in(first) : std::nullopt;
+    }
+    for (auto scope = elem; scope; scope = scope->parent<const element>()) {
+        if (auto owner = std::dynamic_pointer_cast<const aggregate>(scope);
+            owner && !owner->get_bases().empty()) return {};
+        if (auto holder = std::dynamic_pointer_cast<const aggregate_holder>(scope);
+            holder && holder->get_aggregate(path.front())) return {};
+        if (auto holder = std::dynamic_pointer_cast<const alias_holder>(scope);
+            holder && holder->get_alias(path.front())) return {};
+        if (auto holder = std::dynamic_pointer_cast<const enum_holder>(scope);
+            holder && holder->get_enum(path.front())) return {};
+        if (auto holder = std::dynamic_pointer_cast<const union_holder>(scope);
+            holder && holder->get_union(path.front())) return {};
+        if (auto holder = std::dynamic_pointer_cast<const using_holder>(scope);
+            holder && competing_using(*holder, path.front())) return {};
+        if (auto current = std::dynamic_pointer_cast<const ns>(scope)) {
+            if (auto first = current->get_child_namespace(path.front()))
+                return find_in(first);
+        }
+        if (is_definition_namespace_boundary(*scope)) break;
     }
     return {};
 }

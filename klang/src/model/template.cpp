@@ -23,6 +23,8 @@
 #include "../parse/ast.hpp"
 #include "../errors.hpp"
 
+#include <unordered_set>
+
 namespace k::model {
 
 // ── Helper: determine the actual kind string of a type argument ─────────

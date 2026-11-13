@@ -102,7 +102,7 @@ public:
 
     template<typename T>
     inline std::shared_ptr<const T> shared_as() const {
-        return std::dynamic_pointer_cast<T>(shared_from_this());
+        return std::dynamic_pointer_cast<const T>(shared_from_this());
     }
 
     template<typename T>
@@ -313,6 +313,9 @@ protected:
     /** Original parameterized type retained when an earlier pass replaces it. */
     std::shared_ptr<type> _declared_template_type;
 
+    /** Source-level generic type, separate from the type used for erased ABI. */
+    std::shared_ptr<generic_source_type> _generic_source_type;
+
     /** True if this variable is declared const (immutable after construction). */
     bool _is_const = false;
 
@@ -344,6 +347,9 @@ public:
     virtual std::shared_ptr<type> get_type() const;
     virtual variable_definition& set_type(std::shared_ptr<type> type);
     std::shared_ptr<type> get_declared_template_type() const { return _declared_template_type; }
+    std::shared_ptr<const generic_source_type> get_generic_source_type() const {
+        return _generic_source_type;
+    }
 
     bool is_const() const { return _is_const; }
     variable_definition& set_const(bool c) { _is_const = c; return *this; }

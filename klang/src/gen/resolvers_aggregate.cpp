@@ -761,9 +761,19 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
             // Resolve the default type if needed
             auto def_type = param.default_type;
             if (!type::is_resolved(def_type)) {
-                def_type = _context->resolve_type(def_type);
-                if (!def_type || !type::is_resolved(def_type)) {
-                    if (auto unres = std::dynamic_pointer_cast<unresolved_type>(param.default_type)) {
+                auto unres = std::dynamic_pointer_cast<unresolved_type>(param.default_type);
+                const element& declaration = tpl_agg ? static_cast<const element&>(*tpl_agg)
+                                                     : static_cast<const element&>(*tpl_union);
+                auto using_target = !ti->is_generic && unres && !unres->is_template_param_placeholder()
+                    && !unres->has_template_args() && !unres->has_model_template_args()
+                    ? scope_lookup::lookup_qualified_using(
+                          declaration.shared_as<const element>(), unres->type_id())
+                    : std::nullopt;
+                if (using_target) {
+                    def_type = resolve_type_by_name(using_target->target, *using_target->scope);
+                } else {
+                    def_type = _context->resolve_type(def_type);
+                    if ((!def_type || !type::is_resolved(def_type)) && unres) {
                         auto resolved = resolve_type_by_name(unres->type_id(), context_elem);
                         if (resolved && type::is_resolved(resolved)) def_type = resolved;
                     }
@@ -778,10 +788,31 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
         }
     }
 
-    // 3c. Resolve constraint types in template params if still unresolved
+    auto local_bound = tpl_agg
+        ? scope_lookup::analyze_local_aggregate_constraint(
+              _unit, *tpl_agg, *ti, model_args, context_elem)
+        : scope_lookup::local_bound_result{};
+    if (local_bound.state == scope_lookup::local_bound_state::missing) {
+        throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_UNRESOLVED_TYPE_EXPR),
+                    lex::opt_any_lexeme{}, "Template '{}' has unresolved bound '{}'",
+                    {tpl_agg->get_short_name(), local_bound.name});
+    }
+    if (local_bound.state == scope_lookup::local_bound_state::violated) {
+        auto params = ti->params;
+        params[local_bound.parameter_index].constraint_type = local_bound.bound->get_struct_type();
+        auto [code, msg] = format_constraint_error(
+            tpl_agg->get_short_name(), params, model_args, local_bound.parameter_index, "constraint");
+        throw_error(code, lex::opt_any_lexeme{}, msg);
+    }
+
+    // Keep proven declaration-scope evidence out of the shared template state.
     {
         const element& constraint_ctx = tpl_agg ? static_cast<const element&>(*tpl_agg) : static_cast<const element&>(*tpl_union);
-        for (auto& param : ti->params) {
+        for (size_t i = 0; i < ti->params.size(); ++i) {
+            if (std::find(local_bound.verified_indices.begin(), local_bound.verified_indices.end(), i)
+                != local_bound.verified_indices.end()) continue;
+            if (scope_lookup::same_declaration_constraint_binder(*ti, i)) continue;
+            auto& param = ti->params[i];
             if (param.is_type_param() && param.constraint_type && !type::is_resolved(param.constraint_type)) {
                 auto resolved = _context->resolve_type(param.constraint_type);
                 if (resolved && type::is_resolved(resolved)) {
@@ -927,6 +958,7 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
 
     // 5. Return existing struct_type or create a new one
     if (concrete->get_struct_type()) {
+        template_instantiator::prepare_inner_aggregates(concrete);
         return concrete->get_struct_type();
     }
 
@@ -938,6 +970,8 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
     std::string origin_ns_fq = (ti && !ti->origin_module_ns_fq.empty())
                                ? ti->origin_module_ns_fq
                                : (parent_ns ? parent_ns->get_fq_name() : std::string{});
+    auto enclosing_aggregate = concrete->parent<aggregate>();
+    if (enclosing_aggregate) origin_ns_fq = enclosing_aggregate->get_fq_name();
     const std::string inst_key = unit::make_instantiation_registry_key(
         origin_ns_fq, concrete->get_short_name());
     std::shared_ptr<struct_type> st_type;
@@ -948,12 +982,16 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
         st_type = existing;
         st_type->reassign_aggregate(concrete->shared_as<aggregate>());
     } else {
+        auto type_name = enclosing_aggregate && !concrete->get_fq_name().empty()
+            ? concrete->get_name().without_root_prefix().to_string()
+            : concrete->get_short_name();
         st_type = std::shared_ptr<struct_type>{
-            new struct_type(concrete->get_short_name(), concrete->shared_as<aggregate>())};
+            new struct_type(type_name, concrete->shared_as<aggregate>())};
         _context->add_struct(st_type);
         _unit.register_instantiation_struct_type(inst_key, st_type);
     }
     concrete->set_struct_type(st_type);
+    template_instantiator::prepare_inner_aggregates(concrete);
 
     // 5b. Create 'this' parameters for member functions (requires struct_type)
     for (auto& child : concrete->get_children()) {
@@ -1046,9 +1084,10 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
     //     namespace walk never revisits it to resolve its members. Mirrors
     //     type_reference_resolver::try_instantiate_template_type step 7.
     auto resolve_member_vars = [&](aggregate& agg) {
-        for (auto& child : agg.get_children()) {
+        const auto children = agg.get_children();
+        for (const auto& child : children) {
             auto mv = std::dynamic_pointer_cast<member_variable_definition>(child);
-            if (!mv) continue;
+            if (!mv || mv->get_short_name() == "__parent__") continue;
             auto var_type = mv->get_type();
             if (!var_type || type::is_resolved(var_type)) continue;
             auto resolved = resolve_one_type(var_type, *this, *mv, _context);
@@ -1058,9 +1097,10 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
         }
     };
     resolve_member_vars(*concrete);
-    for (auto& child : concrete->get_children()) {
+    const auto nested_children = concrete->get_children();
+    for (const auto& child : nested_children) {
         if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
-            resolve_member_vars(*nested);
+            if (!nested->is_template()) resolve_member_vars(*nested);
         }
     }
 
@@ -1068,18 +1108,21 @@ std::shared_ptr<type> aggregate_type_resolver::try_instantiate_template_type(
     // Complete their callable declarations now, including unused nested holders'
     // copy/converting constructors, without visiting any bodies.
     const auto resolve_signatures = [&](aggregate& agg) {
-        for (const auto& child : agg.get_children()) {
+        const auto children = agg.get_children();
+        for (const auto& child : children) {
             if (auto fn = std::dynamic_pointer_cast<function>(child)) {
                 visit_function(*fn);
             }
         }
-        for (const auto& ctor : agg.constructors()) {
+        const auto constructors = agg.constructors();
+        for (const auto& ctor : constructors) {
             visit_function(*ctor);
         }
         if (auto dtor = agg.get_destructor()) visit_function(*dtor);
     };
     resolve_signatures(*concrete);
-    for (const auto& child : concrete->get_children()) {
+    const auto signature_children = concrete->get_children();
+    for (const auto& child : signature_children) {
         if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
             if (!nested->is_template()) resolve_signatures(*nested);
         }
@@ -1629,8 +1672,11 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
     // so that constraint validation works correctly.
     if (st.is_template()) {
         if (auto* ti = st.get_tpl_info()) {
+            size_t index = 0;
             for (auto& param : ti->params) {
-                if (param.constraint_type && !type::is_resolved(param.constraint_type)) {
+                const bool dependent_bound =
+                    scope_lookup::same_declaration_constraint_binder(*ti, index++).has_value();
+                if (!dependent_bound && param.constraint_type && !type::is_resolved(param.constraint_type)) {
                     auto resolved = _context->resolve_type(param.constraint_type);
                     if (resolved && type::is_resolved(resolved)) {
                         param.constraint_type = resolved;
@@ -1639,13 +1685,26 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
                         if (r && type::is_resolved(r)) param.constraint_type = r;
                     }
                 }
-                if (param.default_type && !type::is_resolved(param.default_type)) {
-                    auto resolved = _context->resolve_type(param.default_type);
-                    if (resolved && type::is_resolved(resolved)) {
-                        param.default_type = resolved;
-                    } else if (auto unres = std::dynamic_pointer_cast<unresolved_type>(param.default_type)) {
-                        auto r = resolve_type_by_name(unres->type_id(), st);
-                        if (r && type::is_resolved(r)) param.default_type = r;
+                // A classic nested default may name an enclosing binder that must
+                // be substituted before any same-named alias is considered.
+                if (param.default_type && !type::is_resolved(param.default_type)
+                    && (ti->is_generic || !type::contains_template_placeholder(param.default_type))) {
+                    auto unres = std::dynamic_pointer_cast<unresolved_type>(param.default_type);
+                    auto using_target = !ti->is_generic && unres && !unres->is_template_param_placeholder()
+                        && !unres->has_template_args() && !unres->has_model_template_args()
+                        ? scope_lookup::lookup_qualified_using(st.shared_as<const element>(), unres->type_id())
+                        : std::nullopt;
+                    if (using_target) {
+                        auto resolved = resolve_type_by_name(using_target->target, *using_target->scope);
+                        if (resolved && type::is_resolved(resolved)) param.default_type = resolved;
+                    } else {
+                        auto resolved = _context->resolve_type(param.default_type);
+                        if (resolved && type::is_resolved(resolved)) {
+                            param.default_type = resolved;
+                        } else if (unres) {
+                            auto r = resolve_type_by_name(unres->type_id(), st);
+                            if (r && type::is_resolved(r)) param.default_type = r;
+                        }
                     }
                 }
             }
@@ -1664,7 +1723,8 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
         // Because the symbol_resolver skips template aggregates entirely,
         // non-template nested aggregates inside templates never get their
         // struct_type created. We pre-create it here before visiting.
-        for (auto& child : st.get_children()) {
+        const auto nested_children = st.get_children();
+        for (const auto& child : nested_children) {
             if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
                 if (!nested->is_template() && !nested->get_struct_type()) {
                     std::shared_ptr<struct_type> nested_st_type{
@@ -1699,7 +1759,8 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
         }
 
         // Member variables and static members
-        for (auto& child : st.get_children()) {
+        const auto member_children = st.get_children();
+        for (const auto& child : member_children) {
             if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(child)) {
                 mv->accept(*this);
             } else if (auto gv = std::dynamic_pointer_cast<global_variable_definition>(child)) {
@@ -1713,7 +1774,8 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
         }
 
         // Constructors
-        for (auto& ctor : st.constructors()) {
+        const auto constructors = st.constructors();
+        for (const auto& ctor : constructors) {
             if (ctor && !ctor->is_compiler_generated())
                 visit_function(*ctor);
         }
@@ -1729,7 +1791,8 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
 
     // Visit nested aggregate and union children first (depth-first), so their types are available
     // before we process members of the outer aggregate.
-    for (auto& child : st.get_children()) {
+    const auto nested_children = st.get_children();
+    for (const auto& child : nested_children) {
         if (auto nested = std::dynamic_pointer_cast<aggregate>(child)) {
             nested->accept(*this);
         } else if (auto nested_un = std::dynamic_pointer_cast<union_type_def>(child)) {
@@ -1741,7 +1804,8 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
     // This triggers template instantiation for types like Wrapper<int>,
     // ensuring concrete instantiations exist before resolve_types() builds
     // LLVM struct types.
-    for (auto& child : st.get_children()) {
+    const auto member_children = st.get_children();
+    for (const auto& child : member_children) {
         if (auto mv = std::dynamic_pointer_cast<member_variable_definition>(child)) {
             mv->accept(*this);
         } else if (auto gv = std::dynamic_pointer_cast<global_variable_definition>(child)) {
@@ -1780,13 +1844,15 @@ void aggregate_type_resolver::visit_aggregate(aggregate& st) {
     // reusing visit_function which consumes the instantiation's model template
     // arguments. Bodies are handled later by type_reference_resolver.
     if (st.has_tpl_args()) {
-        for (auto& child : st.get_children()) {
+        const auto signature_children = st.get_children();
+        for (const auto& child : signature_children) {
             if (auto fn = std::dynamic_pointer_cast<function>(child)) {
                 if (!fn->is_compiler_generated())
                     visit_function(*fn);
             }
         }
-        for (auto& ctor : st.constructors()) {
+        const auto constructors = st.constructors();
+        for (const auto& ctor : constructors) {
             if (ctor && !ctor->is_compiler_generated())
                 visit_function(*ctor);
         }

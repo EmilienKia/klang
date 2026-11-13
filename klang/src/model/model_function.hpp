@@ -40,6 +40,7 @@ protected:
      * Set by symbol_resolver when processing @ffi::CString annotations.
      */
     bool _is_ffi_cstring = false;
+    bool _ffi_cstring_type_validated = false;
 
     /** True if this parameter was declared with '...' (varargs). Informational flag. */
     bool _is_varargs = false;
@@ -81,6 +82,8 @@ public:
     bool is_ffi_cstring() const { return _is_ffi_cstring; }
     /** Mark this parameter as @ffi::CString. */
     void set_ffi_cstring(bool v) { _is_ffi_cstring = v; }
+    bool is_ffi_cstring_type_validated() const { return _ffi_cstring_type_validated; }
+    void set_ffi_cstring_type_validated() { _ffi_cstring_type_validated = true; }
 
     /** True if this parameter was declared with '...' (varargs). */
     bool is_varargs() const { return _is_varargs; }
@@ -222,6 +225,7 @@ protected:
     std::shared_ptr<function> _redirect_target = nullptr;
 
     std::shared_ptr<type> _return_type;
+    std::shared_ptr<generic_source_type> _generic_source_return_type;
     bool _has_explicit_return_type = false;
     bool _is_lambda = false;
     bool _has_bare_return = false;
@@ -261,6 +265,19 @@ protected:
      * it are emitted as calls to the erased synthesis.
      */
     std::shared_ptr<function> _erased_target;
+
+    /**
+     * Native @ffi::CString parameters reached from this erased generic body with an
+     * argument whose element type is only known per concrete instantiation: callee,
+     * parameter index and the source-level type of the argument. Replayed on each
+     * facade of the generic.
+     */
+    struct cstring_obligation {
+        std::shared_ptr<function> callee;
+        size_t parameter_index = 0;
+        std::shared_ptr<const generic_source_type> argument_source;
+    };
+    std::vector<cstring_obligation> _cstring_obligations;
     std::shared_ptr<ns> _template_definition_scope;
 
      /**
@@ -301,6 +318,9 @@ public:
     bool has_return_type() const {return _return_type != nullptr;}
     std::shared_ptr<type> get_return_type() {return _return_type;}
     std::shared_ptr<const type> get_return_type() const {return _return_type;}
+    std::shared_ptr<const generic_source_type> get_generic_source_return_type() const {
+        return _generic_source_return_type;
+    }
 
     bool has_explicit_return_type() const { return _has_explicit_return_type; }
     void set_has_explicit_return_type(bool v) { _has_explicit_return_type = v; }
@@ -565,6 +585,13 @@ public:
 
     /** Turn this function into a facade forwarding to the erased synthesis @p target. */
     void set_erased_target(std::shared_ptr<function> target) { _erased_target = std::move(target); }
+
+    using cstring_obligation_list = std::vector<cstring_obligation>;
+    const cstring_obligation_list& get_cstring_obligations() const { return _cstring_obligations; }
+    void add_cstring_obligation(std::shared_ptr<function> callee, size_t parameter_index,
+                                std::shared_ptr<const generic_source_type> argument_source) {
+        _cstring_obligations.push_back({std::move(callee), parameter_index, std::move(argument_source)});
+    }
 
 };
 
