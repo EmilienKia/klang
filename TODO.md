@@ -2055,8 +2055,11 @@
 - [x] Complete HKDF for deriving purpose-specific symmetric keys.
   - Provider-backed extract, expand, combined derivation, key integration,
     capability discovery and documentation are implemented. The full
-    incremental build, 26 HKDF tests (933 assertions), the crypto suites,
+    incremental build, the HKDF suite (RFC 5869 A.1-A.7, SHA-224/384/512,
+    255-block limit, concurrency, guide example), the crypto suites,
     focused compiler/KDI regressions and the guide example have passed.
+    `HkdfPrk` drain-by-value stays rejected by design (like `HmacKey` and
+    `SymmetricKey`); `HkdfPrk!` transfers ownership.
   - [x] Union ownership and imported-layout handling needed by the PRK: copies
     through unions are rejected, drains by value are rejected, and private
     owner unions of imported aggregates are cleaned exactly once. Remaining
