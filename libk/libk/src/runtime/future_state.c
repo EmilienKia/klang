@@ -149,7 +149,11 @@ bool k_future_state_cancel(KFutureState* st) {
     pthread_mutex_unlock(&st->hooks_mutex);
     bool accepted = !hook.cancel || hook.cancel(hook.context);
     if (hook.drop) hook.drop(hook.context);
-    return accepted && (deferred || k_future_state_complete(st, K_FUTURE_CANCELLED));
+    if (!accepted) return false;
+    if (deferred || k_future_state_complete(st, K_FUTURE_CANCELLED)) return true;
+    /* An accepting producer can publish its own cancellation (reaper thread)
+     * before this CAS; that is still the cancellation this call requested. */
+    return hook.cancel && k_future_state_get(st) == K_FUTURE_CANCELLED;
 }
 int k_future_state_wait_quiescent(KFutureState* st, int64_t timeout) {
     if (!st) return 0;

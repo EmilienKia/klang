@@ -768,6 +768,50 @@ TEST_CASE("Future native: concurrent cancellation cannot bypass an extracted pro
     destroy(future);
 }
 
+TEST_CASE("Future native: accepted producer cancellation published before the caller CAS stays accepted",
+          "[libk][future][proactor][mock][cancel][race]") {
+    auto& rt = runtime();
+    auto create = symbol<void* (*)()>(rt.library, "__k_future_create");
+    auto destroy = symbol<void (*)(void*)>(rt.library, "__k_future_destroy");
+    auto set = symbol<void (*)(void*, void*, bool (*)(void*), void (*)(void*))>(
+        rt.library, "__k_future_set_cancel_hook");
+    auto cancel = symbol<bool (*)(void*)>(rt.library, "__k_future_cancel");
+    auto complete = symbol<bool (*)(void*, int)>(rt.library, "__k_future_complete");
+    auto state = symbol<int (*)(const void*)>(rt.library, "__k_future_state");
+    struct Hook {
+        void* future;
+        bool (*complete)(void*, int);
+        int outcome;
+        int drops = 0;
+        // Stands for the reaper publishing before cancel() reaches its own completion.
+        static bool cancel(void* ctx) {
+            auto& h = *static_cast<Hook*>(ctx);
+            REQUIRE(h.complete(h.future, h.outcome));
+            return true;
+        }
+        static void drop(void* ctx) { ++static_cast<Hook*>(ctx)->drops; }
+    };
+    SECTION("Producer publishes cancellation") {
+        void* future = create();
+        Hook hook{future, complete, 3};
+        set(future, &hook, Hook::cancel, Hook::drop);
+        REQUIRE(cancel(future));
+        REQUIRE(state(future) == 3);
+        REQUIRE(hook.drops == 1);
+        REQUIRE_FALSE(cancel(future));
+        destroy(future);
+    }
+    SECTION("Producer publishes a result instead") {
+        void* future = create();
+        Hook hook{future, complete, 1};
+        set(future, &hook, Hook::cancel, Hook::drop);
+        REQUIRE_FALSE(cancel(future));
+        REQUIRE(state(future) == 1);
+        REQUIRE(hook.drops == 1);
+        destroy(future);
+    }
+}
+
 TEST_CASE("Proactor file: implicit FIFO advances actual bytes, not reservations",
           "[libk][io][proactor][mock][file-primitives][position]") {
     auto& rt = runtime();
