@@ -28,6 +28,9 @@
 #include "../src/model/tools/kdi_exporter.hpp"
 
 #include <llvm/IR/GlobalAlias.h>
+#include <llvm/IR/GlobalAlias.h>
+#include <llvm/IR/IRBuilder.h>
+
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Support/DynamicLibrary.h>
@@ -257,6 +260,44 @@ TEST_CASE("imported provider prototypes preserve calling convention and ABI attr
     CHECK(context->declare_llvm_function_from_def(
         "declare void @" + symbol + "(ptr, ptr, i8)", symbol) == nullptr);
     CHECK_FALSE(llvm::verifyModule(context->module(), &llvm::errs()));
+}
+
+TEST_CASE("imported provider prototypes share the compiler callable layout",
+          "[import][callable][regression]") {
+    auto context = k::model::context::create();
+    context->init_module("callable_import_layout");
+    const std::string symbol = "callable_import_layout_provider";
+    // The provider prototype is parsed before any K callable type is used.
+    auto native = context->declare_llvm_function_from_def(
+        "%__k.callable = type { ptr, ptr }\ndeclare void @" + symbol + "(%__k.callable)", symbol);
+    REQUIRE(native);
+    auto* callable = context->get_or_create_callable_llvm_type();
+    REQUIRE(native->getFunctionType()->getParamType(0) == callable);
+
+    auto& llvm_context = context->llvm_context();
+    auto* caller = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(llvm_context), false),
+        llvm::GlobalValue::ExternalLinkage, "callable_import_layout_caller", &context->module());
+    llvm::IRBuilder<> builder(llvm::BasicBlock::Create(llvm_context, "entry", caller));
+    builder.CreateCall(native, {builder.CreateLoad(callable, builder.CreateAlloca(callable))});
+    builder.CreateRetVoid();
+    CHECK_FALSE(llvm::verifyModule(context->module(), &llvm::errs()));
+}
+
+namespace {
+/// Exposes the compiler-only LLVM context transfer to the reset regression.
+struct transferable_context : k::model::context {
+    using k::model::context::move_llvm_context;
+};
+}
+
+TEST_CASE("context reset recreates the callable layout in the new LLVM context",
+          "[model][callable][regression]") {
+    std::unique_ptr<llvm::LLVMContext> previous;
+    transferable_context context;
+    context.get_or_create_callable_llvm_type();
+    previous = context.move_llvm_context();
+    CHECK(&context.get_or_create_callable_llvm_type()->getContext() == &context.llvm_context());
 }
 
 TEST_CASE("imported redirect calls project implicit and explicit receiver bindings",

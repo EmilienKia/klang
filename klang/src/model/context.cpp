@@ -85,6 +85,12 @@ void context::reset() {
     _function_this_variables.clear();
     _variables.clear();
     _string_pool.clear();
+    _callable_types.clear();
+    _callable_llvm_type = nullptr;
+    // The compiler-owned callable layout must own the `__k.callable` name before any
+    // KDI snippet is parsed; later lookups by name would otherwise bind imported
+    // prototypes to a parser-created twin.
+    get_or_create_callable_llvm_type();
     init_primitive_types();
 }
 
@@ -1735,12 +1741,14 @@ context::declare_llvm_function_from_def(const std::string& llvm_def,
     // source declarations, not opaque forward references in a new IR snippet.
     std::string definitions;
     llvm::raw_string_ostream definitions_stream(definitions);
+    std::unordered_set<std::string> declared_types;
     std::unordered_set<llvm::Type*> emitted_types;
     std::function<void(llvm::Type*)> emit_type = [&](llvm::Type* type) {
         if (!emitted_types.insert(type).second) return;
         for (auto* subtype : type->subtypes()) emit_type(subtype);
         if (auto* structure = llvm::dyn_cast<llvm::StructType>(type);
-            structure && structure->hasName()) {
+            structure && structure->hasName()
+            && !declared_types.contains(structure->getName().str())) {
             structure->print(definitions_stream);
             definitions_stream << '\n';
         }
@@ -1750,12 +1758,21 @@ context::declare_llvm_function_from_def(const std::string& llvm_def,
     sources.AddNewSourceBuffer(llvm::MemoryBuffer::getMemBuffer(llvm_def), llvm::SMLoc());
     llvm::LLLexer lexer(sources.getMemoryBuffer(sources.getMainFileID())->getBuffer(),
         sources, diag, *_context);
+    std::vector<std::string> referenced_names;
+    std::string previous_local;
     for (auto token = lexer.Lex(); token != llvm::lltok::Eof; token = lexer.Lex()) {
         if (token == llvm::lltok::Error) return nullptr;
+        if (token == llvm::lltok::equal && !previous_local.empty())
+            declared_types.insert(previous_local);
+        previous_local.clear();
         if (token == llvm::lltok::LocalVar) {
-            if (auto* structure = llvm::StructType::getTypeByName(*_context, lexer.getStrVal()))
-                emit_type(structure);
+            previous_local = lexer.getStrVal();
+            referenced_names.push_back(previous_local);
         }
+    }
+    for (const auto& name : referenced_names) {
+        if (auto* structure = llvm::StructType::getTypeByName(*_context, name))
+            emit_type(structure);
     }
     definitions_stream.flush();
 
