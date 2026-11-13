@@ -224,6 +224,24 @@ inline bool same_conversion_type(const std::shared_ptr<type>& lhs,
 }
 
 /**
+ * True when a borrow of `src_referent` can be statically upcast to a borrow of
+ * `tgt_referent`: a strict nominal base (direct, transitive, imported or
+ * virtual), without dropping const from the referent. Referent constness only
+ * is compared; callers pass the subtype of an owner, never the owner slot.
+ */
+inline bool is_static_base_borrow(const std::shared_ptr<type>& src_referent,
+                                  const std::shared_ptr<type>& tgt_referent) {
+    if (!src_referent || !tgt_referent) return false;
+    if (type::is_const(src_referent) && !type::is_const(tgt_referent)) return false;
+    auto src_struct = std::dynamic_pointer_cast<struct_type>(type::remove_const(src_referent));
+    auto tgt_struct = std::dynamic_pointer_cast<struct_type>(type::remove_const(tgt_referent));
+    if (!src_struct || !tgt_struct) return false;
+    auto src_aggregate = src_struct->get_struct();
+    auto tgt_aggregate = tgt_struct->get_struct();
+    return src_aggregate && tgt_aggregate && src_aggregate->is_derived_from(tgt_aggregate);
+}
+
+/**
  * Apply the linkage policy for a **template instantiation** symbol.
  *
  * Template instantiations follow the C++ ODR model: every translation unit /

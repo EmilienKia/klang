@@ -41,7 +41,7 @@ When no exact match exists, the compiler considers implicit conversions:
 - **Narrowing** (accepted): e.g., `int` argument matched to `short` parameter.
 - **Varargs packing** (lowest priority): when a varargs overload is the only match.
 
-When several overloads differ only by observer kind (`T+`, `T?`, `T*`), a conversion that keeps the argument's observer kind is preferred over one that changes it; an owner argument (`T!`) prefers the link/view overload over the raw pointer one, for derived-to-base upcasts. See [Types — Static indirection upcast](../basic/types.md#133-static-indirection-upcast-aggregate-types).
+When several overloads differ only by observer kind (`T+`, `T?`, `T*`), a conversion that keeps the argument's observer kind is preferred over one that changes it. An owner argument (`T!`) is ranked in three tiers for derived-to-base borrows: an exact-referent borrow first, then the base link/view overload, then the raw base pointer one. Scores are coarse (the worst argument conversion is compared), so some mixed overload sets are ambiguous. See [Types — Static indirection upcast](../basic/types.md#133-static-indirection-upcast-aggregate-types).
 
 See [Types — Implicit conversions](../basic/types.md#7-implicit-conversions) for the full list.
 
@@ -55,6 +55,8 @@ See [Types — Implicit conversions](../basic/types.md#7-implicit-conversions) f
 | 4 | Narrowing | `int` → `short` |
 | 5 | Construction | `int` → `Wrapper(int)` |
 | 6 (worst) | Varargs packing | `int, int, int` → `int[]` via varargs |
+
+For argument-conversion ranking, an owner argument borrows its exact referent type first, then a base class link or view, then a base class pointer (see the note above). The worst conversion among the arguments decides the score, so a base pointer borrow shares the rank of a primitive narrowing and an exact borrow of a temporary owner shares the rank of an upcast-move to a base owner parameter.
 
 Non-varargs overloads are always preferred over varargs overloads when both match:
 

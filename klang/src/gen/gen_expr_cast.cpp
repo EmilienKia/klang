@@ -1286,6 +1286,16 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                     _context->get_llvm_type(effective_source), _value, "indir_upcast_load");
             }
 
+            // A nullable owner borrowed as a non-null link must fail before any
+            // base-offset or vbptr adjustment can manufacture a non-null address.
+            if (expr.null_is_fatal() && type::is_link(target_type) &&
+                type::is_owner(effective_source)) {
+                set_debug_location(expr.first_lexeme());
+                auto* fatal = get_or_declare_fatal_null_function("__k_fatal_null_assignation");
+                emit_null_check(_value, fatal, "owner_link_upcast", _null_failure_bb);
+                set_debug_location(expr.first_lexeme());
+            }
+
             llvm::BasicBlock* null_predecessor = nullptr;
             llvm::BasicBlock* upcast_merge = nullptr;
             const bool nullable_source = type::is_pointer(effective_source)

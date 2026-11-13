@@ -3582,31 +3582,29 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             // owner<T> as an observer pointer: address is borrowed, no ownership change
             auto tgt_sub = tgt_nc->get_subtype();
             auto tgt_sub_nc = type::remove_const(tgt_sub);
+            // Owner borrow ranking: exact referent (1), then base link/view (2),
+            // then base pointer (3). The same tiers apply to a 'ref<owner>' argument.
             if (same_conversion_type(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc)) {
-                return CAST_WIDENING;
+                return CAST_REF_CONV;
             }
-            // Upcast observer: owner<Derived> → ptr<Base>. Ranks below the link/view
-            // upcast, so 'Base+' is preferred over 'Base*' on ties.
+            // Upcast observer: owner<Derived> → ptr<Base>, ranked after 'Base+' / 'Base?'.
             auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
             auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
             if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
                 src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
-                return CAST_WIDENING;
+                return CAST_NARROWING;
             }
             return CAST_IMPOSSIBLE;
         }
         // owner<T> → lnk<T> / view<T>: borrow as link or view
         if (type::is_link(tgt_nc) || type::is_view(tgt_nc)) {
-            auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
+            auto tgt_sub = tgt_nc->get_subtype();
+            auto tgt_sub_nc = type::remove_const(tgt_sub);
             if (same_conversion_type(src_sub_nc, tgt_sub_nc) || types_match_array_const_compatible(src_sub_nc, tgt_sub_nc))
-                return CAST_WIDENING;
-            // Upcast observer: owner<Derived> → lnk<Base> / view<Base>
-            auto src_st = std::dynamic_pointer_cast<struct_type>(src_sub_nc);
-            auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
-            if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
-                src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
                 return CAST_REF_CONV;
-            }
+            // Upcast observer: owner<Derived> → lnk/view<Base>, never dropping const
+            // from the referent. Ranks above the base pointer borrow.
+            if (is_static_base_borrow(src_sub, tgt_sub)) return CAST_WIDENING;
         }
         // owner<T> → ref<T>: borrow owned object as reference
         if (type::is_reference(tgt_nc)) {
@@ -3706,11 +3704,12 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
                 if (same_conversion_type(own_sub_nc, tgt_sub_nc) ||
                     types_match_array_const_compatible(own_sub_nc, tgt_sub_nc))
                     return CAST_REF_CONV;
+                // Base pointer borrow ranks after the base link/view borrow.
                 auto src_st = std::dynamic_pointer_cast<struct_type>(own_sub_nc);
                 auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
                 if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
                     src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
-                    return CAST_WIDENING;
+                    return CAST_NARROWING;
                 }
             }
             if (type::is_owner(tgt_nc)) {
@@ -3728,17 +3727,14 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             }
             // ref<owner<T>> → lnk<T> / view<T>: load owner, borrow as link or view
             if (type::is_link(tgt_nc) || type::is_view(tgt_nc)) {
-                auto tgt_sub_nc = type::remove_const(tgt_nc->get_subtype());
+                auto tgt_sub = tgt_nc->get_subtype();
+                auto tgt_sub_nc = type::remove_const(tgt_sub);
                 if (same_conversion_type(own_sub_nc, tgt_sub_nc) ||
                     types_match_array_const_compatible(own_sub_nc, tgt_sub_nc))
                     return CAST_REF_CONV;
-                // Upcast: ref<owner<Derived>> → lnk<Base> / view<Base>
-                auto src_st = std::dynamic_pointer_cast<struct_type>(own_sub_nc);
-                auto tgt_st = std::dynamic_pointer_cast<struct_type>(tgt_sub_nc);
-                if (src_st && tgt_st && src_st->get_struct() && tgt_st->get_struct() &&
-                    src_st->get_struct()->is_derived_from(tgt_st->get_struct())) {
-                    return CAST_REF_CONV;
-                }
+                // Upcast observer: ref<owner<Derived>> → lnk/view<Base>, never dropping
+                // const from the referent. Ranks above the base pointer borrow.
+                if (is_static_base_borrow(own_sub, tgt_sub)) return CAST_WIDENING;
             }
             // ref<owner<T>> → ref<T>: load owner pointer value, borrow as reference
             if (type::is_reference(tgt_nc)) {

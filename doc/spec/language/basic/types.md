@@ -1218,7 +1218,7 @@ This applies to all four indirection types:
 | `Derived*` or `Derived+` | `Base+`               | Initialisation only (link is non-null; null-check inserted if source is nullable) |
 | `Derived+`            | `Base*`                  | Init and rebind (link widened to pointer) |
 | `Derived?` or `Derived*` | `Base*`               | Rebind |
-| `Derived!` (owner lvalue) | `Base+`, `Base?`, `Base*` | Borrow: the address is copied, ownership stays in the owner |
+| `Derived!` (owner)    | `Base*`, `Base+`, `Base?` | Borrow: the (adjusted) address is copied and ownership stays with the owner; a const referent never becomes mutable. Also applies to arguments. A null owner stays null for `Base*`/`Base?`; for `Base+` it throws `NullAssignationError` before the base address is computed |
 
 **Rules:**
 
@@ -1231,7 +1231,7 @@ This applies to all four indirection types:
    - Assigning a nullable source (ptr* or `view?`) to a non-null destination (`link+` or `ref&`) inserts a **runtime null-check** (throws `NullAssignationError` if null) and emits **warning 0x0C04**.
 5. Transitive upcasts (e.g. `C*→A*` where `C→B→A`) are supported via chained GEP.
 6. Virtual base upcasts are supported via the vbptr mechanism.
-7. In overload resolution, an upcast that keeps the observer kind (`Derived+` → `Base+`, `Derived*` → `Base*`, `Derived?` → `Base?`) ranks above one that changes it (`Derived+` → `Base*`). An owner argument (`Derived!`) ranks the link/view upcast (`Base+`, `Base?`) above the pointer upcast (`Base*`). Overloads on `Base+` and `Base*` therefore stay distinguishable for such arguments.
+7. In overload resolution, an upcast that keeps the observer kind (`Derived+` → `Base+`, `Derived*` → `Base*`, `Derived?` → `Base?`) ranks above one that changes it (`Derived+` → `Base*`). An owner argument (`Derived!`, as an lvalue or an rvalue) is ranked in three tiers: first a borrow of its exact referent type (`Derived+`, `Derived?`, `Derived*`), then the base link/view upcast (`Base+`, `Base?`), then the base pointer upcast (`Base*`). Overloads on `Base+` and `Base*` therefore stay distinguishable for such arguments, `Base+` is chosen over `Base*`, and an exact `Derived*` overload is chosen over a `Base+` one. An empty owner passed to the selected `Base+` overload throws `NullAssignationError`, even when a `Base*` overload exists. Overload scores are coarse (the worst conversion among the arguments is compared): the base pointer upcast shares the rank of a primitive narrowing, and an exact borrow of a temporary owner shares the rank of an upcast-move to a `Base!` parameter, so such overload sets can be ambiguous.
 
 **Cross-indirection widening (same pointed-at type):**
 
@@ -1576,7 +1576,7 @@ test() : int {
 
 #### 13.6.3 Implicit cast in function call arguments
 
-When a function expects a `Base*`, `Base+`, `Base?`, or `Base&` parameter, and the caller passes a `Derived*`, `Derived+`, `Derived?`, or `Derived&` expression, the compiler automatically inserts a **static upcast** — no explicit cast syntax is needed.
+When a function expects a `Base*`, `Base+`, `Base?`, or `Base&` parameter, and the caller passes a `Derived*`, `Derived+`, `Derived?`, or `Derived&` expression, the compiler automatically inserts a **static upcast** — no explicit cast syntax is needed. An owner lvalue `Derived!` likewise binds to `Base*`, `Base+` or `Base?` parameters without being consumed. A null owner passed to a `Base+` parameter throws `NullAssignationError`; a `Base*` or `Base?` parameter receives null.
 
 ```k
 get_val(p : Base*) : int { return p->val; }

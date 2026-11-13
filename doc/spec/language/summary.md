@@ -256,7 +256,7 @@ An explicit pointer, link, or view cast may not remove `const` from the pointed-
 
 #### Owner Upcast/Downcast
 Owner follows the same rules as indirections for upcast/downcast, with the same move constraints.
-Borrowing an owner lvalue as an observer also upcasts: `Derived!` → `Base+`, `Base?` or `Base*` copies the (adjusted) address without ownership transfer. Overload ties prefer the link/view over the pointer, and a conversion keeping the argument's observer kind over one changing it.
+Borrowing an owner (lvalue or rvalue) as an observer also upcasts: `Derived!` → `Base+`, `Base?` or `Base*` copies the (adjusted) address without ownership transfer; an empty owner throws `NullAssignationError` for `Base+` and stays null for `Base?`/`Base*`. Overloads rank an exact-referent borrow first, then the base link/view, then the base pointer, and a conversion keeping the argument's observer kind over one changing it. Scores are coarse (worst argument conversion), so some mixed overload sets are ambiguous.
 
 #### Indirection → `bool`
 `T*`, `T+`, `T?`, `T!` non-null → `true`, null → `false`. Applicable in `if`, `while`, `for`, `&&`, `||`, `!`. `T&` is **not** convertible to `bool`.

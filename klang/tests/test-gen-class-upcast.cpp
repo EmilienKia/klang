@@ -638,6 +638,285 @@ TEST_CASE("Class upcast: lien<Base class> initialised from owner<Derived class>"
     REQUIRE(fn() == 88);
 }
 
+TEST_CASE("Class upcast: owner lvalue passed to Base+ and Base? parameters keeps ownership",
+          "[gen][upcast][class][interface][owner][argument][overload]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_class_upcast_owner_argument;
+
+        interface Task {
+            run(v : int) : void;
+        }
+        class Base {
+            public val : int;
+            Base(v : int) : val(v) {}
+        }
+        class Derived : public Base, public Task {
+            Derived(v : int) : Base(v) {}
+            override run(v : int) : void { val += v; }
+        }
+
+        bump(b : Base+) : int { b->val += 1; return b->val; }
+        peek(b : Base?) : int { if (b == null) return -1; return b->val; }
+        drive(t : Task+, v : int) : void { t->run(v); }
+
+        test() : int {
+            d : Derived! = new Derived(10);
+            if (bump(d) != 11) return 1;
+            if (peek(d) != 11) return 2;
+            drive(d, 30);
+            if (d == null) return 3;
+            return d->val;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 41);
+}
+
+TEST_CASE("Class upcast error: readonly or unrelated owner referents do not bind to mutable Base+",
+          "[gen][upcast][class][owner][argument][error]") {
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module gen_class_upcast_owner_argument_const;
+        class Base { public val : int; Base(v : int) : val(v) {} }
+        class Derived : public Base { Derived(v : int) : Base(v) {} }
+        mutate(b : Base+) : void { b->val = 1; }
+        test() : int {
+            d : const Derived! = new Derived(3);
+            mutate(d);   // ERROR: const referent cannot become a mutable link
+            return 0;
+        }
+    )SRC"));
+    REQUIRE_THROWS(gen_jit_throws(R"SRC(
+        module gen_class_upcast_owner_argument_unrelated;
+        class Base { public val : int; Base(v : int) : val(v) {} }
+        class Other { public val : int; Other(v : int) : val(v) {} }
+        take(b : Base+) : void {}
+        test() : int {
+            o : Other! = new Other(3);
+            take(o);   // ERROR: Other is not derived from Base
+            return 0;
+        }
+    )SRC"));
+}
+
+TEST_CASE("Class upcast: null owner borrowed as non-null link fails before base adjustment",
+          "[gen][upcast][class][interface][owner][argument][null][exceptions]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_class_upcast_owner_null_link;
+
+        interface Task {
+            run() : void;
+        }
+        class Base { public val : int; Base(v : int) : val(v) {} }
+        class Derived : public Base, public Task {
+            Derived(v : int) : Base(v) {}
+            override run() : void { val += 1; }
+        }
+        class Root {}
+        class Left : public Root {}
+        class Right : public Root {}
+        class Diamond : public Left, public Right {}
+
+        makeDerived(present : bool) : Derived! {
+            if (!present) return null;
+            return new Derived(5);
+        }
+        makeDiamond() : Diamond! { return null; }
+        acceptBase(b : Base+) : int { return 1; }
+        acceptTask(t : Task+) : int { return 1; }
+        acceptRoot(r : Root+) : int { return 1; }
+
+        test() : int {
+            caught : int = 0;
+            d : Derived! = makeDerived(false);
+            try { acceptBase(d); } catch (e : NullAssignationError&) { caught += 1; }
+            try { acceptTask(d); } catch (e : NullAssignationError&) { caught += 10; }
+            m : Diamond! = makeDiamond();
+            try { acceptRoot(m); } catch (e : NullAssignationError&) { caught += 100; }
+            live : Derived! = makeDerived(true);
+            if (acceptTask(live) != 1 || live == null) return -1;
+            return caught;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 111);
+}
+
+TEST_CASE("Class upcast: null owner borrowed as Base? parameter stays null with offset and virtual bases",
+          "[gen][upcast][class][interface][owner][argument][null][diamond]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_class_upcast_owner_null_view;
+
+        interface Task {
+            run() : void;
+        }
+        class Base { public val : int; Base(v : int) : val(v) {} }
+        class Derived : public Base, public Task {
+            Derived(v : int) : Base(v) {}
+            override run() : void { val += 1; }
+        }
+        class Root {}
+        class Left : public Root {}
+        class Right : public Root {}
+        class Diamond : public Left, public Right {}
+
+        makeDerived(present : bool) : Derived! {
+            if (!present) return null;
+            return new Derived(5);
+        }
+        makeDiamond() : Diamond! { return null; }
+        isNullTask(t : Task?) : int { if (t == null) return 1; return 0; }
+        isNullRoot(r : Root?) : int { if (r == null) return 10; return 0; }
+
+        test() : int {
+            d : Derived! = makeDerived(false);
+            m : Diamond! = makeDiamond();
+            live : Derived! = makeDerived(true);
+            if (isNullTask(live) != 0 || live == null) return -1;
+            return isNullTask(d) + isNullRoot(m);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 11);
+}
+
+TEST_CASE("Class upcast: derived owner prefers Base+ over Base* and an empty owner throws",
+          "[gen][upcast][class][owner][argument][overload][ranking]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_class_upcast_owner_pointer_overload;
+
+        class Base { public val : int; Base(v : int) : val(v) {} }
+        class Derived : public Base { Derived(v : int) : Base(v) {} }
+
+        pick(b : Base*) : int { return 1; }
+        pick(b : Base+) : int { return 100; }
+
+        makeDerived(present : bool) : Derived! {
+            if (!present) return null;
+            return new Derived(5);
+        }
+
+        test() : int {
+            d : Derived! = makeDerived(true);
+            n : Derived! = makeDerived(false);
+            result : int = pick(d);
+            result += pick(makeDerived(true));
+            try { pick(n); } catch (e : NullAssignationError&) { result += 10; }
+            try { pick(makeDerived(false)); } catch (e : NullAssignationError&) { result += 20; }
+            if (d == null || d->val != 5 || n != null) return -1;
+            return result;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 230);
+}
+
+TEST_CASE("Class upcast: derived owner prefers an exact Derived* over Base+ and Base*",
+          "[gen][upcast][class][owner][argument][overload][ranking]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_class_upcast_owner_exact_pointer_overload;
+
+        class Base { public val : int; Base(v : int) : val(v) {} }
+        class Derived : public Base { Derived(v : int) : Base(v) {} }
+
+        exact(b : Derived*) : int { return 1; }
+        exact(b : Base+) : int { return 100; }
+        exact(b : Base*) : int { return 10000; }
+
+        makeDerived(present : bool) : Derived! {
+            if (!present) return null;
+            return new Derived(5);
+        }
+
+        test() : int {
+            d : Derived! = makeDerived(true);
+            n : Derived! = makeDerived(false);
+            result : int = exact(d);
+            result += exact(makeDerived(true));
+            result += exact(n);
+            result += exact(makeDerived(false));
+            if (d == null || d->val != 5 || n != null) return -1;
+            return result;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 4);
+}
+
+TEST_CASE("Class upcast: coarse owner borrow scores keep the documented overload ties",
+          "[gen][upcast][class][owner][argument][overload][ranking][error]") {
+    // The base pointer borrow shares the rank of a primitive narrowing.
+    REQUIRE_THROWS_WITH(gen_jit_throws(R"SRC(
+        module gen_class_upcast_owner_narrowing_tie;
+
+        class Base { public val : int; Base(v : int) : val(v) {} }
+        class Derived : public Base { Derived(v : int) : Base(v) {} }
+
+        mixed(b : Base*, x : int) : int { return 1; }
+        mixed(b : Base+, x : short) : int { return 2; }
+
+        test() : int {
+            d : Derived! = new Derived(5);
+            x : int = 3;
+            return mixed(d, x);
+        }
+    )SRC"), Catch::Matchers::ContainsSubstring("equally viable overloads"));
+    // An exact borrow of a temporary owner shares the rank of an upcast-move.
+    REQUIRE_THROWS_WITH(gen_jit_throws(R"SRC(
+        module gen_class_upcast_owner_move_tie;
+
+        class Base { public val : int; Base(v : int) : val(v) {} }
+        class Derived : public Base { Derived(v : int) : Base(v) {} }
+
+        consume(b : Base!) : int { return 1; }
+        consume(b : Derived*) : int { return 2; }
+
+        makeDerived() : Derived! { return new Derived(5); }
+
+        test() : int {
+            return consume(makeDerived());
+        }
+    )SRC"), Catch::Matchers::ContainsSubstring("equally viable overloads"));
+}
+
+TEST_CASE("Class upcast: derived owner prefers exact Derived link and view over Base overloads",
+          "[gen][upcast][class][owner][argument][overload][ranking]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_class_upcast_owner_exact_overload;
+
+        class Base { public val : int; Base(v : int) : val(v) {} }
+        class Derived : public Base { Derived(v : int) : Base(v) {} }
+
+        takeLink(b : Derived+) : int { return 1; }
+        takeLink(b : Base+) : int { return 100; }
+        takeView(b : Derived?) : int { return 10; }
+        takeView(b : Base?) : int { return 1000; }
+
+        makeDerived() : Derived! { return new Derived(5); }
+
+        test() : int {
+            d : Derived! = makeDerived();
+            result : int = takeLink(d) + takeView(d);
+            result += takeLink(makeDerived()) + takeView(makeDerived());
+            if (d == null || d->val != 5) return -1;
+            return result;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 22);
+}
+
 TEST_CASE("Class upcast: nullable owners and observers preserve null and destruction",
           "[gen][upcast][class][owner][null-preserving-upcast]") {
     auto jit = gen_jit(R"SRC(
