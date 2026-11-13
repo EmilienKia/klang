@@ -94,6 +94,25 @@ TEST_CASE("check-symbols: abstract method not checked", "[symbols]") {
     REQUIRE( r.is_ok() );
 }
 
+TEST_CASE("check-symbols excludes only explicitly native callables", "[symbols][ffi]") {
+    auto file = make_file_with_function("native_free");
+    file.unit.root_ns.functions[0].is_extern = true;
+    kdi_aggregate agg;
+    agg.name = "Box";
+    agg.fq_name = "sym::test::Box";
+    kdi_method method;
+    method.name = "native";
+    method.mangled_name = "native_method";
+    method.is_static = true;
+    method.is_extern = true;
+    agg.methods.push_back(method);
+    file.unit.root_ns.aggregates.push_back(agg);
+    CHECK(kdi_check_symbols(file, std::set<std::string>{}).is_ok());
+    file.unit.root_ns.functions[0].is_extern = false;
+    file.unit.root_ns.aggregates[0].methods[0].is_extern = false;
+    CHECK(kdi_check_symbols(file, std::set<std::string>{}).missing.size() == 2);
+}
+
 TEST_CASE("check-symbols: deleted members have no binary symbols", "[symbols][deleted]") {
     kdi_file file;
     kdi_aggregate agg;

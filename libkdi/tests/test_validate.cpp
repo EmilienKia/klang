@@ -55,6 +55,38 @@ TEST_CASE("validate: function with empty mangled_name fails", "[validate]") {
     REQUIRE(!r.is_valid());
 }
 
+TEST_CASE("validate: native callable metadata requires a symbol and native CString owner",
+          "[validate][ffi]") {
+    auto file = make_valid_file();
+    auto& fn = file.unit.root_ns.functions[0];
+    kdi_param param;
+    param.name = "text";
+    param.type = kdi_type::make_int(8);
+    param.is_ffi_cstring = true;
+    fn.params.push_back(param);
+    CHECK_FALSE(kdi_validate(file).is_valid());
+    fn.is_extern = true;
+    CHECK(kdi_validate(file).is_valid());
+    fn.mangled_name.clear();
+    CHECK_FALSE(kdi_validate(file).is_valid());
+
+    fn.mangled_name = "native_symbol";
+    kdi_aggregate agg;
+    agg.name = "Box";
+    agg.fq_name = "valid::mod::Box";
+    agg.llvm_def = "%Box = type { i32 }";
+    kdi_method method;
+    method.name = "native";
+    method.mangled_name = "native_method";
+    method.llvm_def = "declare void @native_method()";
+    method.is_extern = true;
+    agg.methods.push_back(method);
+    file.unit.root_ns.aggregates.push_back(agg);
+    CHECK_FALSE(kdi_validate(file).is_valid());
+    file.unit.root_ns.aggregates[0].methods[0].is_static = true;
+    CHECK(kdi_validate(file).is_valid());
+}
+
 TEST_CASE("validate: deleted members require no LLVM declaration or symbol", "[validate][deleted]") {
     auto file = make_valid_file();
     kdi_aggregate agg;

@@ -68,6 +68,7 @@ std::string params_to_string(const std::vector<kdi_param>& params) {
     out << "(";
     for (std::size_t i = 0; i < params.size(); ++i) {
         if (i) out << ", ";
+        if (params[i].is_ffi_cstring) out << "@ffi::CString ";
         out << params[i].name;
         if (params[i].is_varargs) out << "...";
         out << ": " << kdi_type_to_string(params[i].type);
@@ -90,6 +91,7 @@ std::string throws_to_string(const std::vector<kdi_type>& throws_spec) {
 
 std::string function_signature(const kdi_function& fn) {
     std::ostringstream out;
+    if (fn.is_extern) out << "@ffi::Extern(\"C\") ";
     if (fn.is_static) out << "static ";
     if (fn.is_operator) out << "operator ";
     out << fn.name << params_to_string(fn.params) << " : " << kdi_type_to_string(fn.return_type)
@@ -99,6 +101,7 @@ std::string function_signature(const kdi_function& fn) {
 
 std::string method_signature(const kdi_method& method) {
     std::ostringstream out;
+    if (method.is_extern) out << "@ffi::Extern(\"C\") ";
     if (method.is_private) out << "private ";
     if (method.is_static) out << "static ";
     if (method.is_virtual) out << "virtual ";

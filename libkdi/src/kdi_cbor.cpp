@@ -596,6 +596,7 @@ cbor_item_t* encode_param(const kdi_param& p) {
     map_push(m, "name", cbor_str(p.name));
     map_push(m, "type", encode_type(p.type));
     if (p.is_varargs) map_push(m, "is_varargs", cbor_build_bool(true));
+    if (p.is_ffi_cstring) map_push(m, "is_ffi_cstring", cbor_bool(true));
     if (p.default_source) map_push(m, "default_source", cbor_str(*p.default_source));
     return m;
 }
@@ -608,6 +609,7 @@ kdi_param decode_param(cbor_item_t* item, const std::string& path) {
     if (!tp) throw kdi_parse_error("missing 'type' at " + path);
     p.type = decode_type(tp, path + ".type");
     p.is_varargs = opt_bool(item, "is_varargs", false);
+    p.is_ffi_cstring = opt_strict_bool(item, "is_ffi_cstring", path);
     if (auto* source = map_get(item, "default_source"))
         p.default_source = read_string(source, path + ".default_source");
     return p;
@@ -671,6 +673,7 @@ cbor_item_t* encode_function(const kdi_function& f) {
     map_push(m, "visibility",   encode_visibility(f.visibility));
     if (f.is_static)   map_push(m, "is_static",   cbor_bool(true));
     if (f.is_operator) map_push(m, "is_operator",  cbor_bool(true));
+    map_push(m, "is_extern", cbor_bool(f.is_extern));
     map_push(m, "return_type",  encode_type(f.return_type));
     map_push(m, "params",       encode_params(f.params));
     map_push(m, "mangled_name", cbor_str(f.mangled_name));
@@ -693,6 +696,7 @@ kdi_function decode_function(cbor_item_t* item, const std::string& path) {
     f.visibility   = decode_visibility(item, "visibility", path);
     f.is_static    = opt_bool(item, "is_static");
     f.is_operator  = opt_bool(item, "is_operator");
+    f.is_extern    = opt_strict_bool(item, "is_extern", path);
     auto* rt = map_get(item, "return_type");
     if (!rt) throw kdi_parse_error("missing 'return_type' at " + path);
     f.return_type  = decode_type(rt, path + ".return_type");
@@ -723,6 +727,7 @@ cbor_item_t* encode_method(const kdi_method& m) {
     if (m.is_operator)     map_push(map, "is_operator",      cbor_bool(true));
     if (m.is_deleted)      map_push(map, "is_deleted",       cbor_bool(true));
     if (m.is_private)      map_push(map, "is_private",       cbor_bool(true));
+    map_push(map, "is_extern", cbor_bool(m.is_extern));
     if (m.vtable_slot >= 0) map_push(map, "vtable_slot",     cbor_build_uint32(static_cast<uint32_t>(m.vtable_slot)));
     map_push(map, "return_type",  encode_type(m.return_type));
     map_push(map, "params",       encode_params(m.params));
@@ -752,6 +757,7 @@ kdi_method decode_method(cbor_item_t* item, const std::string& path) {
     m.is_operator    = opt_bool(item, "is_operator");
     m.is_deleted     = opt_strict_bool(item, "is_deleted", path);
     m.is_private     = opt_strict_bool(item, "is_private", path);
+    m.is_extern      = opt_strict_bool(item, "is_extern", path);
     m.vtable_slot    = opt_int32(item, "vtable_slot", -1);
     auto* rt = map_get(item, "return_type");
     if (!rt) throw kdi_parse_error("missing 'return_type' at " + path);

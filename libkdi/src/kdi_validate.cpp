@@ -42,6 +42,18 @@ void validate_params(const std::vector<kdi_param>& params,
                      const std::unordered_set<std::string>* template_params = nullptr,
                      bool check_refs = true);
 
+void validate_native_callable(bool is_extern, const std::string& symbol,
+                              const std::vector<kdi_param>& params,
+                              const std::string& path, kdi_validation_result& result) {
+    if (is_extern && symbol.empty())
+        result.add(path + ".mangled_name", "native declaration requires a C symbol");
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (params[i].is_ffi_cstring && !is_extern)
+            result.add(path + ".params[" + std::to_string(i) + "].is_ffi_cstring",
+                       "CString requires a native declaration");
+    }
+}
+
 void validate_template_def(const kdi_template_def& def,
                            const std::string& path,
                            const kdi_type_table& types,
@@ -152,11 +164,16 @@ void validate_template_signature_aggregate(const kdi_aggregate& agg,
         validate_type(agg.methods[i].return_type, mp + ".return_type",
                       types, result, &template_params, false, check_refs);
         validate_params(agg.methods[i].params, mp, types, result, &template_params, check_refs);
+        validate_native_callable(agg.methods[i].is_extern, agg.methods[i].mangled_name,
+                                 agg.methods[i].params, mp, result);
+        if (agg.methods[i].is_extern && !agg.methods[i].is_static)
+            result.add(mp + ".is_extern", "native methods must be static");
         validate_throws_placeholders(agg.methods[i].throws_spec, mp, types, result, &template_params);
     }
     for (size_t i = 0; i < agg.constructors.size(); ++i) {
         auto cp = path + ".constructors[" + std::to_string(i) + "]";
         validate_params(agg.constructors[i].params, cp, types, result, &template_params, check_refs);
+        validate_native_callable(false, "", agg.constructors[i].params, cp, result);
         validate_constructor_throws(agg.constructors[i], cp, types, result, &template_params, check_refs);
     }
     for (size_t i = 0; i < agg.static_vars.size(); ++i) {
@@ -180,6 +197,7 @@ void validate_template_signature_function(const kdi_function& fn,
     }
     validate_type(fn.return_type, path + ".return_type", types, result, &template_params, false, check_refs);
     validate_params(fn.params, path, types, result, &template_params, check_refs);
+    validate_native_callable(fn.is_extern, fn.mangled_name, fn.params, path, result);
     validate_throws_placeholders(fn.throws_spec, path, types, result, &template_params);
 }
 
@@ -339,6 +357,10 @@ void validate_aggregate(const kdi_aggregate& agg,
         auto mp = path + ".methods[" + std::to_string(i) + "]";
         validate_type(agg.methods[i].return_type, mp + ".return_type", types, result);
         validate_params(agg.methods[i].params, mp, types, result);
+        validate_native_callable(agg.methods[i].is_extern, agg.methods[i].mangled_name,
+                                 agg.methods[i].params, mp, result);
+        if (agg.methods[i].is_extern && !agg.methods[i].is_static)
+            result.add(mp + ".is_extern", "native methods must be static");
         validate_throws_placeholders(agg.methods[i].throws_spec, mp, types, result);
         if (!agg.methods[i].is_deleted && agg.methods[i].mangled_name.empty()) {
             result.add(mp, "mangled_name must not be empty");
@@ -350,6 +372,7 @@ void validate_aggregate(const kdi_aggregate& agg,
     for (size_t i = 0; i < agg.constructors.size(); ++i) {
         auto cp = path + ".constructors[" + std::to_string(i) + "]";
         validate_params(agg.constructors[i].params, cp, types, result);
+        validate_native_callable(false, "", agg.constructors[i].params, cp, result);
         validate_constructor_throws(agg.constructors[i], cp, types, result);
         if (!agg.constructors[i].is_deleted && agg.constructors[i].mangled_name.empty()) {
             result.add(cp, "mangled_name must not be empty");
@@ -396,6 +419,8 @@ void validate_namespace(const kdi_namespace& ns,
         auto fp = path + ".functions[" + std::to_string(i) + "]";
         validate_type(ns.functions[i].return_type, fp + ".return_type", types, result);
         validate_params(ns.functions[i].params, fp, types, result);
+        validate_native_callable(ns.functions[i].is_extern, ns.functions[i].mangled_name,
+                                 ns.functions[i].params, fp, result);
         validate_throws_placeholders(ns.functions[i].throws_spec, fp, types, result);
         if (ns.functions[i].mangled_name.empty()) {
             result.add(fp, "mangled_name must not be empty");

@@ -305,6 +305,9 @@ Rules:
   same way as a regular (non-template) aggregate/function, with
   template-parameter-dependent types tagged as `template_param` /
   `generic_ref` instead of only a raw source dump.
+  An uninstantiated classic template's annotations are validated on
+  instantiation, not when exporting this signature. Its native-call and
+  CString fields therefore do not establish an ABI; the source is authoritative.
 
 * Re-parsed templates retain the original namespace identified by
   `origin_module` (or their declaring namespace when it is absent). Import
@@ -665,6 +668,7 @@ KdiFunction {
   fq_name      : string
   visibility   : "public" | "protected"
   is_static    : bool
+  is_extern    : bool?             -- absent means false
   return_type  : KdiType
   params       : [KdiParam]
   mangled_name : string
@@ -679,9 +683,40 @@ KdiParam {
   name           : string
   type           : KdiType
   is_varargs     : bool?           -- defaults to false
+  is_ffi_cstring : bool?           -- defaults to false
   default_source : string?         -- K expression, absent for required parameters
 }
 ```
+
+`is_extern` identifies a native C declaration, not a K ABI declaration.
+It is independent of whether a declaration is imported from another module.
+For a native declaration `mangled_name` is the exact C symbol, including an
+explicit symbol alias. This also applies to signature-only generic functions
+and methods; a native signature must retain the symbol even if `llvm_def` is
+empty. `is_ffi_cstring` records the `@ffi::CString` parameter contract and
+does not perform string conversion. These fields must be booleans when present.
+Writers emit `is_extern` for both native and K declarations.
+An `is_ffi_cstring` parameter must belong to a native declaration and, after
+resolving aliases and substituting generic arguments, satisfy the same
+character-addresser rules as a source `@ffi::CString` parameter.
+
+For a concrete imported native declaration, the compiler requires an LLVM
+prototype compatible with its resolved KDI signature and C calling convention.
+The current compiler does not propagate LLVM declaration attributes to native
+call sites and therefore rejects attributed native prototypes rather than
+assuming that their ABI is equivalent. Native aliases may have distinct K
+parameter contracts when their actual LLVM prototypes agree; the separate
+private template-dependency contract rules still apply.
+If the prototype cannot be parsed, a model-derived declaration may be used
+only when its complete printed prototype proves equivalence; otherwise import
+fails with a diagnostic. Signature-only generic records are exempt from the
+prototype requirement until instantiated.
+
+Older descriptors without these fields retain the previous false defaults.
+They cannot distinguish an old native declaration from a K declaration and
+therefore are not sufficient for an ABI that represents K observers differently
+from C pointers. Rebuild producers and consumers together for such an ABI.
+These semantic fields are not artifact-version or compatibility markers.
 
 `default_source` preserves the default argument of functions, methods, and
 constructors. Consumers must parse and type-check it in the declaring callable's
@@ -702,6 +737,7 @@ KdiMethod {
   fq_name        : string
   visibility     : "public" | "protected"
   is_static      : bool
+  is_extern      : bool?          -- absent means false; native methods are static
   is_const_member: bool
   is_virtual     : bool
   is_abstract    : bool

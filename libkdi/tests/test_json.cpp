@@ -48,6 +48,86 @@ static kdi_file make_minimal_file() {
     return f;
 }
 
+TEST_CASE("JSON preserves native callable and CString metadata", "[json][ffi]") {
+    auto file = make_minimal_file();
+    kdi_param param;
+    param.name = "text";
+    param.type = kdi_type::make_int(8);
+    param.is_ffi_cstring = true;
+    kdi_function fn;
+    fn.name = "alias";
+    fn.fq_name = "test::json::alias";
+    fn.mangled_name = "native_symbol";
+    fn.is_extern = true;
+    fn.params.push_back(param);
+    file.unit.root_ns.functions.push_back(fn);
+    kdi_method method;
+    method.name = "method";
+    method.fq_name = "test::json::Box::method";
+    method.mangled_name = "native_method";
+    method.is_static = true;
+    method.is_extern = true;
+    method.params.push_back(param);
+    kdi_aggregate aggregate;
+    aggregate.name = "Box";
+    aggregate.fq_name = "test::json::Box";
+    aggregate.methods.push_back(method);
+    file.unit.root_ns.aggregates.push_back(aggregate);
+    kdi_template_def generic;
+    generic.name = "Generic";
+    generic.aggregate_signature = std::make_shared<kdi_aggregate>(aggregate);
+    generic.function_signature = std::make_shared<kdi_function>(fn);
+    file.unit.root_ns.template_defs.push_back(generic);
+
+    std::ostringstream out;
+    kdi_write_json(file, out);
+    auto payload = nlohmann::json::parse(out.str());
+    std::istringstream input(payload.dump());
+    auto restored = kdi_read_json(input);
+    const auto& result_fn = restored.unit.root_ns.functions.at(0);
+    const auto& result_method = restored.unit.root_ns.aggregates.at(0).methods.at(0);
+    CHECK(result_fn.is_extern);
+    CHECK(result_fn.mangled_name == "native_symbol");
+    CHECK(result_fn.params.at(0).is_ffi_cstring);
+    CHECK(result_method.is_extern);
+    CHECK(result_method.mangled_name == "native_method");
+    CHECK(result_method.params.at(0).is_ffi_cstring);
+    const auto& result_generic = restored.unit.root_ns.template_defs.at(0);
+    REQUIRE(result_generic.function_signature);
+    REQUIRE(result_generic.aggregate_signature);
+    CHECK(result_generic.function_signature->is_extern);
+    CHECK(result_generic.aggregate_signature->methods.at(0).is_extern);
+    CHECK(result_generic.aggregate_signature->methods.at(0).params.at(0).is_ffi_cstring);
+
+    auto& json_fn = payload["unit"]["root_ns"]["functions"][0];
+    auto& json_method = payload["unit"]["root_ns"]["aggregates"][0]["methods"][0];
+    json_fn.erase("is_extern");
+    json_fn["params"][0].erase("is_ffi_cstring");
+    json_method.erase("is_extern");
+    json_method["params"][0].erase("is_ffi_cstring");
+    std::istringstream legacy(payload.dump());
+    auto old = kdi_read_json(legacy);
+    CHECK_FALSE(old.unit.root_ns.functions[0].is_extern);
+    CHECK_FALSE(old.unit.root_ns.functions[0].params[0].is_ffi_cstring);
+    CHECK_FALSE(old.unit.root_ns.aggregates[0].methods[0].is_extern);
+    CHECK_FALSE(old.unit.root_ns.aggregates[0].methods[0].params[0].is_ffi_cstring);
+
+    for (bool member : {false, true}) {
+        for (bool parameter : {false, true}) {
+            for (const auto& invalid : {nlohmann::json(nullptr), nlohmann::json("true"),
+                                        nlohmann::json(1)}) {
+                auto bad = payload;
+                auto& callable = member ? bad["unit"]["root_ns"]["aggregates"][0]["methods"][0]
+                                        : bad["unit"]["root_ns"]["functions"][0];
+                if (parameter) callable["params"][0]["is_ffi_cstring"] = invalid;
+                else callable["is_extern"] = invalid;
+                std::istringstream malformed(bad.dump());
+                CHECK_THROWS(kdi_read_json(malformed));
+            }
+        }
+    }
+}
+
 TEST_CASE("JSON preserves constructor exception contract presence", "[json][constructor][throws]") {
     auto file = make_minimal_file();
     kdi_aggregate agg;

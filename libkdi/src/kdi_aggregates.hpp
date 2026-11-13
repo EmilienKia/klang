@@ -189,6 +189,7 @@ struct kdi_param {
     kdi_type    type;
     bool        is_varargs = false;  ///< True if declared with '...' (informational)
     std::optional<std::string> default_source; ///< K expression evaluated in the declaration's scope.
+    bool        is_ffi_cstring = false; ///< Native CString parameter contract.
 };
 
 struct kdi_variable {
@@ -225,6 +226,7 @@ struct kdi_function {
     /// Exception types this function may throw (empty = noexcept).
     std::vector<kdi_type>    throws_spec;
     std::optional<kdi_doc_function> doc;
+    bool                     is_extern = false; ///< Native C declaration, not a K ABI function.
 };
 
 /** Member method. */
@@ -252,6 +254,7 @@ struct kdi_method {
     /// Exception types this method may throw (empty = noexcept).
     std::vector<kdi_type>    throws_spec;
     std::optional<kdi_doc_function> doc;
+    bool                     is_extern = false; ///< Native C declaration, not a K ABI method.
 };
 
 struct kdi_constructor {

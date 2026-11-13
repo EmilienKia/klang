@@ -92,7 +92,9 @@ K module to call or inherit from the exported symbols.
 **check-symbols** *file.kdi* *file.so*
 :   Load *file.kdi* and cross-check that every mangled symbol declared in it
     (functions, methods, constructors, destructors, static variables, vtables)
-    is actually present in *file.so* using **nm(1)**.  
+    is actually present in *file.so* using **nm(1)**. Explicit native C
+    declarations are dependencies, not required definitions in *file.so*,
+    and are skipped. Unmarked declarations retain the ordinary check.
     Prints one line per missing symbol to *stderr* in the form:
 
         MISSING SYMBOL: <mangled_name>

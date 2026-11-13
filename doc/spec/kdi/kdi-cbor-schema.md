@@ -256,6 +256,7 @@ Param = {
   "name" : text,
   "type" : Type,
   ? "is_varargs" : bool,
+  ? "is_ffi_cstring" : bool,
   ? "default_source" : text
 }
 ```
@@ -292,6 +293,7 @@ Function = {
   "fq_name"      : text,
   "visibility"   : Visibility,
   ?"is_static"   : bool,
+  ?"is_extern"   : bool,          -- absent means false
   "return_type"  : Type,
   "params"       : array[Param],
   "mangled_name" : text,
@@ -300,6 +302,15 @@ Function = {
   ?"doc"         : DocFunction
 }
 ```
+
+`is_extern` and parameter `is_ffi_cstring` have the semantics and false
+defaults defined in the abstract schema. If present they must be booleans.
+Producers emit `is_extern`; native declarations use the exact C symbol in
+`mangled_name`, including in signature-only generic records. Old unmarked
+records do not establish native versus K classification for a changed observer
+ABI; rebuild producers and consumers together.
+Concrete native prototypes must be parseable or provably equivalent to the
+resolved signature; unprovable declarations are rejected with a diagnostic.
 
 ---
 
@@ -311,6 +322,7 @@ Method = {
   "fq_name"          : text,
   "visibility"       : Visibility,
   ?"is_static"       : bool,
+  ?"is_extern"       : bool,   -- absent means false; native methods are static
   ?"is_const_member" : bool,
   ?"is_virtual"      : bool,
   ?"is_abstract"     : bool,
@@ -593,6 +605,9 @@ Rules:
   fields/constructors/methods the same way as a regular (non-template)
   aggregate/function — with template-parameter-dependent types tagged as
   `template_param` / `generic_ref` — instead of only a raw source dump.
+  An uninstantiated classic template's native-call and CString signature fields
+  do not establish an ABI: annotations are validated on instantiation and the
+  source remains authoritative.
  Generic **aggregate** templates set `is_generic = true`, serialize an empty `source`,
   and provide `aggregate_signature`; the single erased synthesis of the aggregate is exported
   as a regular aggregate whose types use `erased_param`. Generic **function** templates set

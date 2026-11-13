@@ -238,6 +238,7 @@ std::string make_signature(const std::string& name,
     out << operator_display_name(name) << "(";
     for (size_t i = 0; i < params.size(); ++i) {
         if (i) out << ", ";
+        if (params[i].is_ffi_cstring) out << "@ffi::CString ";
         out << params[i].name;
         if (params[i].is_varargs)
             out << "...";
@@ -1168,6 +1169,7 @@ void write_aggregate_body(std::ostringstream& out,
             << code(make_signature(method.name, method.params, &method.return_type)) << "\n\n";
         out << "- Visibility: " << code(visibility_to_string(method.visibility)) << "\n";
         out << "- Static: `" << (method.is_static ? "true" : "false") << "`\n";
+        if (method.is_extern) out << "- Native C symbol: " << code(method.mangled_name) << "\n";
         append_doc_function(out, method.doc);
     }
 }
@@ -1671,6 +1673,7 @@ bool write_namespace_tree(const kdi_namespace& ns,
             << code(make_signature(fn.name, fn.params, &fn.return_type)) << "\n\n";
         out << "- Visibility: " << code(visibility_to_string(fn.visibility)) << "\n";
         out << "- Static: `" << (fn.is_static ? "true" : "false") << "`\n";
+        if (fn.is_extern) out << "- Native C symbol: " << code(fn.mangled_name) << "\n";
         append_doc_function(out, fn.doc);
     }
 

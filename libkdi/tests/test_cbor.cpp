@@ -98,6 +98,78 @@ static kdi_type rt_type(const kdi_type& t) {
     return restored.unit.root_ns.functions.at(0).return_type;
 }
 
+TEST_CASE("CBOR preserves and validates native callable metadata", "[cbor][ffi]") {
+    auto file = make_aggregate_file();
+    kdi_function k_fn;
+    k_fn.name = "ordinary";
+    k_fn.fq_name = "geo::ordinary";
+    k_fn.mangled_name = "_K_ordinary";
+    file.unit.root_ns.functions.push_back(k_fn);
+    kdi_function fn;
+    fn.name = "alias";
+    fn.fq_name = "geo::alias";
+    fn.mangled_name = "native_symbol";
+    fn.is_extern = true;
+    kdi_param p;
+    p.name = "text";
+    p.type = kdi_type::make_int(8);
+    p.is_ffi_cstring = true;
+    fn.params.push_back(p);
+    file.unit.root_ns.functions.push_back(fn);
+    auto& method = file.unit.root_ns.aggregates[0].methods[0];
+    method.is_static = true;
+    method.is_extern = true;
+    method.mangled_name = "native_method";
+    method.params.push_back(p);
+    kdi_template_def generic;
+    generic.name = "Generic";
+    generic.is_generic = true;
+    generic.function_signature = std::make_shared<kdi_function>(fn);
+    generic.aggregate_signature = std::make_shared<kdi_aggregate>(file.unit.root_ns.aggregates[0]);
+    file.unit.root_ns.template_defs.push_back(generic);
+    std::ostringstream out(std::ios::binary);
+    kdi_write_cbor(file, out);
+    const auto bytes = out.str();
+    std::istringstream input(bytes, std::ios::binary);
+    auto restored = kdi_read_cbor(input);
+    CHECK_FALSE(restored.unit.root_ns.functions[0].is_extern);
+    CHECK(restored.unit.root_ns.functions[1].is_extern);
+    CHECK(restored.unit.root_ns.functions[1].mangled_name == "native_symbol");
+    CHECK(restored.unit.root_ns.functions[1].params[0].is_ffi_cstring);
+    CHECK(restored.unit.root_ns.aggregates[0].methods[0].is_extern);
+    CHECK(restored.unit.root_ns.aggregates[0].methods[0].params[0].is_ffi_cstring);
+    REQUIRE(restored.unit.root_ns.template_defs[0].function_signature);
+    REQUIRE(restored.unit.root_ns.template_defs[0].aggregate_signature);
+    CHECK(restored.unit.root_ns.template_defs[0].function_signature->is_extern);
+    CHECK(restored.unit.root_ns.template_defs[0].aggregate_signature->methods[0].params[0].is_ffi_cstring);
+
+    for (const std::string key : {"is_extern", "is_ffi_cstring"}) {
+        auto pos = bytes.find(key);
+        REQUIRE(pos != std::string::npos);
+        while (pos != std::string::npos) {
+            auto malformed = bytes;
+            malformed[pos + key.size()] = static_cast<char>(0xf6);
+            std::istringstream bad(malformed, std::ios::binary);
+            CHECK_THROWS_AS(kdi_read_cbor(bad), kdi_parse_error);
+            pos = bytes.find(key, pos + key.size());
+        }
+    }
+    auto legacy = bytes;
+    for (const std::string key : {"is_extern", "is_ffi_cstring"}) {
+        auto pos = legacy.find(key);
+        while (pos != std::string::npos) {
+            legacy.erase(pos - 1, key.size() + 2);
+            pos = legacy.find(key);
+        }
+    }
+    std::istringstream old_input(legacy, std::ios::binary);
+    auto old = kdi_read_cbor(old_input);
+    CHECK_FALSE(old.unit.root_ns.functions[1].is_extern);
+    CHECK_FALSE(old.unit.root_ns.functions[1].params[0].is_ffi_cstring);
+    CHECK_FALSE(old.unit.root_ns.aggregates[0].methods[0].is_extern);
+    CHECK_FALSE(old.unit.root_ns.aggregates[0].methods[0].params[0].is_ffi_cstring);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST_CASE("CBOR preserves constructor exception contract presence", "[cbor][constructor][throws]") {

@@ -342,6 +342,7 @@ static kdi_type from_json_type(const json& j) {
 static json to_json(const kdi_param& p) {
     json j = {{"name", p.name}, {"type", to_json(p.type)}};
     if (p.is_varargs) j["is_varargs"] = true;
+    if (p.is_ffi_cstring) j["is_ffi_cstring"] = true;
     if (p.default_source) j["default_source"] = *p.default_source;
     return j;
 }
@@ -350,6 +351,7 @@ static kdi_param from_json_param(const json& j) {
     p.name = j.at("name");
     p.type = from_json_type(j.at("type"));
     if (j.contains("is_varargs")) p.is_varargs = j["is_varargs"].get<bool>();
+    if (j.contains("is_ffi_cstring")) p.is_ffi_cstring = j.at("is_ffi_cstring").get<bool>();
     if (j.contains("default_source")) p.default_source = j.at("default_source").get<std::string>();
     return p;
 }
@@ -484,6 +486,7 @@ static json to_json(const kdi_function& f) {
         {"fq_name",      f.fq_name},
         {"visibility",   vis_to_str(f.visibility)},
         {"is_static",    f.is_static},
+        {"is_extern",    f.is_extern},
         {"return_type",  to_json(f.return_type)},
         {"params",       params_to_json(f.params)},
         {"mangled_name", f.mangled_name},
@@ -505,6 +508,7 @@ static kdi_function from_json_function(const json& j) {
     f.fq_name      = j.at("fq_name");
     f.visibility   = vis_from_str(j.value("visibility", "public"));
     f.is_static    = j.value("is_static", false);
+    f.is_extern    = j.value("is_extern", false);
     f.is_operator  = j.value("is_operator", false);
     f.return_type  = from_json_type(j.at("return_type"));
     f.params       = params_from_json(j.value("params", json::array()));
@@ -524,6 +528,7 @@ static json to_json(const kdi_method& m) {
         {"fq_name",         m.fq_name},
         {"visibility",      vis_to_str(m.visibility)},
         {"is_static",       m.is_static},
+        {"is_extern",       m.is_extern},
         {"is_const_member", m.is_const_member},
         {"is_virtual",      m.is_virtual},
         {"is_abstract",     m.is_abstract},
@@ -552,6 +557,7 @@ static kdi_method from_json_method(const json& j) {
     m.fq_name         = j.at("fq_name");
     m.visibility      = vis_from_str(j.value("visibility", "public"));
     m.is_static       = j.value("is_static", false);
+    m.is_extern       = j.value("is_extern", false);
     m.is_const_member = j.value("is_const_member", false);
     m.is_virtual      = j.value("is_virtual", false);
     m.is_abstract     = j.value("is_abstract", false);
