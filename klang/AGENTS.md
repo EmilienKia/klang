@@ -366,7 +366,7 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-import-core` | KDI import core, namespaces, enums, transitive; CTest shards 0–3 |
 | `klang-tests-import-templates` | KDI cross-module template instantiation; CTest shards 0–14 |
 | `klang-tests-import-interop` | KDI aliases, typedefs, callables, prod-lib; CTest shards 0-1 |
-| `klangc-tests` | CLI/integration behavior |
+| `klangc-tests` | CLI/integration behavior; CTest shards 0–1 |
 
 Grouping policy:
 - keep thematic coherence,

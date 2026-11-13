@@ -80,7 +80,7 @@ cd cmake-build-debug && /usr/bin/ctest -j1 --output-on-failure
 ninja -C cmake-build-debug -j3 libk_stdlib libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-big-integer-native libk-tests-io libk-tests-io-text libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests libk-tests-io-proactor libk-tests-module libk-tests-io-proactor-kernel libk-tests-io-foundations-api libk-tests-file-channel-fully libk-tests-stream-channels libk-tests-datagram-channels libk-tests-application-lifecycle libk-tests-executor libk-tests-uuid libk-tests-time
 
 # Run libk tests
-cd cmake-build-debug && /usr/bin/ctest -j1 -R "^(libk-tests-.*|libk-thread-io-tests)$" --output-on-failure
+cd cmake-build-debug && /usr/bin/ctest -j1 -R "^(libk-tests-.*|libk-thread-io-tests(-shard-[0-9]+)?)$" --output-on-failure
 ```
 
 Do not run a lifecycle shutdown fixture in a shared test process: its stop is

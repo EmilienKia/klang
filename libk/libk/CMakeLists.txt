@@ -1165,7 +1165,7 @@ set_tests_properties(
     PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 
 # ── libk threading and I/O tests ─────────────────────────────────────────────
-libk_add_test_sharded(libk-thread-io-tests 120 2
+libk_add_test_sharded(libk-thread-io-tests 120 3
     # ── Time, threads, futures ────────────────────────────────────────────
     tests/test-thread-basic.cpp
     tests/test-future.cpp

@@ -166,7 +166,7 @@ Unless fully qualified, paths below are relative to `libk/libk/src/`.
 - `libk-tests-collections-sequential`: sequential collection tests (List, Vector, Sequences).
 - `libk-tests-collections-associative`: associative collection test binary;
   CTest entries `-set-shard-0/1` and `-non-set` cover Set and its complement.
-- `libk-thread-io-tests`: thread/future/sync/file/network tests (2 Catch2 shards).
+- `libk-thread-io-tests`: thread/future/sync/file/network tests (3 Catch2 shards: `-shard-0/1/2`).
 - `libk-tests-time`: time API tests (2 Catch2 shards).
 - `libk-tests-application-lifecycle`: isolated native/mock and compiled K exit
   barriers; every actual runtime shutdown executes in a fresh subprocess
@@ -176,7 +176,7 @@ Unless fully qualified, paths below are relative to `libk/libk/src/`.
 - `libk-tests-collections-sequential`: sequential collection tests (List, Vector, Sequences).
 - `libk-tests-collections-associative`: associative collection test binary;
   CTest entries `-set-shard-0/1` and `-non-set` cover Set and its complement.
-- `libk-thread-io-tests`: thread/future/sync/file/network tests.
+- `libk-thread-io-tests`: thread/future/sync/file/network tests (3 Catch2 shards: `-shard-0/1/2`).
 - `libk-tests-file-channel-fully`: isolated FileChannel fully callback/Future/Sync API cases (120-second budget).
 - `libk-tests-stream-channels`: isolated TCP/Unix proactive API cases (120-second
   ceiling, target under 60 seconds); `[stream-channel]` native mocks remain in
@@ -201,7 +201,7 @@ cd cmake-build-debug && ninja -j3 libk-tests-rtti-exceptions libk-tests-strings 
 ninja -C cmake-build-debug -j3 libk_stdlib libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-big-integer-native libk-tests-io libk-tests-io-text libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests libk-tests-io-proactor libk-tests-io-proactor-kernel libk-tests-io-foundations-api libk-tests-file-channel-fully libk-tests-stream-channels libk-tests-datagram-channels libk-tests-application-lifecycle libk-tests-executor libk-tests-uuid libk-tests-time
 
 # Run libk tests
-/usr/bin/ctest --test-dir cmake-build-debug -j1 -R "^(libk-tests-.*|libk-thread-io-tests)$" --output-on-failure
+/usr/bin/ctest --test-dir cmake-build-debug -j1 -R "^(libk-tests-.*|libk-thread-io-tests(-shard-[0-9]+)?)$" --output-on-failure
 ```
 
 Keep every current target in a scoped rebuild/replay. The byte/file and

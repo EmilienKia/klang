@@ -577,6 +577,11 @@ target_compile_definitions(klangc-tests PRIVATE
 # Ensure klangc and libk are built before running integration tests
 add_dependencies(klangc-tests klangc libk_stdlib)
 
-add_test(NAME klangc-tests COMMAND klangc-tests)
+# Catch2 shards keep the CLI integration suite below the 120-second CTest budget.
 klang_scale_ctest_timeout(_klangc_test_timeout 120)
-set_tests_properties(klangc-tests PROPERTIES TIMEOUT "${_klangc_test_timeout}")
+foreach(KLANGC_TESTS_SHARD RANGE 0 1)
+    add_test(NAME klangc-tests-shard-${KLANGC_TESTS_SHARD}
+             COMMAND klangc-tests --shard-count 2 --shard-index ${KLANGC_TESTS_SHARD})
+    set_tests_properties(klangc-tests-shard-${KLANGC_TESTS_SHARD}
+                         PROPERTIES TIMEOUT "${_klangc_test_timeout}" RUN_SERIAL TRUE)
+endforeach()
