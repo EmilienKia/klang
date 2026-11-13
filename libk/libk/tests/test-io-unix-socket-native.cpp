@@ -28,16 +28,8 @@
 #endif
 
 TEST_CASE("Unix socket proactor: stream Future and Sync round-trip", "[libk][io][socket][unix][stream-channel]") {
-    char name[] = "/tmp/klang-unix-stream-XXXXXX";
-    char* directory = mkdtemp(name);
-    REQUIRE(directory);
-    struct Cleanup {
-        std::filesystem::path directory;
-        ~Cleanup() {
-            std::filesystem::remove(directory / "endpoint");
-            std::filesystem::remove(directory);
-        }
-    } cleanup{directory};
+    TmpDir cleanup;
+    require_unix_socket_path(cleanup.path / "endpoint");
     std::string source = R"SRC(
         module __unix_stream_proactor__;
         test() : int throws(Throwable) {
@@ -64,7 +56,7 @@ TEST_CASE("Unix socket proactor: stream Future and Sync round-trip", "[libk][io]
             return 1;
         }
     )SRC";
-    source.replace(source.find("@SOCKET@"), 8, (cleanup.directory / "endpoint").generic_string());
+    source = replace_k_path(std::move(source), "@SOCKET@", cleanup.path / "endpoint");
     auto jit = gen_jit_with_stdlib(source, LIBK_KDI_DIR, LIBK_LIB_DIR);
     REQUIRE(jit);
     auto test = jit->lookup_symbol<int (*)()>("test");
@@ -75,17 +67,9 @@ TEST_CASE("Unix socket proactor: stream Future and Sync round-trip", "[libk][io]
 }
 
 TEST_CASE("Unix socket proactor: datagram sendTo/connect", "[libk][io][socket][unix][udp]") {
-    char name[] = "/tmp/klang-unix-datagram-XXXXXX";
-    char* directory = mkdtemp(name);
-    REQUIRE(directory);
-    struct Cleanup {
-        std::filesystem::path directory;
-        ~Cleanup() {
-            std::filesystem::remove(directory / "receiver");
-            std::filesystem::remove(directory / "sender");
-            std::filesystem::remove(directory);
-        }
-    } cleanup{directory};
+    TmpDir cleanup;
+    require_unix_socket_path(cleanup.path / "receiver");
+    require_unix_socket_path(cleanup.path / "sender");
     std::string source = R"SRC(
         module __unix_datagram_proactor__;
         test() : int throws(Throwable) {
@@ -112,8 +96,8 @@ TEST_CASE("Unix socket proactor: datagram sendTo/connect", "[libk][io][socket][u
             return 1;
         }
     )SRC";
-    source.replace(source.find("@RECEIVER@"), 10, (cleanup.directory / "receiver").generic_string());
-    source.replace(source.find("@SENDER@"), 8, (cleanup.directory / "sender").generic_string());
+    source = replace_k_path(std::move(source), "@RECEIVER@", cleanup.path / "receiver");
+    source = replace_k_path(std::move(source), "@SENDER@", cleanup.path / "sender");
     auto jit = gen_jit_with_stdlib(source, LIBK_KDI_DIR, LIBK_LIB_DIR);
     REQUIRE(jit);
     auto test = jit->lookup_symbol<int (*)()>("test");
@@ -121,6 +105,6 @@ TEST_CASE("Unix socket proactor: datagram sendTo/connect", "[libk][io][socket][u
     int result = 0;
     REQUIRE_NOTHROW(result = test());
     REQUIRE(result == 1);
-    REQUIRE_FALSE(std::filesystem::exists(cleanup.directory / "receiver"));
-    REQUIRE_FALSE(std::filesystem::exists(cleanup.directory / "sender"));
+    REQUIRE_FALSE(std::filesystem::exists(cleanup.path / "receiver"));
+    REQUIRE_FALSE(std::filesystem::exists(cleanup.path / "sender"));
 }

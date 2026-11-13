@@ -2112,7 +2112,8 @@ TEST_CASE("[P] M7: generic flag survives shared-lib generation and KDI export",
     REQUIRE(tpl_before->get_tpl_info() != nullptr);
     CHECK(tpl_before->get_tpl_info()->is_generic);
 
-    const auto out_so = (std::filesystem::temp_directory_path() / "klang_m7_p.so").string();
+    TmpDir workspace;
+    const auto out_so = (workspace.path / "klang_m7_p.so").string();
     REQUIRE(comp->gen_shared_library(out_so));
 
     auto tpl_after = root_ns->get_aggregate("LinkedList");
@@ -2136,8 +2137,9 @@ TEST_CASE("[P] M7: generic flag survives shared-lib generation and KDI export",
 
 TEST_CASE("[Q] M7: generic KDI export with file-backed source and absolute path",
           "[milestone7][generic][e2e][pic]") {
-    const auto src_path = (std::filesystem::temp_directory_path() / "klang_m7_q.k").string();
-    const auto out_so = (std::filesystem::temp_directory_path() / "klang_m7_q.so").string();
+    TmpDir workspace;
+    const auto src_path = (workspace.path / "klang_m7_q.k").string();
+    const auto out_so = (workspace.path / "klang_m7_q.so").string();
 
     {
         std::ofstream os(src_path);

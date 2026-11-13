@@ -4003,13 +4003,16 @@ TEST_CASE("import enum — constructor extension copies an imported constant tab
 
 TEST_CASE("import transitive missing — missing transitive KDI is a fatal error",
           "[import][transitive][import-transitive-missing]") {
-    // Build lib1 (IFoo) — use build_shared_library helper
-    std::string so1 = build_shared_library(R"K(
+    TmpDir workspace;
+    TmpKdi original(R"K(
         module ifoo_lib;
         interface IFoo { f() : int; }
     )K");
+    const std::string so1 = (workspace.path / "ifoo.so").string();
+    std::filesystem::copy_file(original.so_path, so1);
     std::filesystem::path kdi1_p(so1); kdi1_p.replace_extension(".kdi");
     std::string kdi1 = kdi1_p.string();
+    std::filesystem::copy_file(original.kdi_path, kdi1);
     REQUIRE(std::filesystem::is_regular_file(kdi1));
 
     // Create a canonical-name symlink so the linker can find -lifoo_lib
@@ -4017,9 +4020,9 @@ TEST_CASE("import transitive missing — missing transitive KDI is a fatal error
     std::filesystem::path ifoo_symlink = so1_dir / "libifoo_lib.so";
     {
         std::error_code ec;
-        std::filesystem::remove(ifoo_symlink, ec);
         std::filesystem::create_symlink(
             std::filesystem::path(so1).filename(), ifoo_symlink, ec);
+        REQUIRE_FALSE(ec);
     }
 
     // Build lib2 (Bar : IFoo) with lib1 available in its resolver
@@ -4040,10 +4043,7 @@ TEST_CASE("import transitive missing — missing transitive KDI is a fatal error
         };
         // Build bar_lib with ifoo_lib accessible
         // We re-use the helpers' pattern manually to set the resolver
-        char tmp2[] = "/tmp/klang_lib_test_XXXXXX";
-        int fd2 = ::mkstemp(tmp2); ::close(fd2);
-        so2 = std::string(tmp2) + ".so";
-        std::filesystem::remove(tmp2);
+        so2 = (workspace.path / "bar.so").string();
 
         auto bar_comp = k::compiler::create(make_pic_target_machine());
         auto r2 = std::make_shared<k::path_lookup_file_resolver>();

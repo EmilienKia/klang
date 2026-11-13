@@ -2,6 +2,9 @@
 #include "kdi.hpp"
 
 #include <sstream>
+#include <filesystem>
+#include <cstdlib>
+#include <unistd.h>
 
 using namespace kdi;
 
@@ -722,13 +725,19 @@ TEST_CASE("CBOR: nested callable type round-trips", "[cbor][type][callable]") {
 
 TEST_CASE("CBOR: file/path helpers work", "[cbor]") {
     auto f = make_aggregate_file();
-    std::string path = "/tmp/test_kdi_cbor_roundtrip.kdi";
+    std::string path = (std::filesystem::temp_directory_path() / "kdi-XXXXXX.kdi").string();
+    int fd = ::mkstemps(path.data(), 4);
+    REQUIRE(fd >= 0);
+    struct Cleanup {
+        std::string path;
+        ~Cleanup() { std::error_code ec; std::filesystem::remove(path, ec); }
+    } cleanup{path};
+    REQUIRE(::close(fd) == 0);
     REQUIRE(kdi_write_cbor_file(f, path));
     kdi_file restored;
     REQUIRE_NOTHROW(restored = kdi_read_cbor_file(path));
     REQUIRE(restored.header.module_name == "geo");
     REQUIRE(restored.unit.root_ns.aggregates[0].name == "Point");
-    std::remove(path.c_str());
 }
 
 TEST_CASE("CBOR: template_origin round-trips on function", "[cbor][template]") {

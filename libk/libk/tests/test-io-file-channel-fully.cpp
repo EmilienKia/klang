@@ -10,25 +10,10 @@
 
 namespace {
 struct Fixture {
-    std::filesystem::path directory;
-    Fixture() {
-        char name[] = "/tmp/klang-fully-XXXXXX";
-        char* path = mkdtemp(name);
-        REQUIRE(path);
-        directory = path;
-    }
-    ~Fixture() {
-        std::filesystem::remove(directory / "data.bin");
-        std::filesystem::remove(directory);
-    }
+    TmpDir workspace;
+    std::filesystem::path directory = workspace.path;
     std::string source(std::string text) const {
-        const auto path = (directory / "data.bin").generic_string();
-        size_t offset = 0;
-        while ((offset = text.find("@FILE@", offset)) != std::string::npos) {
-            text.replace(offset, 6, path);
-            offset += path.size();
-        }
-        return text;
+        return replace_k_path(std::move(text), "@FILE@", directory / "data.bin");
     }
     std::string contents() const {
         std::ifstream input(directory / "data.bin", std::ios::binary);

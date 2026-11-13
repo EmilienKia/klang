@@ -48,7 +48,8 @@ void write_pattern_file(const std::string& path, std::size_t size) {
 } // anonymous namespace
 
 TEST_CASE("FileChannel stress: concurrent positional reads are stable", "[libk][io][stress]") {
-    const std::string path = "/tmp/klang_io_stress.bin";
+    TmpDir workspace;
+    const std::string path = (workspace.path / "data.bin").string();
     write_pattern_file(path, 4096);
 
     std::string src = R"SRC(
@@ -83,7 +84,7 @@ TEST_CASE("FileChannel stress: concurrent positional reads are stable", "[libk][
         test() : int throws(ThreadInterruptionException) {
             path : k::io::file::Path! = new k::io::file::Path(
         )SRC";
-    src += "\"" + path + "\"";
+    src += "\"@FILE@\"";
     src += R"SRC(
             );
 
@@ -111,7 +112,7 @@ TEST_CASE("FileChannel stress: concurrent positional reads are stable", "[libk][
         }
     )SRC";
 
-    auto jit = jit_k(src);
+    auto jit = jit_k(replace_k_path(std::move(src), "@FILE@", path));
     REQUIRE(jit);
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn);

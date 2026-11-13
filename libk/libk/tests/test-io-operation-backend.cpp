@@ -3222,14 +3222,10 @@ TEST_CASE("Datagram native: Unix bind owns only a successfully created unique pa
           "[libk][io][proactor][mock][datagram-channel][unix][ownership]") {
     DatagramNative datagram;
     auto& rt = datagram.rt;
-    char pattern[] = "/tmp/klang-native-datagram-XXXXXX";
-    char* directory = mkdtemp(pattern);
-    REQUIRE(directory);
-    std::filesystem::path root(directory);
-    struct Cleanup {
-        std::filesystem::path root;
-        ~Cleanup() { std::filesystem::remove(root / "socket"); std::filesystem::remove(root / "occupied"); std::filesystem::remove(root); }
-    } cleanup{root};
+    TmpDir workspace;
+    const auto& root = workspace.path;
+    require_unix_socket_path(root / "socket");
+    require_unix_socket_path(root / "occupied");
     auto bind = symbol<void* (*)(const uint32_t*, int, int)>(rt.library, "__k_io_datagram_bind");
     auto text = native_text((root / "occupied").c_str());
     { std::ofstream output(root / "occupied"); output << "keep"; REQUIRE(output.good()); }

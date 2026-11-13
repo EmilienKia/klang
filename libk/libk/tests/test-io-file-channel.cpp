@@ -52,8 +52,19 @@
 
 namespace {
 
+TmpDir& file_workspace() {
+    static TmpDir workspace;
+    return workspace;
+}
+
+std::string file_path(const char* name) {
+    return (file_workspace().path / name).string();
+}
+
 std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src, bool dump = false) {
-    return gen_jit_with_stdlib(src, LIBK_KDI_DIR, LIBK_LIB_DIR, dump);
+    auto text = replace_k_path(std::string(src), "/tmp/klang_fc_",
+                               file_workspace().path / "klang_fc_");
+    return gen_jit_with_stdlib(text, LIBK_KDI_DIR, LIBK_LIB_DIR, dump);
 }
 
 void write_file(const std::string& path, const std::string& content) {
@@ -68,26 +79,11 @@ std::string read_file(const std::string& path) {
 }
 
 struct FileFixture {
-    std::filesystem::path directory;
-    FileFixture() {
-        static std::atomic<unsigned> sequence{0};
-        do {
-            directory = ".klang-file-channel-" + std::to_string(getpid()) +
-                        "-" + std::to_string(sequence.fetch_add(1));
-        } while (!std::filesystem::create_directory(directory));
-    }
-    ~FileFixture() {
-        std::error_code error;
-        std::filesystem::remove_all(directory, error);
-    }
+    TmpDir workspace;
+    std::filesystem::path directory = workspace.path;
     std::string path() const { return (directory / "data.bin").generic_string(); }
     std::string source(std::string text) const {
-        size_t offset = 0;
-        while ((offset = text.find("@FILE@", offset)) != std::string::npos) {
-            text.replace(offset, 6, path());
-            offset += path().size();
-        }
-        return text;
+        return replace_k_path(std::move(text), "@FILE@", path());
     }
 };
 
@@ -634,7 +630,7 @@ TEST_CASE("FileChannel primitives: errors remain observable operations and Sync 
 
 TEST_CASE("FileChannel: opening a missing file raises FileNotFoundException",
           "[libk][io][file-channel]") {
-    std::filesystem::remove("/tmp/klang_fc_absent.bin");
+    std::filesystem::remove(file_path("klang_fc_absent.bin"));
     auto jit = jit_k(R"SRC(
         module __fc_missing__;
         test() : int {
@@ -657,7 +653,7 @@ TEST_CASE("FileChannel: opening a missing file raises FileNotFoundException",
 }
 
 TEST_CASE("FileChannel: create, write and read back", "[libk][io][file-channel]") {
-    const std::string path = "/tmp/klang_fc_roundtrip.bin";
+    const std::string path = file_path("klang_fc_roundtrip.bin");
     std::filesystem::remove(path);
     auto jit = jit_k(R"SRC(
         module __fc_roundtrip__;
@@ -707,7 +703,7 @@ TEST_CASE("FileChannel: create, write and read back", "[libk][io][file-channel]"
 
 TEST_CASE("FileChannel: positional access leaves the position untouched",
           "[libk][io][file-channel]") {
-    const std::string path = "/tmp/klang_fc_positional.bin";
+    const std::string path = file_path("klang_fc_positional.bin");
     write_file(path, "0123456789");
     auto jit = jit_k(R"SRC(
         module __fc_positional__;
@@ -745,7 +741,7 @@ TEST_CASE("FileChannel: positional access leaves the position untouched",
 
 TEST_CASE("FileChannel: readFully raises EndOfStreamException past the end",
           "[libk][io][file-channel]") {
-    const std::string path = "/tmp/klang_fc_readfully.bin";
+    const std::string path = file_path("klang_fc_readfully.bin");
     write_file(path, "abcd");
     auto jit = jit_k(R"SRC(
         module __fc_readfully__;
@@ -784,7 +780,7 @@ TEST_CASE("FileChannel: readFully raises EndOfStreamException past the end",
 
 TEST_CASE("FileChannel: writeFully transfers every remaining byte",
           "[libk][io][file-channel]") {
-    const std::string path = "/tmp/klang_fc_writefully.bin";
+    const std::string path = file_path("klang_fc_writefully.bin");
     std::filesystem::remove(path);
     auto jit = jit_k(R"SRC(
         module __fc_writefully__;
@@ -825,7 +821,7 @@ TEST_CASE("FileChannel: writeFully transfers every remaining byte",
 
 TEST_CASE("FileChannel: a closed channel raises ClosedChannelException",
           "[libk][io][file-channel]") {
-    const std::string path = "/tmp/klang_fc_closed.bin";
+    const std::string path = file_path("klang_fc_closed.bin");
     write_file(path, "xyz");
     auto jit = jit_k(R"SRC(
         module __fc_closed__;
@@ -866,7 +862,7 @@ TEST_CASE("FileChannel: a closed channel raises ClosedChannelException",
 }
 
 TEST_CASE("FileChannel: append mode writes at the end", "[libk][io][file-channel]") {
-    const std::string path = "/tmp/klang_fc_append.bin";
+    const std::string path = file_path("klang_fc_append.bin");
     write_file(path, "head-");
     auto jit = jit_k(R"SRC(
         module __fc_append__;
@@ -898,7 +894,7 @@ TEST_CASE("FileChannel: append mode writes at the end", "[libk][io][file-channel
 
 TEST_CASE("FileChannel: exclusive create fails on an existing file",
           "[libk][io][file-channel]") {
-    const std::string path = "/tmp/klang_fc_excl.bin";
+    const std::string path = file_path("klang_fc_excl.bin");
     write_file(path, "here");
     auto jit = jit_k(R"SRC(
         module __fc_excl__;
@@ -924,7 +920,7 @@ TEST_CASE("FileChannel: exclusive create fails on an existing file",
 
 TEST_CASE("FileChannel: concurrent positional reads from several threads",
           "[libk][io][file-channel]") {
-    const std::string path = "/tmp/klang_fc_concurrent.bin";
+    const std::string path = file_path("klang_fc_concurrent.bin");
     write_file(path, std::string(4096, 'Z'));
     auto jit = jit_k(R"SRC(
         module __fc_concurrent__;

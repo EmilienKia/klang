@@ -24,6 +24,49 @@
 
 namespace fs = std::filesystem;
 
+TEST_CASE("temporary directories are unique and clean up nested files",
+          "[resolver][live][test-temp]") {
+    TmpDir parent;
+    fs::path first_path;
+    fs::path second_path;
+    {
+        TmpDir first(parent.path);
+        TmpDir second(parent.path);
+        first_path = first.path;
+        second_path = second.path;
+        REQUIRE(first_path.parent_path() == parent.path);
+        REQUIRE(second_path.parent_path() == parent.path);
+        REQUIRE(first_path != second_path);
+        REQUIRE(fs::create_directory(first_path / "nested"));
+        std::ofstream(first_path / "nested" / "data") << "test";
+        REQUIRE(fs::exists(first_path / "nested" / "data"));
+    }
+    CHECK_FALSE(fs::exists(first_path));
+    CHECK_FALSE(fs::exists(second_path));
+}
+
+TEST_CASE("temporary directory cleans up during exception unwinding",
+          "[resolver][live][test-temp]") {
+    TmpDir parent;
+    fs::path child;
+    try {
+        TmpDir temporary(parent.path);
+        child = temporary.path;
+        temporary.create_file("data");
+        throw std::runtime_error("expected");
+    } catch (const std::runtime_error&) {}
+    REQUIRE_FALSE(child.empty());
+    CHECK_FALSE(fs::exists(child));
+    REQUIRE_THROWS(TmpDir(parent.path / "missing"));
+}
+
+TEST_CASE("temporary paths are escaped in generated K string literals",
+          "[resolver][test-temp]") {
+    const fs::path path{R"(name"with\quotes)"};
+    CHECK(replace_k_path(R"(open("@PATH@"); open("@PATH@");)", "@PATH@", path) ==
+          R"(open("name\"with\\quotes"); open("name\"with\\quotes");)");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // file_resolver::module_name_to_file_base
 // ─────────────────────────────────────────────────────────────────────────────
@@ -170,4 +213,3 @@ TEST_CASE("file_resolver::chain — both fail returns nullopt", "[resolver][live
     auto chain = k::file_resolver::chain(std::move(r1), std::move(r2));
     REQUIRE_FALSE( chain->resolve("lib", ".kdi") );
 }
-

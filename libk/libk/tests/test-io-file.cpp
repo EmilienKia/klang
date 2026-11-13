@@ -23,8 +23,7 @@
  * Exercises file metadata queries, file creation/deletion, single-byte
  * and bulk read/write, append mode, and round-trip I/O.
  *
- * All tests use temporary files under /tmp/klang_test_* and clean up
- * after themselves.
+ * Files are scoped to a temporary test directory.
  */
 
 #include <catch2/catch_all.hpp>
@@ -45,18 +44,28 @@
 
 namespace {
 
+TmpDir& file_workspace() {
+    static TmpDir workspace;
+    return workspace;
+}
+
 std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
-    return gen_jit_with_stdlib(src, LIBK_KDI_DIR, LIBK_LIB_DIR);
+    auto text = replace_k_path(std::string(src), "/tmp/klang_test_",
+                               file_workspace().path / "klang_test_");
+    text = replace_k_path(std::move(text), "@TEST_DIR@", file_workspace().path);
+    return gen_jit_with_stdlib(text, LIBK_KDI_DIR, LIBK_LIB_DIR);
 }
 
 /** Helper: ensure a temp file does not exist before/after a test. */
 struct tmp_file_guard {
     std::string path;
-    explicit tmp_file_guard(const std::string& p) : path(p) {
+    explicit tmp_file_guard(const std::string& p)
+        : path((file_workspace().path / std::filesystem::path(p).filename()).string()) {
         std::filesystem::remove(path);
     }
     ~tmp_file_guard() {
-        std::filesystem::remove(path);
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
     }
 };
 
@@ -164,7 +173,7 @@ TEST_CASE("File isDirectory returns true for /tmp", "[libk][io][file]") {
         module __file_isdir__;
 
         test() : int {
-            p : k::io::file::Path("/tmp");
+            p : k::io::file::Path("@TEST_DIR@");
             if (!p.isDirectory()) return 1;
             if (p.isFile()) return 2;
             return 0;
@@ -614,8 +623,6 @@ TEST_CASE("File getName with no separator returns full name", "[libk][io][file]"
     REQUIRE(fn);
     CHECK(fn() == 0);
 }
-
-
 
 
 

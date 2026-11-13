@@ -20,26 +20,16 @@ void runDatagram(std::string source) {
     REQUIRE(result == 1);
 }
 struct DatagramFixture {
-    std::filesystem::path directory;
+    TmpDir workspace;
+    std::filesystem::path directory = workspace.path;
     DatagramFixture() {
-        char name[] = "/tmp/klang-datagram-XXXXXX";
-        char* path = mkdtemp(name);
-        REQUIRE(path);
-        directory = path;
-    }
-    ~DatagramFixture() {
         for (auto name : {"receiver", "sender", "occupied"})
-            std::filesystem::remove(directory / name);
-        std::filesystem::remove(directory);
+            require_unix_socket_path(directory / name);
     }
     std::string source(std::string text) const {
         for (auto name : {"receiver", "sender", "occupied"}) {
             std::string token = "@" + std::string(name) + "@";
-            auto offset = text.find(token);
-            while (offset != std::string::npos) {
-                text.replace(offset, token.size(), (directory / name).generic_string());
-                offset = text.find(token);
-            }
+            text = replace_k_path(std::move(text), token, directory / name);
         }
         return text;
     }

@@ -44,8 +44,21 @@
 
 namespace {
 
+TmpDir& path_workspace() {
+    static TmpDir workspace;
+    return workspace;
+}
+
 std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
-    return gen_jit_with_stdlib(src, LIBK_KDI_DIR, LIBK_LIB_DIR);
+    std::string text(src);
+    for (const auto* name : {"klang_path_inspect.bin", "klang_path_absent_9182736",
+                             "klang_path_mkdir", "klang_path_remove.bin",
+                             "klang_fs_test", "klang_dfs_sandbox"}) {
+        text = replace_k_path(std::move(text), std::string("/tmp/") + name,
+                              path_workspace().path / name);
+    }
+    text = replace_k_path(std::move(text), "@TEST_DIR@", path_workspace().path);
+    return gen_jit_with_stdlib(text, LIBK_KDI_DIR, LIBK_LIB_DIR);
 }
 
 void write_file(const std::string& path, const std::string& content) {
@@ -135,14 +148,14 @@ TEST_CASE("Path: resolve appends and absolute paths replace", "[libk][io][path]"
 }
 
 TEST_CASE("Path: inspects existence, kind and size", "[libk][io][path]") {
-    const std::string file = "/tmp/klang_path_inspect.bin";
+    const std::string file = (path_workspace().path / "klang_path_inspect.bin").string();
     write_file(file, "hello");
 
     auto jit = jit_k(R"SRC(
         module __path_inspect__;
         test() : int {
             f : k::io::file::Path("/tmp/klang_path_inspect.bin");
-            d : k::io::file::Path("/tmp");
+            d : k::io::file::Path("@TEST_DIR@");
             missing : k::io::file::Path("/tmp/klang_path_absent_9182736");
             res : int = 0;
             if (f.exists())         { ++res; }
@@ -164,8 +177,8 @@ TEST_CASE("Path: inspects existence, kind and size", "[libk][io][path]") {
 }
 
 TEST_CASE("Path: creates directories and removes files", "[libk][io][path]") {
-    std::filesystem::remove_all("/tmp/klang_path_mkdir");
-    const std::string file = "/tmp/klang_path_remove.bin";
+    std::filesystem::remove_all(path_workspace().path / "klang_path_mkdir");
+    const std::string file = (path_workspace().path / "klang_path_remove.bin").string();
     write_file(file, "x");
 
     auto jit = jit_k(R"SRC(
@@ -187,7 +200,7 @@ TEST_CASE("Path: creates directories and removes files", "[libk][io][path]") {
     REQUIRE(fn);
     REQUIRE(fn() == 31);
 
-    std::filesystem::remove_all("/tmp/klang_path_mkdir");
+    std::filesystem::remove_all(path_workspace().path / "klang_path_mkdir");
 }
 
 TEST_CASE("Path: segments, extensions and fluent mutations", "[libk][io][path]") {
@@ -293,9 +306,10 @@ TEST_CASE("Path: URI mapping", "[libk][io][path]") {
 }
 
 TEST_CASE("FileSystem: local operations and AnyFileSystemEntry", "[libk][io][path]") {
-    std::filesystem::remove_all("/tmp/klang_fs_test");
-    std::filesystem::create_directories("/tmp/klang_fs_test/sub");
-    write_file("/tmp/klang_fs_test/sub/hello.txt", "world");
+    const auto root = path_workspace().path / "klang_fs_test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "sub");
+    write_file((root / "sub/hello.txt").string(), "world");
 
     auto jit = jit_k(R"SRC(
         module __fs_operations__;
@@ -330,13 +344,14 @@ TEST_CASE("FileSystem: local operations and AnyFileSystemEntry", "[libk][io][pat
     REQUIRE(fn);
     REQUIRE(fn() == 255);
 
-    std::filesystem::remove_all("/tmp/klang_fs_test");
+    std::filesystem::remove_all(root);
 }
 
 TEST_CASE("DirectoryFileSystem: sandboxed sub-tree operations", "[libk][io][path]") {
-    std::filesystem::remove_all("/tmp/klang_dfs_sandbox");
-    std::filesystem::create_directories("/tmp/klang_dfs_sandbox/data");
-    write_file("/tmp/klang_dfs_sandbox/data/item.txt", "item");
+    const auto root = path_workspace().path / "klang_dfs_sandbox";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "data");
+    write_file((root / "data/item.txt").string(), "item");
 
     auto jit = jit_k(R"SRC(
         module __dfs_sandbox__;
@@ -365,5 +380,5 @@ TEST_CASE("DirectoryFileSystem: sandboxed sub-tree operations", "[libk][io][path
     REQUIRE(fn);
     REQUIRE(fn() == 31);
 
-    std::filesystem::remove_all("/tmp/klang_dfs_sandbox");
+    std::filesystem::remove_all(root);
 }

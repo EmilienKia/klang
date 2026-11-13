@@ -22,6 +22,7 @@
 
 #include <filesystem>
 #include <set>
+#include <cstdlib>
 
 using namespace kdi;
 
@@ -223,8 +224,20 @@ TEST_CASE("collect_binary_symbols: reads self (test binary)", "[symbols][live]")
 }
 
 TEST_CASE("collect_binary_symbols: non-existent file throws", "[symbols][live]") {
+    std::string directory = (std::filesystem::absolute(std::filesystem::temp_directory_path())
+                             / "ks-XXXXXX").string();
+    REQUIRE(::mkdtemp(directory.data()) != nullptr);
+    struct Cleanup {
+        std::string path;
+        ~Cleanup() {
+            std::error_code ec;
+            std::filesystem::remove_all(path, ec);
+        }
+    } cleanup{directory};
+    const auto missing = std::filesystem::path(directory) / "missing.so";
+    REQUIRE_FALSE(std::filesystem::exists(missing));
     REQUIRE_THROWS_AS(
-        kdi_collect_binary_symbols("/tmp/__kdi_nonexistent_99999.so"),
+        kdi_collect_binary_symbols(missing.string()),
         kdi_symbol_error
     );
 }
@@ -233,4 +246,3 @@ TEST_CASE("kdi_symbol_error: message includes context", "[symbols]") {
     kdi_symbol_error err("test context message");
     REQUIRE( std::string(err.what()).find("test context message") != std::string::npos );
 }
-

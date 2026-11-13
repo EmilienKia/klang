@@ -31,16 +31,11 @@
 
 // ---------------------------------------------------------------------------
 // Helper: compile a C source string into a .o file via clang -c
-// Returns the path to the generated .o (in /tmp).
+// Returns the path to the generated .o in the caller's workspace.
 // ---------------------------------------------------------------------------
-static std::string compile_c_to_object(const std::string& c_source) {
+static std::string compile_c_to_object(const std::string& c_source, const TmpDir& workspace) {
     // Write C source to a temp .c file
-    char c_file[] = "/tmp/klang_c_src_XXXXXX";
-    int fd = ::mkstemp(c_file);
-    if (fd == -1) throw std::runtime_error("Cannot create temp .c file");
-    std::string c_path = std::string(c_file) + ".c";
-    ::close(fd);
-    std::filesystem::remove(c_file);
+    const std::string c_path = (workspace.path / "input.c").string();
 
     {
         std::ofstream ofs(c_path);
@@ -71,16 +66,12 @@ TEST_CASE("klangc: .o file linked into shared library exports C symbol", "[klang
             return 42;
         }
     )";
-    std::string o_path = compile_c_to_object(c_src);
+    TmpDir workspace;
+    std::string o_path = compile_c_to_object(c_src, workspace);
     REQUIRE(std::filesystem::exists(o_path));
 
     // 2. Write a minimal K source that compiles into a shared library
-    char k_file[] = "/tmp/klang_objtest_XXXXXX";
-    int fd = ::mkstemp(k_file);
-    REQUIRE(fd != -1);
-    std::string k_path = std::string(k_file) + ".k";
-    ::close(fd);
-    std::filesystem::remove(k_file);
+    std::string k_path = (workspace.path / "input.k").string();
     {
         std::ofstream ofs(k_path);
         ofs << R"(
@@ -94,7 +85,7 @@ TEST_CASE("klangc: .o file linked into shared library exports C symbol", "[klang
     }
 
     // 3. Build the shared library via klangc, passing both the .k and .o
-    std::string so_path = std::string(k_file) + ".so";
+    std::string so_path = (workspace.path / "output.so").string();
     auto res = k::tools::run_process(
         klangc.string(),
         {"--dyn-lib", "--no-emit-kdi", "-o", so_path, k_path, o_path}
@@ -134,17 +125,13 @@ TEST_CASE("klangc: .o file linked into executable exports C symbol", "[klangc][o
             return 55;
         }
     )";
-    std::string o_path = compile_c_to_object(c_src);
+    TmpDir workspace;
+    std::string o_path = compile_c_to_object(c_src, workspace);
     REQUIRE(std::filesystem::exists(o_path));
 
     // 2. Write a K source with a main() that returns a constant
     //    (we don't call the C function from K here — we just verify it's linked)
-    char k_file[] = "/tmp/klang_objtest_exe_XXXXXX";
-    int fd = ::mkstemp(k_file);
-    REQUIRE(fd != -1);
-    std::string k_path = std::string(k_file) + ".k";
-    ::close(fd);
-    std::filesystem::remove(k_file);
+    std::string k_path = (workspace.path / "input.k").string();
     {
         std::ofstream ofs(k_path);
         ofs << R"(
@@ -156,7 +143,7 @@ TEST_CASE("klangc: .o file linked into executable exports C symbol", "[klangc][o
     }
 
     // 3. Build executable
-    std::string exe_path = std::string(k_file) + ".exe";
+    std::string exe_path = (workspace.path / "program").string();
     auto res = k::tools::run_process(
         klangc.string(),
         {"-o", exe_path, k_path, o_path}
@@ -194,7 +181,8 @@ TEST_CASE("klangc: .o files rejected with --jit-exec", "[klangc][object-input]")
     auto klangc = find_klangc();
 
     std::string c_src = "int dummy(void) { return 0; }\n";
-    std::string o_path = compile_c_to_object(c_src);
+    TmpDir workspace;
+    std::string o_path = compile_c_to_object(c_src, workspace);
 
     auto res = k::tools::run_process(
         klangc.string(),
@@ -221,7 +209,8 @@ TEST_CASE("klangc: .o files rejected with -c", "[klangc][object-input]") {
     auto klangc = find_klangc();
 
     std::string c_src = "int dummy(void) { return 0; }\n";
-    std::string o_path = compile_c_to_object(c_src);
+    TmpDir workspace;
+    std::string o_path = compile_c_to_object(c_src, workspace);
 
     auto res = k::tools::run_process(
         klangc.string(),

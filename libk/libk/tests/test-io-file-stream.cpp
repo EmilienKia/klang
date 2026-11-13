@@ -41,8 +41,15 @@
 
 namespace {
 
+TmpDir& file_workspace() {
+    static TmpDir workspace;
+    return workspace;
+}
+
 std::unique_ptr<k::model::gen::jit> jit_k(std::string_view src) {
-    return gen_jit_with_stdlib(src, LIBK_KDI_DIR, LIBK_LIB_DIR);
+    auto text = replace_k_path(std::string(src), "/tmp/klang_afs_",
+                               file_workspace().path / "klang_afs_");
+    return gen_jit_with_stdlib(text, LIBK_KDI_DIR, LIBK_LIB_DIR);
 }
 
 void write_file(const std::string& path, const std::string& content) {
@@ -54,7 +61,7 @@ void write_file(const std::string& path, const std::string& content) {
 
 TEST_CASE("FileChannel: an already-interrupted thread reports the interruption",
           "[libk][io][file-channel][interruption]") {
-    const std::string path = "/tmp/klang_afs_interrupt.bin";
+    const std::string path = (file_workspace().path / "klang_afs_interrupt.bin").string();
     write_file(path, std::string(65536, 'Q'));
     auto jit = jit_k(R"SRC(
         module __afs_interrupt__;
@@ -121,7 +128,7 @@ TEST_CASE("FileChannel: an already-interrupted thread reports the interruption",
 
 TEST_CASE("FileChannel: closing from another thread is observed by users",
           "[libk][io][file-channel][interruption]") {
-    const std::string path = "/tmp/klang_afs_closer.bin";
+    const std::string path = (file_workspace().path / "klang_afs_closer.bin").string();
     write_file(path, std::string(4096, 'W'));
     auto jit = jit_k(R"SRC(
         module __afs_closer__;

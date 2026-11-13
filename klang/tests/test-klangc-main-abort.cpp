@@ -34,13 +34,8 @@ bool is_sigabrt(int exit_code) {
 }
 
 struct TempExe {
-    char path[64] = "/tmp/klang_main_abort_XXXXXX";
-    TempExe() {
-        int fd = ::mkstemp(path);
-        REQUIRE(fd != -1);
-        ::close(fd);
-    }
-    ~TempExe() { std::filesystem::remove(path); }
+    TmpDir workspace;
+    std::string path = (workspace.path / "program").string();
 };
 
 k::tools::exec_result compile_and_run(const std::string& src) {

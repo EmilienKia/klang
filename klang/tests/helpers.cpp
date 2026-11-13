@@ -23,6 +23,12 @@
 #include <cstdint>
 #include <set>
 #include <regex>
+#include <cerrno>
+#include <cstdlib>
+#include <system_error>
+#include <sys/un.h>
+#include <fcntl.h>
+#include <llvm/ADT/ScopeExit.h>
 
 #include <fmt/core.h>
 #include <fmt/format.h>
@@ -39,6 +45,79 @@
 #include "../src/common/llvm_target_triple.hpp"
 #include "../src/model/model_builder.hpp"
 #include "../src/model/model_dump.hpp"
+
+namespace {
+struct ReservedOutput {
+    std::filesystem::path path;
+    std::filesystem::path kdi_path;
+    bool released = false;
+
+    explicit ReservedOutput(const std::string& suffix) {
+        for (;;) {
+            std::string name = (std::filesystem::temp_directory_path() /
+                                ("kt-XXXXXX" + suffix)).string();
+            int fd = ::mkstemps(name.data(), static_cast<int>(suffix.size()));
+            if (fd < 0) throw std::system_error(errno, std::generic_category(), "reserve test output");
+            bool open = true;
+            auto rollback = llvm::make_scope_exit([&] {
+                if (open) ::close(fd);
+                ::unlink(name.c_str());
+            });
+            path = name;
+            if (::close(fd) != 0) {
+                const int error = errno;
+                open = false;
+                throw std::system_error(error, std::generic_category(), "close test output");
+            }
+            open = false;
+            if (suffix == ".kdi") {
+                rollback.release();
+                break;
+            }
+            kdi_path = path;
+            kdi_path.replace_extension(".kdi");
+            fd = ::open(kdi_path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+            if (fd < 0) {
+                const int error = errno;
+                if (error == EEXIST) continue;
+                throw std::system_error(error, std::generic_category(), "reserve test KDI");
+            }
+            if (::close(fd) != 0) {
+                const int error = errno;
+                std::error_code ec;
+                std::filesystem::remove(kdi_path, ec);
+                throw std::system_error(error, std::generic_category(), "close test KDI");
+            }
+            rollback.release();
+            break;
+        }
+    }
+    ~ReservedOutput() {
+        if (!released) {
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+            if (!kdi_path.empty()) std::filesystem::remove(kdi_path, ec);
+        }
+    }
+    void release() noexcept {
+        std::error_code ec;
+        if (!kdi_path.empty() && std::filesystem::file_size(kdi_path, ec) == 0 && !ec)
+            std::filesystem::remove(kdi_path, ec);
+        released = true;
+    }
+};
+
+void link_test_file(const std::filesystem::path& source,
+                    const std::filesystem::path& destination) {
+    std::error_code ec;
+    std::filesystem::create_symlink(source.filename(), destination, ec);
+    if (ec) {
+        std::filesystem::copy_file(source, destination,
+                                   std::filesystem::copy_options::none, ec);
+        if (ec) throw std::system_error(ec, "create test library link");
+    }
+}
+}
 
 /**
  * Ensure that libk.so is loaded into the current process so that the JIT's
@@ -266,12 +345,8 @@ bool compile_text(const std::string_view& source, const std::string& out_file,
 
 k::tools::exec_result build_and_exec(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes,
                                       const std::string& file_name) {
-    char out_file[] = "/tmp/klang_test_XXXXXX";
-    int fd = ::mkstemp(out_file);
-    if (fd == -1) {
-        throw std::runtime_error("Could not create temporary output file for building test");
-    }
-    ::close(fd);
+    TmpDir workspace;
+    const auto out_file = (workspace.path / "program").string();
 
     if (!compile_text(src, out_file, ignored_diag_codes, file_name)) {
         std::filesystem::remove(out_file);
@@ -304,14 +379,8 @@ llvm::TargetMachine* make_pic_target_machine() {
 
 std::string build_shared_library(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes,
                                   const std::string& file_name, bool with_stdlib) {
-    char tmp_stem[] = "/tmp/klang_lib_test_XXXXXX";
-    int fd = ::mkstemp(tmp_stem);
-    if (fd == -1) {
-        throw std::runtime_error("Could not create temporary file for shared library test");
-    }
-    ::close(fd);
-    std::string out_file = std::string(tmp_stem) + ".so";
-    std::filesystem::remove(tmp_stem);
+    ReservedOutput output(".so");
+    std::string out_file = output.path.string();
 
     auto compiler = k::compiler::create(make_pic_target_machine());
     apply_ignored_diag_codes(*compiler, ignored_diag_codes);
@@ -327,19 +396,14 @@ std::string build_shared_library(const std::string_view& src, const IgnoredDiagC
         throw std::runtime_error("Error generating shared library");
     }
 
+    output.release();
     return out_file;
 }
 
 std::string build_static_library(const std::string_view& src, const IgnoredDiagCodes& ignored_diag_codes,
                                   const std::string& file_name) {
-    char tmp_stem[] = "/tmp/klang_lib_test_XXXXXX";
-    int fd = ::mkstemp(tmp_stem);
-    if (fd == -1) {
-        throw std::runtime_error("Could not create temporary file for static library test");
-    }
-    ::close(fd);
-    std::string out_file = std::string(tmp_stem) + ".a";
-    std::filesystem::remove(tmp_stem);
+    ReservedOutput output(".a");
+    std::string out_file = output.path.string();
 
     auto compiler = k::compiler::create(make_pic_target_machine());
     apply_ignored_diag_codes(*compiler, ignored_diag_codes);
@@ -354,26 +418,17 @@ std::string build_static_library(const std::string_view& src, const IgnoredDiagC
         throw std::runtime_error("Error generating static library");
     }
 
+    output.release();
     return out_file;
 }
 
 std::pair<std::string, std::string> build_both_libraries(const std::string_view& src,
                                                           const IgnoredDiagCodes& ignored_diag_codes,
                                                           const std::string& file_name) {
-    // Generate unique names for both outputs
-    char tmp_so[] = "/tmp/klang_lib_test_XXXXXX";
-    int fd_so = ::mkstemp(tmp_so);
-    if (fd_so == -1) throw std::runtime_error("Could not create temp file for .so");
-    ::close(fd_so);
-    std::string so_file = std::string(tmp_so) + ".so";
-    std::filesystem::remove(tmp_so);
-
-    char tmp_a[] = "/tmp/klang_lib_test_XXXXXX";
-    int fd_a = ::mkstemp(tmp_a);
-    if (fd_a == -1) throw std::runtime_error("Could not create temp file for .a");
-    ::close(fd_a);
-    std::string a_file = std::string(tmp_a) + ".a";
-    std::filesystem::remove(tmp_a);
+    ReservedOutput so_output(".so");
+    ReservedOutput a_output(".a");
+    std::string so_file = so_output.path.string();
+    std::string a_file = a_output.path.string();
 
     auto compiler = k::compiler::create(make_pic_target_machine());
     apply_ignored_diag_codes(*compiler, ignored_diag_codes);
@@ -389,7 +444,9 @@ std::pair<std::string, std::string> build_both_libraries(const std::string_view&
         throw std::runtime_error("Error generating libraries");
     }
 
-    return {so_file, a_file};
+    so_output.release();
+    a_output.release();
+    return {std::move(so_file), std::move(a_file)};
 }
 
 // ---------------------------------------------------------------------------
@@ -401,15 +458,16 @@ k::tools::exec_result build_exec_with_libs(std::vector<LibSpec>& libs,
                                             const IgnoredDiagCodes& ignored_diag_codes,
                                             const std::string& exec_file_name)
 {
+    TmpDir workspace;
+    for (auto& spec : libs) {
+        spec.so_path.clear();
+        spec.kdi_path.clear();
+        spec.symlink_path.clear();
+    }
     // ── Step 1: compile each library ──────────────────────────────────────
     for (std::size_t i = 0; i < libs.size(); ++i) {
         auto& spec = libs[i];
-        char tmp_stem[] = "/tmp/klang_lib_test_XXXXXX";
-        int fd = ::mkstemp(tmp_stem);
-        if (fd == -1) throw std::runtime_error("Cannot create temp file for lib");
-        ::close(fd);
-        spec.so_path = std::string(tmp_stem) + ".so";
-        std::filesystem::remove(tmp_stem);
+        spec.so_path = (workspace.path / ("provider-" + std::to_string(i) + ".so")).string();
 
         auto lib_comp = k::compiler::create(make_pic_target_machine());
         apply_ignored_diag_codes(*lib_comp, ignored_diag_codes);
@@ -468,30 +526,13 @@ k::tools::exec_result build_exec_with_libs(std::vector<LibSpec>& libs,
         const std::string lib_base = k::compiler::unit_name_to_lib_base(kdi_data.header.module_name);
         if (!lib_base.empty()) {
             std::filesystem::path sl = so_path.parent_path() / ("lib" + lib_base + ".so");
-            std::error_code ec;
-            std::filesystem::remove(sl, ec);
-            std::filesystem::create_symlink(so_path.filename(), sl, ec);
-            if (ec) {
-                std::filesystem::copy_file(spec.so_path, sl,
-                    std::filesystem::copy_options::overwrite_existing, ec);
-            }
+            link_test_file(so_path, sl);
             spec.symlink_path = sl.string();
         }
     }
 
     // ── Step 2: compile the executable ────────────────────────────────────
-    char tmp_exe[] = "/tmp/klang_exe_test_XXXXXX";
-    int fd_exe = ::mkstemp(tmp_exe);
-    if (fd_exe == -1) {
-        for (auto& s : libs) {
-            if (!s.so_path.empty())      std::filesystem::remove(s.so_path);
-            if (!s.kdi_path.empty())     std::filesystem::remove(s.kdi_path);
-            if (!s.symlink_path.empty()) std::filesystem::remove(s.symlink_path);
-        }
-        throw std::runtime_error("Cannot create temp file for exe");
-    }
-    ::close(fd_exe);
-    std::string exe_file = std::string(tmp_exe);
+    std::string exe_file = (workspace.path / "program").string();
 
     // Build resolver with all KDIs and all library search dirs
     auto resolver = std::make_shared<k::path_lookup_file_resolver>();
@@ -538,16 +579,12 @@ k::tools::exec_result build_exec_with_libs(std::vector<LibSpec>& libs,
         }
     }
 
-    const char* old_ld = ::getenv("LD_LIBRARY_PATH");
-    std::string new_ld = ld_dirs + (old_ld && *old_ld ? (":" + std::string(old_ld)) : "");
-    ::setenv("LD_LIBRARY_PATH", new_ld.c_str(), 1);
+    ScopedLdLibraryPath ld_scope(ld_dirs);
 
     k::tools::exec_result result;
     try {
         result = k::tools::run_process(exe_file, {});
     } catch (...) {
-        if (old_ld) ::setenv("LD_LIBRARY_PATH", old_ld, 1);
-        else        ::unsetenv("LD_LIBRARY_PATH");
         for (auto& s : libs) {
             if (!s.so_path.empty())      std::filesystem::remove(s.so_path);
             if (!s.kdi_path.empty())     std::filesystem::remove(s.kdi_path);
@@ -556,9 +593,6 @@ k::tools::exec_result build_exec_with_libs(std::vector<LibSpec>& libs,
         std::filesystem::remove(exe_file);
         throw;
     }
-
-    if (old_ld) ::setenv("LD_LIBRARY_PATH", old_ld, 1);
-    else        ::unsetenv("LD_LIBRARY_PATH");
 
     // ── Cleanup ────────────────────────────────────────────────────────────
     for (auto& s : libs) {
@@ -585,15 +619,16 @@ k::tools::exec_result build_exec_with_libs_direct_only(
     const IgnoredDiagCodes& ignored_diag_codes,
     const std::string& exec_file_name)
 {
+    TmpDir workspace;
+    for (auto& spec : libs) {
+        spec.so_path.clear();
+        spec.kdi_path.clear();
+        spec.symlink_path.clear();
+    }
     // ── Step 1: compile all libraries (same as build_exec_with_libs) ──────
     for (std::size_t i = 0; i < libs.size(); ++i) {
         auto& spec = libs[i];
-        char tmp_stem[] = "/tmp/klang_lib_test_XXXXXX";
-        int fd = ::mkstemp(tmp_stem);
-        if (fd == -1) throw std::runtime_error("Cannot create temp file for lib");
-        ::close(fd);
-        spec.so_path = std::string(tmp_stem) + ".so";
-        std::filesystem::remove(tmp_stem);
+        spec.so_path = (workspace.path / ("provider-" + std::to_string(i) + ".so")).string();
 
         auto lib_comp = k::compiler::create(make_pic_target_machine());
         apply_ignored_diag_codes(*lib_comp, ignored_diag_codes);
@@ -646,13 +681,7 @@ k::tools::exec_result build_exec_with_libs_direct_only(
         const std::string lib_base = k::compiler::unit_name_to_lib_base(kdi_data.header.module_name);
         if (!lib_base.empty()) {
             std::filesystem::path sl = so_path.parent_path() / ("lib" + lib_base + ".so");
-            std::error_code ec;
-            std::filesystem::remove(sl, ec);
-            std::filesystem::create_symlink(so_path.filename(), sl, ec);
-            if (ec) {
-                std::filesystem::copy_file(spec.so_path, sl,
-                    std::filesystem::copy_options::overwrite_existing, ec);
-            }
+            link_test_file(so_path, sl);
             spec.symlink_path = sl.string();
         }
     }
@@ -660,18 +689,7 @@ k::tools::exec_result build_exec_with_libs_direct_only(
     // ── Step 2: compile the executable ────────────────────────────────────
     // Key difference: only register explicit_path for modules in direct_imports;
     // all others are reachable via search_dir only.
-    char tmp_exe[] = "/tmp/klang_exe_test_XXXXXX";
-    int fd_exe = ::mkstemp(tmp_exe);
-    if (fd_exe == -1) {
-        for (auto& s : libs) {
-            if (!s.so_path.empty())      std::filesystem::remove(s.so_path);
-            if (!s.kdi_path.empty())     std::filesystem::remove(s.kdi_path);
-            if (!s.symlink_path.empty()) std::filesystem::remove(s.symlink_path);
-        }
-        throw std::runtime_error("Cannot create temp file for exe");
-    }
-    ::close(fd_exe);
-    std::string exe_file = std::string(tmp_exe);
+    std::string exe_file = (workspace.path / "program").string();
 
     auto resolver = std::make_shared<k::path_lookup_file_resolver>();
     for (auto& spec : libs) {
@@ -692,13 +710,7 @@ k::tools::exec_result build_exec_with_libs_direct_only(
             if (!lib_base.empty()) {
                 std::filesystem::path kdi_fs(spec.kdi_path);
                 std::filesystem::path kdi_symlink = kdi_fs.parent_path() / (lib_base + ".kdi");
-                std::error_code ec;
-                std::filesystem::remove(kdi_symlink, ec);
-                std::filesystem::create_symlink(kdi_fs.filename(), kdi_symlink, ec);
-                if (ec) {
-                    std::filesystem::copy_file(spec.kdi_path, kdi_symlink,
-                        std::filesystem::copy_options::overwrite_existing, ec);
-                }
+                link_test_file(kdi_fs, kdi_symlink);
             }
         }
     }
@@ -737,16 +749,12 @@ k::tools::exec_result build_exec_with_libs_direct_only(
             ld_dirs += dir;
         }
     }
-    const char* old_ld = ::getenv("LD_LIBRARY_PATH");
-    std::string new_ld = ld_dirs + (old_ld ? (":" + std::string(old_ld)) : "");
-    ::setenv("LD_LIBRARY_PATH", new_ld.c_str(), 1);
+    ScopedLdLibraryPath ld_scope(ld_dirs);
 
     k::tools::exec_result result;
     try {
         result = k::tools::run_process(exe_file, {});
     } catch (...) {
-        if (old_ld) ::setenv("LD_LIBRARY_PATH", old_ld, 1);
-        else        ::unsetenv("LD_LIBRARY_PATH");
         for (auto& s : libs) {
             if (!s.so_path.empty())      std::filesystem::remove(s.so_path);
             if (!s.kdi_path.empty())     std::filesystem::remove(s.kdi_path);
@@ -755,9 +763,6 @@ k::tools::exec_result build_exec_with_libs_direct_only(
         std::filesystem::remove(exe_file);
         throw;
     }
-
-    if (old_ld) ::setenv("LD_LIBRARY_PATH", old_ld, 1);
-    else        ::unsetenv("LD_LIBRARY_PATH");
 
     // Collect .kdi symlink paths before removing files
     std::vector<std::filesystem::path> kdi_symlinks;
@@ -853,13 +858,9 @@ k::tools::exec_result build_exec_with_lib(const std::string_view& lib_src,
                                            const std::string& lib_file_name,
                                            const std::string& exec_file_name)
 {
+    TmpDir workspace;
     // ── Step 1: compile the library ────────────────────────────────────────
-    char tmp_so_stem[] = "/tmp/klang_lib_test_XXXXXX";
-    int fd = ::mkstemp(tmp_so_stem);
-    if (fd == -1) throw std::runtime_error("Cannot create temp file for lib");
-    ::close(fd);
-    std::string so_file = std::string(tmp_so_stem) + ".so";
-    std::filesystem::remove(tmp_so_stem);
+    std::string so_file = (workspace.path / "provider.so").string();
 
     // Compiler for the library
     auto lib_comp = k::compiler::create(make_pic_target_machine());
@@ -891,33 +892,16 @@ k::tools::exec_result build_exec_with_lib(const std::string_view& lib_src,
 
     // Create a symlink "lib<base>.so" → so_file so that "-lmylib" can find it.
     // Without this, the linker looks for "libmylib.so" but the file has a
-    // random mkstemp-generated name.
+    // private provider filename.
     const std::string lib_base = k::compiler::unit_name_to_lib_base(module_name);
     std::filesystem::path symlink_path;
     if (!lib_base.empty()) {
         symlink_path = so_path.parent_path() / ("lib" + lib_base + ".so");
-        std::error_code ec;
-        std::filesystem::remove(symlink_path, ec); // remove stale symlink if any
-        std::filesystem::create_symlink(so_path.filename(), symlink_path, ec);
-        if (ec) {
-            // If symlink creation fails, fall back to a hard copy
-            std::filesystem::copy_file(so_file, symlink_path,
-                std::filesystem::copy_options::overwrite_existing, ec);
-        }
+        link_test_file(so_path, symlink_path);
     }
 
     // ── Step 2: compile the executable ────────────────────────────────────
-    char tmp_exe[] = "/tmp/klang_exe_test_XXXXXX";
-    int fd_exe = ::mkstemp(tmp_exe);
-    if (fd_exe == -1) {
-        std::filesystem::remove(so_file);
-        std::filesystem::remove(kdi_path);
-        if (!symlink_path.empty()) std::filesystem::remove(symlink_path);
-        throw std::runtime_error("Cannot create temp file for exe");
-    }
-    ::close(fd_exe);
-    std::string exe_file = std::string(tmp_exe);
-    // mkstemp already created the file; gen_executable will overwrite it.
+    std::string exe_file = (workspace.path / "program").string();
 
     // Build a resolver: register the lib's KDI by module name, and add the
     // lib dir as a library search dir (→ -L flag) for the linker.
@@ -948,27 +932,18 @@ k::tools::exec_result build_exec_with_lib(const std::string_view& lib_src,
 
     // ── Step 3: run the executable with LD_LIBRARY_PATH set ───────────────
     // Save the old value and prepend the lib dir.
-    const char* old_ld = ::getenv("LD_LIBRARY_PATH");
-    std::string new_ld = lib_dir + (old_ld ? (":" + std::string(old_ld)) : "");
-    ::setenv("LD_LIBRARY_PATH", new_ld.c_str(), /*overwrite=*/1);
+    ScopedLdLibraryPath ld_scope(lib_dir);
 
     k::tools::exec_result result;
     try {
         result = k::tools::run_process(exe_file, {});
     } catch (...) {
-        // Restore env even on error
-        if (old_ld) ::setenv("LD_LIBRARY_PATH", old_ld, 1);
-        else        ::unsetenv("LD_LIBRARY_PATH");
         std::filesystem::remove(so_file);
         std::filesystem::remove(kdi_path);
         std::filesystem::remove(exe_file);
         if (!symlink_path.empty()) std::filesystem::remove(symlink_path);
         throw;
     }
-
-    // Restore LD_LIBRARY_PATH
-    if (old_ld) ::setenv("LD_LIBRARY_PATH", old_ld, 1);
-    else        ::unsetenv("LD_LIBRARY_PATH");
 
     // ── Cleanup ────────────────────────────────────────────────────────────
     std::filesystem::remove(so_file);
@@ -1247,10 +1222,16 @@ std::filesystem::path kdi_path_for(const std::string& lib_path) {
 
 std::string build_kdi_for_import_warning_test(const std::string_view& lib_src) {
     std::string so = build_shared_library(lib_src);
+    auto rollback = llvm::make_scope_exit([&] {
+        std::error_code ec;
+        std::filesystem::remove(so, ec);
+    });
     std::filesystem::path kdi = std::filesystem::path(so).replace_extension(".kdi");
     if (!std::filesystem::exists(kdi))
         throw std::runtime_error("expected .kdi not produced: " + kdi.string());
-    return kdi.string();
+    auto result = kdi.string();
+    rollback.release();
+    return result;
 }
 
 std::vector<k::log::diagnostic> run_importer_with_logger(
@@ -1296,9 +1277,11 @@ std::string write_minimal_kdi(const std::string& module_name,
     f.unit.root_ns.name    = "";
     f.unit.root_ns.fq_name = "";
 
-    std::string path = "/tmp/" + module_name + ".kdi";
+    ReservedOutput output(".kdi");
+    std::string path = output.path.string();
     if (!kdi::kdi_write_cbor_file(f, path))
         throw std::runtime_error("Cannot write test kdi: " + path);
+    output.release();
     return path;
 }
 
@@ -1337,17 +1320,51 @@ bool try_import(const std::string& unit_name,
 // TmpDir
 // ═══════════════════════════════════════════════════════════════════════════
 
-static std::atomic<int> g_tmp_counter{0};
+TmpDir::TmpDir() : TmpDir(std::filesystem::temp_directory_path()) {}
 
-TmpDir::TmpDir() {
-    path = std::filesystem::temp_directory_path() /
-           ("klang_test_" + std::to_string(++g_tmp_counter));
-    std::filesystem::create_directories(path);
+TmpDir::TmpDir(const std::filesystem::path& parent) {
+    std::string name = (std::filesystem::absolute(parent) / "kt-XXXXXX").string();
+    if (!::mkdtemp(name.data()))
+        throw std::system_error(errno, std::generic_category(), "create test directory");
+    try {
+        path = name;
+        owned_path = path;
+    } catch (...) {
+        ::rmdir(name.c_str());
+        throw;
+    }
 }
 
-TmpDir::~TmpDir() {
+TmpDir::~TmpDir() noexcept {
     std::error_code ec;
-    std::filesystem::remove_all(path, ec);
+    std::filesystem::remove_all(owned_path, ec);
+}
+
+std::string replace_k_path(std::string source, std::string_view token,
+                           const std::filesystem::path& path) {
+    std::string escaped;
+    for (char c : path.generic_string()) {
+        switch (c) {
+            case '\\': escaped += "\\\\"; break;
+            case '"': escaped += "\\\""; break;
+            case '\n': escaped += "\\n"; break;
+            case '\r': escaped += "\\r"; break;
+            case '\t': escaped += "\\t"; break;
+            default: escaped += c; break;
+        }
+    }
+    std::size_t offset = 0;
+    while ((offset = source.find(token, offset)) != std::string::npos) {
+        source.replace(offset, token.size(), escaped);
+        offset += escaped.size();
+    }
+    return source;
+}
+
+void require_unix_socket_path(const std::filesystem::path& path) {
+    sockaddr_un address{};
+    if (path.native().size() >= sizeof(address.sun_path))
+        throw std::runtime_error("Unix socket test path exceeds sockaddr_un::sun_path");
 }
 
 std::filesystem::path TmpDir::create_file(const std::string& name) const {
@@ -1362,6 +1379,11 @@ std::filesystem::path TmpDir::create_file(const std::string& name) const {
 
 TmpKdi::TmpKdi(const std::string_view& src, bool with_stdlib) {
     so_path = build_shared_library(src, {}, "", with_stdlib);
+    auto rollback = llvm::make_scope_exit([&] {
+        std::error_code ec;
+        std::filesystem::remove(so_path, ec);
+        if (!kdi_path.empty()) std::filesystem::remove(kdi_path, ec);
+    });
     kdi_path = [&]() {
         std::filesystem::path p(so_path);
         p.replace_extension(".kdi");
@@ -1370,6 +1392,7 @@ TmpKdi::TmpKdi(const std::string_view& src, bool with_stdlib) {
     if (!std::filesystem::is_regular_file(kdi_path)) {
         throw std::runtime_error("build_shared_library did not produce " + kdi_path);
     }
+    rollback.release();
 }
 
 TmpKdi::~TmpKdi() {
@@ -1417,13 +1440,13 @@ ScopedLdLibraryPath::ScopedLdLibraryPath(const std::string& dir) {
     had_old = (old_ld != nullptr);
     if (had_old) old_value = old_ld;
     std::string new_ld = dir + (had_old ? (":" + old_value) : "");
-    ::setenv("LD_LIBRARY_PATH", new_ld.c_str(), 1);
+    if (::setenv("LD_LIBRARY_PATH", new_ld.c_str(), 1) != 0)
+        throw std::system_error(errno, std::generic_category(), "set LD_LIBRARY_PATH");
+    active = true;
 }
 
 ScopedLdLibraryPath::~ScopedLdLibraryPath() {
+    if (!active) return;
     if (had_old) ::setenv("LD_LIBRARY_PATH", old_value.c_str(), 1);
     else         ::unsetenv("LD_LIBRARY_PATH");
 }
-
-
-

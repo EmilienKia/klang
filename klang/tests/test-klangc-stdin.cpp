@@ -31,11 +31,8 @@
 TEST_CASE("stdin: compile from stdin alone produces executable", "[stdin][live]") {
     auto klangc = find_klangc();
 
-    // Create a temp file path for the output executable
-    char out_file[] = "/tmp/klang_stdin_test_XXXXXX";
-    int fd = ::mkstemp(out_file);
-    REQUIRE(fd != -1);
-    ::close(fd);
+    TmpDir workspace;
+    const std::string out_file = (workspace.path / "program").string();
 
     std::string src = R"(
         module klangc_stdin_01;
@@ -72,12 +69,8 @@ TEST_CASE("stdin: compile from stdin alone produces executable", "[stdin][live]"
 TEST_CASE("stdin: --stdin with -c produces object file", "[stdin][live]") {
     auto klangc = find_klangc();
 
-    char out_file[] = "/tmp/klang_stdin_obj_XXXXXX";
-    int fd = ::mkstemp(out_file);
-    REQUIRE(fd != -1);
-    ::close(fd);
-    std::string obj_path = std::string(out_file) + ".o";
-    std::filesystem::remove(out_file);
+    TmpDir workspace;
+    const std::string obj_path = (workspace.path / "output.o").string();
 
     std::string src = R"(
         module klangc_stdin_02;
@@ -121,10 +114,7 @@ TEST_CASE("stdin: --stdin combined with input file", "[stdin][live]") {
         )";
     }
 
-    char out_file[] = "/tmp/klang_stdin_combo_XXXXXX";
-    int fd = ::mkstemp(out_file);
-    REQUIRE(fd != -1);
-    ::close(fd);
+    const std::string out_file = (tmpdir.path / "program").string();
 
     // The stdin source provides main() which returns a constant.
     // Both files are compiled together as the same module.
@@ -177,7 +167,7 @@ TEST_CASE("stdin: --stdin with -c and no -o defaults to stdin.o", "[stdin][live]
     // run_process doesn't support chdir, so use a wrapper via /bin/sh.
     auto res = k::tools::run_process(
         "/bin/sh",
-        {"-c", "cd " + tmpdir.path.string() + " && " + klangc.string() + " --stdin -c"},
+        {"-c", "cd \"$1\" && \"$2\" --stdin -c", "sh", tmpdir.path.string(), klangc.string()},
         src
     );
 
@@ -211,4 +201,3 @@ TEST_CASE("stdin: no --stdin and no files produces error", "[stdin][live]") {
 // ===========================================================================
 // --jit-exec tests
 // ===========================================================================
-

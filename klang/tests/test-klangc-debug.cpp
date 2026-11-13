@@ -60,14 +60,9 @@ TEST_CASE("compiler: debug variable locations support LLVM IR formats", "[klangc
 TEST_CASE("klangc: -g emits DWARF sections in executable", "[klangc][debug][dwarf]") {
     auto klangc = find_klangc();
 
-    char k_file[] = "/tmp/klang_dbg_exe_XXXXXX";
-    int fd = ::mkstemp(k_file);
-    REQUIRE(fd != -1);
-    ::close(fd);
-
-    std::string k_path = std::string(k_file) + ".k";
-    std::string exe_path = std::string(k_file) + ".exe";
-    std::filesystem::remove(k_file);
+    TmpDir workspace;
+    std::string k_path = (workspace.path / "input.k").string();
+    std::string exe_path = (workspace.path / "program").string();
 
     {
         std::ofstream ofs(k_path);
@@ -96,14 +91,9 @@ TEST_CASE("klangc: -g emits DWARF sections in executable", "[klangc][debug][dwar
 TEST_CASE("klangc: --dyn-lib -g emits DWARF sections in shared library", "[klangc][debug][dwarf]") {
     auto klangc = find_klangc();
 
-    char k_file[] = "/tmp/klang_dbg_so_XXXXXX";
-    int fd = ::mkstemp(k_file);
-    REQUIRE(fd != -1);
-    ::close(fd);
-
-    std::string k_path = std::string(k_file) + ".k";
-    std::string so_path = std::string(k_file) + ".so";
-    std::filesystem::remove(k_file);
+    TmpDir workspace;
+    std::string k_path = (workspace.path / "input.k").string();
+    std::string so_path = (workspace.path / "output.so").string();
 
     {
         std::ofstream ofs(k_path);
@@ -201,14 +191,9 @@ TEST_CASE("compiler: debug metadata covers loop scopes and catch variables", "[k
 TEST_CASE("klangc: debug DWARF contains catch variables and lexical blocks", "[klangc][debug][dwarf]") {
     auto klangc = find_klangc();
 
-    char k_file[] = "/tmp/klang_dbg_throw_XXXXXX";
-    int fd = ::mkstemp(k_file);
-    REQUIRE(fd != -1);
-    ::close(fd);
-
-    std::string k_path = std::string(k_file) + ".k";
-    std::string so_path = std::string(k_file) + ".so";
-    std::filesystem::remove(k_file);
+    TmpDir workspace;
+    std::string k_path = (workspace.path / "input.k").string();
+    std::string so_path = (workspace.path / "output.so").string();
 
     {
         std::ofstream ofs(k_path);

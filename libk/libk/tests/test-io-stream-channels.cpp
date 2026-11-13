@@ -10,24 +10,11 @@
 
 namespace {
 struct UnixFixture {
-    std::filesystem::path directory;
-    UnixFixture() {
-        char name[] = "/tmp/klang-stream-XXXXXX";
-        char* path = mkdtemp(name);
-        REQUIRE(path);
-        directory = path;
-    }
-    ~UnixFixture() {
-        std::filesystem::remove(directory / "endpoint");
-        std::filesystem::remove(directory);
-    }
+    TmpDir workspace;
+    std::filesystem::path directory = workspace.path;
+    UnixFixture() { require_unix_socket_path(directory / "endpoint"); }
     std::string source(std::string text) const {
-        auto offset = text.find("@SOCKET@");
-        while (offset != std::string::npos) {
-            text.replace(offset, 8, (directory / "endpoint").generic_string());
-            offset = text.find("@SOCKET@");
-        }
-        return text;
+        return replace_k_path(std::move(text), "@SOCKET@", directory / "endpoint");
     }
 };
 void run(std::string source) {

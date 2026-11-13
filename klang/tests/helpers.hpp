@@ -141,7 +141,7 @@ k::tools::exec_result build_and_exec(const std::string_view& src, const IgnoredD
 
 /**
  * Compile the given K source into a shared library (.so).
- * Returns the path to the generated .so file (in /tmp).
+ * Returns the path to the generated .so file in the selected temporary directory.
  * Throws std::runtime_error on failure.
  * The caller is responsible for removing the file when done.
  */
@@ -150,7 +150,7 @@ std::string build_shared_library(const std::string_view& src, const IgnoredDiagC
 
 /**
  * Compile the given K source into a static library (.a).
- * Returns the path to the generated .a file (in /tmp).
+ * Returns the path to the generated .a file in the selected temporary directory.
  * Throws std::runtime_error on failure.
  * The caller is responsible for removing the file when done.
  */
@@ -160,7 +160,7 @@ std::string build_static_library(const std::string_view& src, const IgnoredDiagC
 /**
  * Compile the given K source into both a shared library (.so) and a static
  * library (.a) in a single object-file generation pass.
- * Returns {so_path, a_path} — both located in /tmp.
+ * Returns {so_path, a_path} in the selected temporary directory.
  * Throws std::runtime_error on failure.
  * The caller is responsible for removing both files when done.
  */
@@ -408,13 +408,13 @@ bool has_defined_symbol_containing(const std::string& file, const std::string& s
 bool has_section_containing(const std::string& file, const std::string& section_substr);
 
 /**
- * Given a library path (e.g. /tmp/foo.so or /tmp/foo.a), derive the expected
+ * Given a library path (e.g. foo.so or foo.a), derive the expected
  * path of the KDI file (same stem, extension = .kdi).
  */
 std::filesystem::path kdi_path_for(const std::string& lib_path);
 
 /**
- * Build a .kdi in /tmp from a simple lib source and return its path.
+ * Build a .kdi from a simple lib source and return its path.
  */
 std::string build_kdi_for_import_warning_test(const std::string_view& lib_src);
 
@@ -430,7 +430,7 @@ std::vector<k::log::diagnostic> run_importer_with_logger(
     std::vector<std::string> pre_used = {});
 
 /**
- * Build a minimal kdi_file with forged dependencies and write it to /tmp.
+ * Build a minimal kdi_file with forged dependencies and write it to a temporary file.
  * Returns the path to the written .kdi file.
  */
 std::string write_minimal_kdi(const std::string& module_name,
@@ -459,12 +459,26 @@ bool try_import(const std::string& unit_name,
 struct TmpDir {
     std::filesystem::path path;
 
+private:
+    std::filesystem::path owned_path;
+
+public:
     TmpDir();
-    ~TmpDir();
+    explicit TmpDir(const std::filesystem::path& parent);
+    TmpDir(const TmpDir&) = delete;
+    TmpDir& operator=(const TmpDir&) = delete;
+    ~TmpDir() noexcept;
 
     /// Create an empty file inside the tmp dir; returns its path.
     std::filesystem::path create_file(const std::string& name) const;
 };
+
+/// Substitute a path inside a K string literal, escaping its contents.
+std::string replace_k_path(std::string source, std::string_view token,
+                           const std::filesystem::path& path);
+
+/// Reject Unix socket paths that cannot fit in sockaddr_un::sun_path.
+void require_unix_socket_path(const std::filesystem::path& path);
 
 /**
  * RAII wrapper that compiles a K library source into a shared library,
@@ -513,6 +527,7 @@ std::string find_libk_dir();
 struct ScopedLdLibraryPath {
     std::string old_value;
     bool had_old = false;
+    bool active = false;
 
     explicit ScopedLdLibraryPath(const std::string& dir);
     ~ScopedLdLibraryPath();
