@@ -29,6 +29,9 @@
 
 #include <catch2/catch_all.hpp>
 
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/Module.h>
+
 #include "helpers.hpp"
 
 //
@@ -373,4 +376,52 @@ TEST_CASE("Function reference type: member function pointer with multiple parame
     auto test_fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(test_fn != nullptr);
     REQUIRE(test_fn() == 42);
+}
+
+TEST_CASE("Function reference type: local slots are zeroed at their allocated width",
+    "[gen][function_ref_type][mfp][slot_width][regression]")
+{
+    // An unbound member reference is a bare pointer while a fat callable is
+    // { ptr, ptr }: the entry-block neutralising store must match each slot.
+    // Opaque-pointer verification cannot see an oversized store, so compare sizes.
+    auto compiler = compile_model(R"SRC(
+        module gen_func_ref_slot_width;
+        struct Counter {
+            value : int;
+            add(x : int) : int { return value + x; }
+        }
+        twice(x : int) : int { return x * 2; }
+        test() : int {
+            mfp : Counter::*(int):int = Counter::add;
+            fat : *(int):int = twice;
+            c : Counter;
+            c.value = 40;
+            return (c.*mfp)(fat(1));
+        }
+    )SRC");
+    REQUIRE(compiler);
+    auto& module = compiler->get_context_for_test()->module();
+    const auto& layout = module.getDataLayout();
+    unsigned member_stores = 0, fat_stores = 0;
+    for (auto& function : module) {
+        for (auto& block : function) {
+            for (auto& instruction : block) {
+                auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+                if (!store) continue;
+                auto* slot = llvm::dyn_cast<llvm::AllocaInst>(store->getPointerOperand());
+                if (!slot) continue;
+                INFO("store into alloca '" << slot->getName().str() << "' in " << function.getName().str());
+                const auto stored = layout.getTypeAllocSize(store->getValueOperand()->getType());
+                const auto allocated = layout.getTypeAllocSize(slot->getAllocatedType());
+                CHECK(stored <= allocated);
+                if (slot->getName() == "mfp" || slot->getName() == "fat") {
+                    CHECK(stored == allocated);
+                    if (slot->getName() == "mfp") ++member_stores;
+                    else ++fat_stores;
+                }
+            }
+        }
+    }
+    CHECK(member_stores > 0);
+    CHECK(fat_stores > 0);
 }

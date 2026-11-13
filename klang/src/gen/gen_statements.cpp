@@ -4463,9 +4463,9 @@ void implementation_generator::visit_variable_statement(variable_statement& var)
             llvm::ConstantPointerNull::get(llvm::PointerType::get(build.getContext(), 0)),
             alloca);
     } else if (auto ct = std::dynamic_pointer_cast<callable_type>(var_type)) {
-        build.CreateStore(
-            llvm::ConstantAggregateZero::get(_context->get_or_create_callable_llvm_type()),
-            alloca);
+        // A fat callable slot is `{ ptr, ptr }`, an unbound member reference is a
+        // bare `ptr`: zero exactly the slot's allocated type.
+        build.CreateStore(llvm::Constant::getNullValue(type), alloca);
     } else if (k::model::type::is_sized_array(var_type)) {
         // Unwinding before the declaration must see an empty constructed prefix.
         build.CreateStore(llvm::ConstantAggregateZero::get(type), alloca);
