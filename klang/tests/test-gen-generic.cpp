@@ -44,13 +44,68 @@
 #include "../src/lex/lexer.hpp"
 #include "../src/parse/parser.hpp"
 #include "../src/model/model.hpp"
+#include "../src/model/context.hpp"
 #include "../src/model/template.hpp"
 #include "../src/gen/resolvers.hpp"
 
 #include "helpers.hpp"
 
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/Module.h>
+
 using namespace k::parse;
 using namespace k::log;
+
+namespace {
+
+std::string generic_write_diagnostic_text(const k::log::diagnostic& diagnostic) {
+    std::string text = diagnostic.message;
+    for (const auto& arg : diagnostic.args) text += " " + arg;
+    return text;
+}
+
+bool is_generic_pointee_write_diagnostic(const k::log::diagnostic& diagnostic) {
+    const auto text = generic_write_diagnostic_text(diagnostic);
+    bool mentions_int = text.find("'int'") != std::string::npos;
+    for (const auto& arg : diagnostic.args) {
+        mentions_int = mentions_int || arg == "int" || arg == "int*";
+    }
+    const bool type_related = text.find("generic") != std::string::npos
+        || text.find("type parameter") != std::string::npos
+        || mentions_int;
+    return type_related && (text.find("assign") != std::string::npos
+            || text.find("write") != std::string::npos
+            || text.find("null") != std::string::npos);
+}
+
+bool loaded_from_argument_slot(llvm::Value* value, llvm::Argument* argument) {
+    if (value == argument) return true;
+    auto* load = llvm::dyn_cast<llvm::LoadInst>(value);
+    auto* slot = load ? llvm::dyn_cast<llvm::AllocaInst>(load->getPointerOperand()) : nullptr;
+    if (!slot) return false;
+    for (auto* user : slot->users()) {
+        auto* store = llvm::dyn_cast<llvm::StoreInst>(user);
+        if (store && store->getPointerOperand() == slot
+            && store->getValueOperand() == argument) return true;
+    }
+    return false;
+}
+
+bool stores_null_through_first_argument(llvm::Function& function) {
+    if (function.arg_size() != 1) return false;
+    auto* argument = function.getArg(0);
+    for (auto& block : function) {
+        for (auto& instruction : block) {
+            auto* store = llvm::dyn_cast<llvm::StoreInst>(&instruction);
+            if (!store || !llvm::isa<llvm::ConstantPointerNull>(store->getValueOperand())) continue;
+            if (loaded_from_argument_slot(store->getPointerOperand(), argument)) return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
 
 // ============================================================================
 //  LEX
@@ -706,6 +761,144 @@ TEST_CASE("Generic class with null-check method executes correctly", "[gen][gene
 // ============================================================================
 //  SINGLE SYNTHESIS — generic functions and methods
 // ============================================================================
+
+TEST_CASE("Generic host int pointee write inspection",
+          "[.][gen][generic][erasure][pointee-write][inspection]") {
+    // Observational only: inspect the synthesis without calling it.
+    auto compiler = k::compiler::create();
+    try {
+        compiler->parse_source("generic_pointee_inspection.k", R"K(
+            module k;
+            generic<typename T> struct Host {
+                static clear(value : T*) { *value = null; }
+            }
+            instantiate() { host : Host<int>; }
+        )K", false, false);
+    } catch (const k::log::compiler_error& error) {
+        const auto& diagnostic = error.get_diagnostic();
+        INFO("diagnostic code: " << diagnostic.code
+             << ", message and arguments: " << generic_write_diagnostic_text(diagnostic));
+        REQUIRE(is_generic_pointee_write_diagnostic(diagnostic));
+        return;
+    }
+    REQUIRE_FALSE(compiler->has_compilation_error());
+    auto context = compiler->get_context_for_test();
+    auto& module = context->module();
+    llvm::Function* clear = nullptr;
+    for (auto& function : module) {
+        if (!function.isDeclaration() && function.getName().contains("clear")
+            && function.arg_size() == 1) {
+            REQUIRE(clear == nullptr);
+            clear = &function;
+        }
+    }
+    REQUIRE(clear);
+    auto* integer = context->get_llvm_type(context->from_type(k::model::primitive_type::INT));
+    REQUIRE(integer);
+    REQUIRE(integer->isIntegerTy());
+    INFO("int bits: " << integer->getIntegerBitWidth()
+         << ", pointer bits: " << module.getDataLayout().getPointerSizeInBits());
+    REQUIRE(stores_null_through_first_argument(*clear));
+    SUCCEED("The erased body stores a pointer-sized null through its argument; no call was executed");
+}
+
+TEST_CASE("Generic host rejects null write through an int pointee",
+          "[gen][generic][erasure][pointee-write][regression]") {
+    auto compiler = k::compiler::create();
+    try {
+        compiler->parse_source("generic_int_pointee_write.k", R"K(
+            module k;
+            generic<typename T> struct Host {
+                static clear(value : T*) { *value = null; }
+            }
+            probe(value : int*) { Host<int>::clear(value); }
+        )K", false, false);
+    } catch (const k::log::compiler_error& error) {
+        const auto& diagnostic = error.get_diagnostic();
+        INFO("diagnostic code: " << diagnostic.code
+             << ", message and arguments: " << generic_write_diagnostic_text(diagnostic));
+        REQUIRE(diagnostic.code != static_cast<unsigned int>(
+            k::diag::type_diag::ERR_INVOKE_NO_MATCHING_OVERLOAD));
+        REQUIRE(diagnostic.code != static_cast<unsigned int>(
+            k::diag::callable_diag::ERR_CALLABLE_INCOMPATIBLE_SIGNATURE));
+        REQUIRE(is_generic_pointee_write_diagnostic(diagnostic));
+        return;
+    }
+    REQUIRE_FALSE(compiler->has_compilation_error());
+    auto root = compiler->get_unit()->get_root_namespace();
+    auto probe = root->get_function("probe");
+    REQUIRE(probe);
+    REQUIRE(probe->parameters().size() == 1);
+    auto param_type = probe->parameters()[0]->get_type();
+    REQUIRE(k::model::type::is_pointer(param_type));
+    auto pointee = std::dynamic_pointer_cast<k::model::primitive_type>(
+        k::model::type::canonical(param_type->get_subtype()));
+    REQUIRE(pointee);
+    REQUIRE(pointee->get_type() == k::model::primitive_type::INT);
+    auto* probe_ir = compiler->get_context_for_test()->lookup_llvm_function(probe);
+    REQUIRE(probe_ir);
+    REQUIRE(probe_ir->arg_size() == 1);
+    llvm::Function* clear = nullptr;
+    for (auto& block : *probe_ir) {
+        for (auto& instruction : block) {
+            auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+            auto* target = call ? call->getCalledFunction() : nullptr;
+            if (target && target->getName().contains("clear")) {
+                REQUIRE(call->arg_size() == 1);
+                REQUIRE(loaded_from_argument_slot(call->getArgOperand(0), probe_ir->getArg(0)));
+                clear = target;
+            }
+        }
+    }
+    REQUIRE(clear);
+    CHECK(stores_null_through_first_argument(*clear));
+    FAIL("Host<int>::clear accepted an int pointer for a generic null write");
+}
+
+TEST_CASE("Generic host permits null write through a pointer-valued pointee",
+          "[gen][generic][erasure][pointee-write][regression]") {
+    auto compiler = k::compiler::create();
+    try {
+        compiler->parse_source("generic_pointer_pointee_write.k", R"K(
+            module k;
+            generic<typename T> struct Host {
+                static clear(value : T*) { *value = null; }
+            }
+            probe(value : int* *) { Host<int*>::clear(value); }
+        )K", false, false);
+    } catch (const k::log::compiler_error& error) {
+        const auto& diagnostic = error.get_diagnostic();
+        FAIL("Valid pointer-valued T rejected: " << diagnostic.code << " "
+             << generic_write_diagnostic_text(diagnostic));
+    }
+    REQUIRE_FALSE(compiler->has_compilation_error());
+    auto root = compiler->get_unit()->get_root_namespace();
+    auto probe = root->get_function("probe");
+    REQUIRE(probe);
+    REQUIRE(probe->parameters().size() == 1);
+    auto param_type = probe->parameters()[0]->get_type();
+    REQUIRE(k::model::type::is_pointer(param_type));
+    auto inner = param_type->get_subtype();
+    REQUIRE(k::model::type::is_pointer(inner));
+    auto pointee = std::dynamic_pointer_cast<k::model::primitive_type>(
+        k::model::type::canonical(inner->get_subtype()));
+    REQUIRE(pointee);
+    REQUIRE(pointee->get_type() == k::model::primitive_type::INT);
+    auto* probe_ir = compiler->get_context_for_test()->lookup_llvm_function(probe);
+    REQUIRE(probe_ir);
+    REQUIRE(probe_ir->arg_size() == 1);
+    llvm::CallBase* clear_call = nullptr;
+    for (auto& block : *probe_ir) {
+        for (auto& instruction : block) {
+            auto* call = llvm::dyn_cast<llvm::CallBase>(&instruction);
+            auto* target = call ? call->getCalledFunction() : nullptr;
+            if (target && target->getName().contains("clear")) clear_call = call;
+        }
+    }
+    REQUIRE(clear_call);
+    REQUIRE(clear_call->arg_size() == 1);
+    REQUIRE(loaded_from_argument_slot(clear_call->getArgOperand(0), probe_ir->getArg(0)));
+}
 
 TEST_CASE("Single synthesis: generic function is compiled once for all type arguments",
           "[gen][generic][synthesis]") {
