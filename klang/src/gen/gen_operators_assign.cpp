@@ -126,7 +126,7 @@ bool implementation_generator::emit_scalar_union_wrapper_copy(
 
 bool implementation_generator::emit_union_payload_copy(
     llvm::Value* dest, llvm::Value* source, const std::shared_ptr<type>& payload_type,
-    bool source_const) {
+    bool source_const, llvm::Value* allow_empty_default_owner) {
     auto bare = type::canonical(type::remove_const(type::canonical(payload_type)));
     if (type::is_owner(bare)) {
         emit_union_copy_failure();
@@ -166,7 +166,8 @@ bool implementation_generator::emit_union_payload_copy(
             {_builder->getInt32(0), index}, "union_copy_src_element");
         auto* dst_element = _builder->CreateInBoundsGEP(data_type, dst_data,
             {_builder->getInt32(0), index}, "union_copy_dst_element");
-        if (emit_union_payload_copy(dst_element, src_element, array->get_subtype(), source_const)) {
+        if (emit_union_payload_copy(dst_element, src_element, array->get_subtype(), source_const,
+                                    allow_empty_default_owner)) {
             _builder->CreateStore(_builder->CreateAdd(index, _builder->getInt32(1)), dst_count_ptr);
             _builder->CreateBr(test);
         }
@@ -182,7 +183,7 @@ bool implementation_generator::emit_union_payload_copy(
                 throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), {},
                     "Cannot find union metadata while copying '{}'", {st->to_string()});
             }
-            emit_union_copy(dest, source, *un, *un, false, source_const);
+            emit_union_copy(dest, source, *un, *un, false, source_const, allow_empty_default_owner);
             return true;
         }
 
@@ -242,7 +243,7 @@ bool implementation_generator::emit_union_payload_copy(
 
 void implementation_generator::emit_union_copy(
     llvm::Value* dest, llvm::Value* source, union_type_def& dest_def, union_type_def& source_def,
-    bool destroy_dest_first, bool source_const) {
+    bool destroy_dest_first, bool source_const, llvm::Value* allow_empty_default_owner) {
     auto* fn = _builder->GetInsertBlock()->getParent();
     auto* done = llvm::BasicBlock::Create(**_context, "union_copy_done", fn);
     auto* dispatch = llvm::BasicBlock::Create(**_context, "union_copy_dispatch", fn);
@@ -252,13 +253,32 @@ void implementation_generator::emit_union_copy(
     auto* dst_type = dest_def.get_struct_type()->get_llvm_type();
     auto* src_disc_ptr = _builder->CreateStructGEP(src_type, source, 0, "union_copy_src_disc");
     auto* dst_disc_ptr = _builder->CreateStructGEP(dst_type, dest, 0, "union_copy_dst_disc");
+    auto alternatives = source_def.all_alternatives_ptrs();
+    if (destroy_dest_first) {
+        auto* prepare = llvm::BasicBlock::Create(**_context, "union_copy_prepare", fn);
+        auto* invalid_initial = llvm::BasicBlock::Create(**_context, "union_copy_invalid_initial", fn);
+        auto* initial_disc = _builder->CreateLoad(_builder->getInt32Ty(), src_disc_ptr);
+        auto* validate = _builder->CreateSwitch(initial_disc, invalid_initial, alternatives.size() + 1);
+        validate->addCase(_builder->getInt32(-1), prepare);
+        for (const auto* alt : alternatives) {
+            if (dest_def.get_alternative_by_global_index(alt->index))
+                validate->addCase(_builder->getInt32(alt->index), prepare);
+        }
+        _builder->SetInsertPoint(invalid_initial);
+        _builder->CreateIntrinsic(llvm::Intrinsic::trap, llvm::ArrayRef<llvm::Type*>{}, {});
+        _builder->CreateUnreachable();
+        _builder->SetInsertPoint(prepare);
+        emit_union_cleanup(dest, dest_def);
+        _builder->CreateStore(_builder->getInt32(-1), dst_disc_ptr);
+        set_union_live_state(dest, dest_def, false);
+    }
+    // Cleanup can call user destructors that mutate the already evaluated source.
     auto* disc = _builder->CreateLoad(_builder->getInt32Ty(), src_disc_ptr);
     auto* src_state = _builder->CreateLoad(_builder->getInt32Ty(),
         union_live_state_ptr(source, source_def));
     auto* src_payload = _builder->CreateStructGEP(src_type, source, 1, "union_copy_src_payload");
     auto* dst_payload = _builder->CreateStructGEP(dst_type, dest, 1, "union_copy_dst_payload");
     auto* invalid = llvm::BasicBlock::Create(**_context, "union_copy_invalid", fn);
-    auto alternatives = source_def.all_alternatives_ptrs();
     auto* sw = _builder->CreateSwitch(disc, invalid, alternatives.size());
 
     for (const auto* alt : alternatives) {
@@ -272,7 +292,8 @@ void implementation_generator::emit_union_copy(
             continue;
         }
         auto bare = type::canonical(type::remove_const(type::canonical(alt->resolved_type)));
-        if (alt->index == 0 && (type::is_struct(bare) || type::is_sized_array(bare))) {
+        if (alt->index == 0 && (type::is_struct(bare) || type::is_sized_array(bare))
+            && !has_default_nested_union(source_def)) {
             auto* default_copy = llvm::BasicBlock::Create(**_context, "union_copy_default", fn);
             auto* live_copy = llvm::BasicBlock::Create(**_context, "union_copy_live", fn);
             auto src_struct = std::dynamic_pointer_cast<struct_type>(bare);
@@ -302,7 +323,6 @@ void implementation_generator::emit_union_copy(
                 emit_union_copy_failure();
             }
             _builder->SetInsertPoint(default_copy);
-            if (destroy_dest_first) emit_union_cleanup(dest, dest_def);
             _builder->CreateStore(llvm::ConstantAggregateZero::get(dst_type), dest);
             uint64_t size = _context->module().getDataLayout().getTypeAllocSize(_context->get_llvm_type(bare));
             _builder->CreateMemCpy(dst_payload, llvm::MaybeAlign(1), src_payload, llvm::MaybeAlign(1),
@@ -310,12 +330,56 @@ void implementation_generator::emit_union_copy(
             _builder->CreateBr(done);
             _builder->SetInsertPoint(live_copy);
         }
-        if (destroy_dest_first) emit_union_cleanup(dest, dest_def);
         _builder->CreateStore(_builder->getInt32(-1), dst_disc_ptr);
         set_union_live_state(dest, dest_def, false);
+        auto callable = std::dynamic_pointer_cast<callable_type>(bare);
+        const bool owning_callable = callable && callable->is_owner();
+        if (alt->index == 0 && allow_empty_default_owner
+            && (type::is_owner(bare) || owning_callable)) {
+            auto* ptr_type = llvm::PointerType::get(_builder->getContext(), 0);
+            llvm::Value* is_empty = nullptr;
+            if (owning_callable) {
+                auto* callable_type = _context->get_or_create_callable_llvm_type();
+                auto* fn_ptr = _builder->CreateStructGEP(callable_type, src_payload, 0);
+                auto* ctx_ptr = _builder->CreateStructGEP(callable_type, src_payload, 1);
+                auto* fn_value = _builder->CreateLoad(ptr_type, fn_ptr);
+                auto* ctx_value = _builder->CreateLoad(ptr_type, ctx_ptr);
+                fn_value->setAlignment(llvm::Align(1));
+                ctx_value->setAlignment(llvm::Align(1));
+                is_empty = _builder->CreateAnd(
+                    _builder->CreateIsNull(fn_value), _builder->CreateIsNull(ctx_value));
+            } else {
+                auto* owner_value = _builder->CreateLoad(ptr_type, src_payload);
+                owner_value->setAlignment(llvm::Align(1));
+                is_empty = _builder->CreateIsNull(owner_value);
+            }
+            auto* empty_copy = llvm::BasicBlock::Create(**_context, "union_copy_empty_owner", fn);
+            auto* failure = llvm::BasicBlock::Create(**_context, "union_copy_owned_failure", fn);
+            auto* allowed = _builder->CreateAnd(allow_empty_default_owner,
+                _builder->CreateICmpEQ(src_state, _builder->getInt32(0)));
+            _builder->CreateCondBr(_builder->CreateAnd(allowed, is_empty), empty_copy, failure);
+            _builder->SetInsertPoint(failure);
+            emit_union_copy_failure();
+            _builder->SetInsertPoint(empty_copy);
+            auto* value_type = owning_callable
+                ? static_cast<llvm::Type*>(_context->get_or_create_callable_llvm_type())
+                : static_cast<llvm::Type*>(ptr_type);
+            auto* store = _builder->CreateStore(llvm::Constant::getNullValue(value_type), dst_payload);
+            store->setAlignment(llvm::Align(1));
+            _builder->CreateStore(disc, dst_disc_ptr);
+            _builder->CreateBr(done);
+            continue;
+        }
         const bool alternative_source_const = source_const || alt->is_const
             || type::is_const(type::canonical(alt->resolved_type));
-        if (emit_union_payload_copy(dst_payload, src_payload, bare, alternative_source_const)) {
+        auto* allow_nested_empty = allow_empty_default_owner;
+        if (alt->index == 0 && has_default_nested_union(source_def)) {
+            auto* is_default = _builder->CreateICmpEQ(src_state, _builder->getInt32(0));
+            allow_nested_empty = allow_nested_empty
+                ? _builder->CreateOr(allow_nested_empty, is_default) : is_default;
+        }
+        if (emit_union_payload_copy(dst_payload, src_payload, bare, alternative_source_const,
+                                    allow_nested_empty)) {
             _builder->CreateStore(disc, dst_disc_ptr);
             // An escaped default source yields a constructed (live) destination.
             _builder->CreateStore(
@@ -330,7 +394,6 @@ void implementation_generator::emit_union_copy(
     auto* invalid_tag = llvm::BasicBlock::Create(**_context, "union_copy_invalid_tag", fn);
     _builder->CreateCondBr(_builder->CreateICmpEQ(disc, _builder->getInt32(-1)), empty, invalid_tag);
     _builder->SetInsertPoint(empty);
-    if (destroy_dest_first) emit_union_cleanup(dest, dest_def);
     _builder->CreateStore(_builder->getInt32(-1), dst_disc_ptr);
     set_union_live_state(dest, dest_def, false);
     _builder->CreateBr(done);
@@ -363,27 +426,29 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
     auto agg       = st_type ? st_type->get_struct() : nullptr;
     if (st_type && !agg) {
         auto un = find_union_by_struct_type(_unit.get_root_namespace(), st_type);
-        if (un) {
-            if (!src->getType()->isPointerTy()) {
-                if (destroy_dest_first) emit_union_cleanup(dest, *un);
-                _builder->CreateStore(src, dest);
-            } else if (allow_move && is_expression_temporary(src)) {
-                auto* fn = _builder->GetInsertBlock()->getParent();
-                auto* move = llvm::BasicBlock::Create(**_context, "union_move", fn);
-                auto* done = llvm::BasicBlock::Create(**_context, "union_move_done", fn);
-                _builder->CreateCondBr(_builder->CreateICmpEQ(dest, src), done, move);
-                _builder->SetInsertPoint(move);
-                if (destroy_dest_first) emit_union_cleanup(dest, *un);
-                _builder->CreateMemCpy(dest, llvm::MaybeAlign(), src, llvm::MaybeAlign(),
-                                       _builder->getInt64(sz));
-                _builder->CreateBr(done);
-                _builder->SetInsertPoint(done);
-                cancel_temporary_cleanup(src);
-            } else {
-                emit_union_copy(dest, src, *un, *un, destroy_dest_first, source_const);
-            }
-            return;
+        if (!un) {
+            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), {},
+                "Cannot find union metadata while assigning '{}'", {st_type->to_string()});
         }
+        if (!src->getType()->isPointerTy()) {
+            if (destroy_dest_first) emit_union_cleanup(dest, *un);
+            _builder->CreateStore(src, dest);
+        } else if (allow_move && is_expression_temporary(src)) {
+            auto* fn = _builder->GetInsertBlock()->getParent();
+            auto* move = llvm::BasicBlock::Create(**_context, "union_move", fn);
+            auto* done = llvm::BasicBlock::Create(**_context, "union_move_done", fn);
+            _builder->CreateCondBr(_builder->CreateICmpEQ(dest, src), done, move);
+            _builder->SetInsertPoint(move);
+            if (destroy_dest_first) emit_union_cleanup(dest, *un);
+            _builder->CreateMemCpy(dest, llvm::MaybeAlign(), src, llvm::MaybeAlign(),
+                                   _builder->getInt64(sz));
+            _builder->CreateBr(done);
+            _builder->SetInsertPoint(done);
+            cancel_temporary_cleanup(src);
+        } else {
+            emit_union_copy(dest, src, *un, *un, destroy_dest_first, source_const);
+        }
+        return;
     }
     bool trivially = !selected_copy && is_trivially_copyable(nt);
 
@@ -1265,6 +1330,27 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
 // Simple assignment expression (=)
 //
 
+implementation_generator::place_result implementation_generator::evaluate_assignment_place(expression& expr) {
+    auto result = evaluate_expression(expr);
+    // The resolver uses a load to follow a reference or link field on the LHS.
+    // Its loaded pointer is the destination place, not the value being assigned.
+    if (dynamic_cast<load_value_expression*>(&expr) && type::is_reference(expr.get_type())) {
+        if (auto* address = std::get_if<value_result>(&result)) {
+            return dereference_address(*address);
+        }
+    }
+    return require_place(result, expr);
+}
+
+std::pair<implementation_generator::place_result, llvm::Value*>
+implementation_generator::process_assignment_operands(assignation_expression& expr) {
+    auto destination = evaluate_assignment_place(*expr.left());
+    auto source = evaluate_expression(*expr.right());
+    auto* right = checked_legacy_result(source);
+    _value = nullptr;
+    return {destination, right};
+}
+
 /**
  * Generate LLVM IR for simple assignment (=).
  *
@@ -1316,7 +1402,8 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         auto* union_base = _value;
         auto* union_llvm_type = union_def_for_assign->get_struct_type()->get_llvm_type();
         auto* disc_ptr = _builder->CreateStructGEP(union_llvm_type, union_base, 0, "union_assign_disc");
-        auto* dest = _builder->CreateStructGEP(union_llvm_type, union_base, 1, "union_assign_storage");
+        place_result destination{
+            _builder->CreateStructGEP(union_llvm_type, union_base, 1, "union_assign_storage")};
         auto alt_type = type::remove_const(union_alt_for_assign->resolved_type);
         auto* new_disc = _builder->getInt32(union_alt_for_assign->index);
         call_argument_cleanup_scope incoming(*this, true);
@@ -1326,6 +1413,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         expr.right()->accept(*this);
         _sret_destination = saved_sret_destination;
         auto* source = _value;
+        auto* dest = checked_legacy_result(destination);
         auto source_type = expr.right()->get_type();
         const bool source_const = type::is_reference(source_type)
             && type::is_const(source_type->get_subtype());
@@ -1338,6 +1426,26 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         } else if (!source->getType()->isPointerTy()) {
             incoming.track(alt_type, source);
         }
+        auto alt_struct = std::dynamic_pointer_cast<struct_type>(type::canonical(alt_type));
+        std::shared_ptr<union_type_def> temporary_union;
+        if (alt_struct && !alt_struct->get_struct() && !source_const
+            && !expr.has_operator_overload() && is_expression_temporary(source)) {
+            temporary_union = find_union_by_struct_type(_unit.get_root_namespace(), alt_struct);
+            if (!temporary_union) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), {},
+                    "Cannot find union metadata while moving '{}'", {alt_struct->to_string()});
+            }
+        }
+        auto move_temporary_union = [&](bool destroy_dest) {
+            if (destroy_dest) emit_union_cleanup(dest, *temporary_union);
+            auto* llvm_type = temporary_union->get_struct_type()->get_llvm_type();
+            uint64_t size = _context->module().getDataLayout().getTypeAllocSize(llvm_type);
+            _builder->CreateMemCpy(dest, llvm::MaybeAlign(1), source, llvm::MaybeAlign(1),
+                                   _builder->getInt64(size));
+            auto* source_disc = _builder->CreateStructGEP(llvm_type, source, 0, "union_move_source_disc");
+            _builder->CreateStore(_builder->getInt32(-1), source_disc);
+            set_union_live_state(source, *temporary_union, false);
+        };
 
         auto* func = _builder->GetInsertBlock()->getParent();
         auto* active_bb = llvm::BasicBlock::Create(**_context, "union_assign_active", func);
@@ -1347,9 +1455,12 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         llvm::Value* is_active = _builder->CreateICmpEQ(old_disc, new_disc);
         auto* live = _builder->CreateLoad(_builder->getInt32Ty(),
             union_live_state_ptr(union_base, *union_def_for_assign));
-        auto* has_payload = _builder->CreateOr(
+        llvm::Value* has_payload = _builder->CreateOr(
             _builder->CreateICmpNE(old_disc, _builder->getInt32(0)),
             _builder->CreateICmpNE(live, _builder->getInt32(0)));
+        if (has_default_nested_union(*union_def_for_assign)) {
+            has_payload = _builder->getTrue();
+        }
         is_active = _builder->CreateAnd(is_active, has_payload);
         if (union_alt_for_assign->index == 0
             && union_first_alternative_tracks_default(*union_def_for_assign, _unit.get_root_namespace())) {
@@ -1367,7 +1478,9 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         _builder->CreateCondBr(is_active, active_bb, construct_bb);
 
         auto construct_value = [&]() {
-            if (source->getType()->isPointerTy()) {
+            if (temporary_union) {
+                move_temporary_union(false);
+            } else if (source->getType()->isPointerTy()) {
                 // Both runtime branches must preserve a reference-bound RHS
                 // temporary's cleanup; only one branch activates new storage.
                 emit_value_copy_or_move(dest, source, alt_type, false, expr.first_lexeme(),
@@ -1396,8 +1509,12 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
                 _builder->SetInsertPoint(copy_bb);
                 _builder->CreateStore(_builder->getInt32(-1), disc_ptr);
                 set_union_live_state(union_base, *union_def_for_assign, false);
-                emit_value_copy_or_move(dest, source, alt_type, true, expr.first_lexeme(),
-                    "union assignment", false, false, expr.get_copy_constructor(), source_const);
+                if (temporary_union) {
+                    move_temporary_union(true);
+                } else {
+                    emit_value_copy_or_move(dest, source, alt_type, true, expr.first_lexeme(),
+                        "union assignment", false, false, expr.get_copy_constructor(), source_const);
+                }
                 _builder->CreateStore(new_disc, disc_ptr);
                 set_union_live_state(union_base, *union_def_for_assign, true);
             } else {
@@ -1410,6 +1527,14 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
                     if (dtor != _context->_functions.end()) {
                         create_call_or_invoke(dtor->second->getFunctionType(), dtor->second, {dest});
                     }
+                } else if (!agg) {
+                    auto st = std::dynamic_pointer_cast<struct_type>(alt_type);
+                    auto nested = find_union_by_struct_type(_unit.get_root_namespace(), st);
+                    if (!nested) {
+                        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), {},
+                            "Cannot find union metadata while replacing '{}'", {st->to_string()});
+                    }
+                    emit_union_cleanup(dest, *nested);
                 }
                 _builder->CreateStore(source, dest);
                 _builder->CreateStore(new_disc, disc_ptr);
@@ -1418,8 +1543,13 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         }
         _builder->CreateBr(done_bb);
         _builder->SetInsertPoint(done_bb);
+        if (temporary_union) cancel_temporary_cleanup(source);
         incoming.transfer();
-        _value = dest;
+        if (type::is_reference(expr.get_type()) || type::is_drain(expr.get_type())) {
+            publish_expression_result(expr, destination);
+        } else {
+            _value = checked_legacy_result(destination);
+        }
         return;
     }
 
@@ -1443,7 +1573,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
 
     // Step 1: Evaluate left and right operands
     llvm::Value* union_base_once = nullptr;
-    llvm::Value* left = nullptr;
+    place_result destination{nullptr};
     llvm::Value* right = nullptr;
     if (union_moe && union_def_for_assign && union_alt_for_assign) {
         _skip_union_disc_check = false;
@@ -1451,17 +1581,18 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         union_moe->sub_expr()->accept(*this);
         union_base_once = _value;
         if (union_base_once) {
-            left = _builder->CreateStructGEP(
-                union_def_for_assign->get_struct_type()->get_llvm_type(), union_base_once, 1, "union_assign_storage");
+            destination = place_result{_builder->CreateStructGEP(
+                union_def_for_assign->get_struct_type()->get_llvm_type(), union_base_once, 1, "union_assign_storage")};
         }
         _value = nullptr;
         expr.right()->accept(*this);
         right = _value;
         _value = nullptr;
     } else {
-        std::tie(left, right) = process_binary_expression(expr);
+        std::tie(destination, right) = process_assignment_operands(expr);
     }
     _skip_union_disc_check = false;
+    auto* left = checked_legacy_result(destination);
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F035), expr.first_lexeme(),
             "Internal error: assignment expression produced a null left or right LLVM value; "
@@ -1543,7 +1674,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
                                     }
                                     _builder->SetInsertPoint(done);
                                     incoming.transfer();
-                                    _value = left;
+                                    publish_expression_result(expr, destination);
                                     return;
                                 }
                                 // Destroy the previously-active alternative (handles
@@ -1570,7 +1701,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
                                 set_union_live_state(union_base, *union_def, true);
                                 incoming.transfer();
                             }
-                            _value = left;
+                            publish_expression_result(expr, destination);
                             return;
                         }
                     }
@@ -1633,7 +1764,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         _builder->CreateCondBr(_builder->CreateICmpULT(nxt, copy_n), loop_bb, done_bb);
 
         _builder->SetInsertPoint(done_bb);
-        _value = left;
+        publish_expression_result(expr, destination);
         return;
     }
 
@@ -1663,7 +1794,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         }
         _builder->CreateStore(new_ptr, left);
         incoming.transfer();
-        _value = left;
+        publish_expression_result(expr, destination);
         return;
     }
 
@@ -1700,7 +1831,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
                 emit_callable_nonnull_check(target_type, source_type, new_callable, expr.first_lexeme());
             }
             _builder->CreateStore(new_callable, left);
-            _value = left;
+            publish_expression_result(expr, destination);
             return;
         }
     }
@@ -1757,7 +1888,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
                     }
                     if (lhs_udef && rhs_udef) {
                         emit_union_copy(left, right, *lhs_udef, *rhs_udef, true, source_const);
-                        _value = left;
+                        publish_expression_result(expr, destination);
                         return;
                     }
                 }
@@ -1789,7 +1920,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
             emit_value_copy_or_move(left, right, target_type, /*destroy_dest_first=*/true,
                                     expr.first_lexeme(), "assignment",
                                     named_result_assignment, true, expr.get_copy_constructor(), source_const);
-            _value = left;
+            publish_expression_result(expr, destination);
             return;
         }
     }
@@ -1797,7 +1928,7 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
     // Step 5: For primitives/pointers: emit store instruction
     _value = right;
     _value = _builder->CreateStore(_value, left);
-    _value = left;
+    publish_expression_result(expr, destination);
 
 }
 
@@ -1836,7 +1967,8 @@ void type_reference_resolver::visit_arithmetic_assignation_expression(arithmetic
 void implementation_generator::visit_addition_assignation_expression(additition_assignation_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
-    auto [left, right] = process_binary_expression(expr);
+    auto [destination, right] = process_assignment_operands(expr);
+    auto* left = checked_legacy_result(destination);
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F036), expr.first_lexeme(),
             "Internal error: '+=' expression produced a null left or right LLVM value; "
@@ -1858,7 +1990,7 @@ void implementation_generator::visit_addition_assignation_expression(additition_
 
     // Store the value, return the left ref
     _value = _builder->CreateStore(_value, left);
-    _value = left;
+    publish_expression_result(expr, destination);
 }
 
 //
@@ -1868,7 +2000,8 @@ void implementation_generator::visit_addition_assignation_expression(additition_
 void implementation_generator::visit_substraction_assignation_expression(substraction_assignation_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
-    auto [left, right] = process_binary_expression(expr);
+    auto [destination, right] = process_assignment_operands(expr);
+    auto* left = checked_legacy_result(destination);
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F037), expr.first_lexeme(),
             "Internal error: '-=' expression produced a null left or right LLVM value; "
@@ -1890,7 +2023,7 @@ void implementation_generator::visit_substraction_assignation_expression(substra
 
     // Store the value, return the left ref
     _value = _builder->CreateStore(_value, left);
-    _value = left;
+    publish_expression_result(expr, destination);
 }
 
 //
@@ -1900,7 +2033,8 @@ void implementation_generator::visit_substraction_assignation_expression(substra
 void implementation_generator::visit_multiplication_assignation_expression(multiplication_assignation_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
-    auto [left, right] = process_binary_expression(expr);
+    auto [destination, right] = process_assignment_operands(expr);
+    auto* left = checked_legacy_result(destination);
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F038), expr.first_lexeme(),
             "Internal error: '*=' expression produced a null left or right LLVM value; "
@@ -1922,7 +2056,7 @@ void implementation_generator::visit_multiplication_assignation_expression(multi
 
     // Store the value, return the left ref
     _value = _builder->CreateStore(_value, left);
-    _value = left;
+    publish_expression_result(expr, destination);
 }
 
 //
@@ -1932,7 +2066,8 @@ void implementation_generator::visit_multiplication_assignation_expression(multi
 void implementation_generator::visit_division_assignation_expression(division_assignation_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
-    auto [left, right] = process_binary_expression(expr);
+    auto [destination, right] = process_assignment_operands(expr);
+    auto* left = checked_legacy_result(destination);
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F039), expr.first_lexeme(),
             "Internal error: '/=' expression produced a null left or right LLVM value; "
@@ -1960,7 +2095,7 @@ void implementation_generator::visit_division_assignation_expression(division_as
 
     // Store the value, return the left ref
     _value = _builder->CreateStore(_value, left);
-    _value = left;
+    publish_expression_result(expr, destination);
 }
 
 //
@@ -1970,7 +2105,8 @@ void implementation_generator::visit_division_assignation_expression(division_as
 void implementation_generator::visit_modulo_assignation_expression(modulo_assignation_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
-    auto [left, right] = process_binary_expression(expr);
+    auto [destination, right] = process_assignment_operands(expr);
+    auto* left = checked_legacy_result(destination);
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03A), expr.first_lexeme(),
             "Internal error: '%=' expression produced a null left or right LLVM value; "
@@ -1998,7 +2134,7 @@ void implementation_generator::visit_modulo_assignation_expression(modulo_assign
 
     // Store the value, return the left ref
     _value = _builder->CreateStore(_value, left);
-    _value = left;
+    publish_expression_result(expr, destination);
 }
 
 //
@@ -2008,7 +2144,8 @@ void implementation_generator::visit_modulo_assignation_expression(modulo_assign
 void implementation_generator::visit_bitwise_and_assignation_expression(bitwise_and_assignation_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
-    auto [left, right] = process_binary_expression(expr);
+    auto [destination, right] = process_assignment_operands(expr);
+    auto* left = checked_legacy_result(destination);
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03B), expr.first_lexeme(),
             "Internal error: '&=' expression produced a null left or right LLVM value; "
@@ -2036,7 +2173,7 @@ void implementation_generator::visit_bitwise_and_assignation_expression(bitwise_
 
     // Store the value, return the left ref
     _value = _builder->CreateStore(_value, left);
-    _value = left;
+    publish_expression_result(expr, destination);
 }
 
 //
@@ -2046,7 +2183,8 @@ void implementation_generator::visit_bitwise_and_assignation_expression(bitwise_
 void implementation_generator::visit_bitwise_or_assignation_expression(bitwise_or_assignation_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
-    auto [left, right] = process_binary_expression(expr);
+    auto [destination, right] = process_assignment_operands(expr);
+    auto* left = checked_legacy_result(destination);
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03C), expr.first_lexeme(),
             "Internal error: '|=' expression produced a null left or right LLVM value; "
@@ -2074,7 +2212,7 @@ void implementation_generator::visit_bitwise_or_assignation_expression(bitwise_o
 
     // Store the value, return the left ref
     _value = _builder->CreateStore(_value, left);
-    _value = left;
+    publish_expression_result(expr, destination);
 }
 
 //
@@ -2084,7 +2222,8 @@ void implementation_generator::visit_bitwise_or_assignation_expression(bitwise_o
 void implementation_generator::visit_bitwise_xor_assignation_expression(bitwise_xor_assignation_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
-    auto [left, right] = process_binary_expression(expr);
+    auto [destination, right] = process_assignment_operands(expr);
+    auto* left = checked_legacy_result(destination);
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03D), expr.first_lexeme(),
             "Internal error: '^=' expression produced a null left or right LLVM value; "
@@ -2112,7 +2251,7 @@ void implementation_generator::visit_bitwise_xor_assignation_expression(bitwise_
 
     // Store the value, return the left ref
     _value = _builder->CreateStore(_value, left);
-    _value = left;
+    publish_expression_result(expr, destination);
 }
 
 //
@@ -2122,7 +2261,8 @@ void implementation_generator::visit_bitwise_xor_assignation_expression(bitwise_
 void implementation_generator::visit_left_shift_assignation_expression(left_shift_assignation_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
-    auto [left, right] = process_binary_expression(expr);
+    auto [destination, right] = process_assignment_operands(expr);
+    auto* left = checked_legacy_result(destination);
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03E), expr.first_lexeme(),
             "Internal error: '<<=' expression produced a null left or right LLVM value; "
@@ -2151,7 +2291,7 @@ void implementation_generator::visit_left_shift_assignation_expression(left_shif
 
     // Store the value, return the left ref
     _value = _builder->CreateStore(_value, left);
-    _value = left;
+    publish_expression_result(expr, destination);
 }
 
 //
@@ -2161,7 +2301,8 @@ void implementation_generator::visit_left_shift_assignation_expression(left_shif
 void implementation_generator::visit_right_shift_assignation_expression(right_shift_assignation_expression& expr) {
     if (generate_binary_operator_overload(expr)) return;
 
-    auto [left, right] = process_binary_expression(expr);
+    auto [destination, right] = process_assignment_operands(expr);
+    auto* left = checked_legacy_result(destination);
     if(!left || !right) {
         throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F03F), expr.first_lexeme(),
             "Internal error: '>>=' expression produced a null left or right LLVM value; "
@@ -2195,7 +2336,7 @@ void implementation_generator::visit_right_shift_assignation_expression(right_sh
 
     // Store the value, return the left ref
     _value = _builder->CreateStore(_value, left);
-    _value = left;
+    publish_expression_result(expr, destination);
 }
 
 //

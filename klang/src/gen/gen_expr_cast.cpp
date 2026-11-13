@@ -415,6 +415,9 @@ void type_reference_resolver::visit_cast_expression(cast_expression& expr) {
                     {union_def->get_short_name(), target_type->to_string()});
             }
 
+            if (type::is_owner(type::remove_const(type::canonical(target_type)))) {
+                check_union_owner_extraction(sub_expr, *matches.front());
+            }
             expr.set_null_is_fatal(target_is_nonnull(target_type) || !is_address_of_union);
             return true;
         }()) {
@@ -975,6 +978,9 @@ void implementation_generator::visit_cast_expression(cast_expression& expr) {
                     } else {
                         auto elem_llvm_type = _context->get_llvm_type(bare_tgt);
                         _value = _builder->CreateLoad(elem_llvm_type, storage_ptr, "union_cast_val");
+                        if (type::is_owner(type::remove_const(type::canonical(bare_tgt)))) {
+                            _builder->CreateStore(llvm::Constant::getNullValue(elem_llvm_type), storage_ptr);
+                        }
                     }
                     return;
                 }

@@ -1346,6 +1346,10 @@ respect its copy constructor's checked-exception contract. A `const`
 alternative is copied from a const source even in a mutable union. Copy
 contract checking considers potentially active alternatives, while the
 runtime copy dispatches only to the active payload.
+Extracting an owner alternative by value moves it and nulls its source slot
+without changing the active discriminant. A const union or const alternative
+cannot be consumed; a mutable owner slot may own a const pointee. Reference
+and observer conversions borrow instead.
 
 ### 19b.3 Memory Layout
 

@@ -17,6 +17,7 @@
  */
 
 #include <catch2/catch_all.hpp>
+#include <cstring>
 
 #include "helpers.hpp"
 
@@ -24,6 +25,19 @@ using namespace k::model;
 using namespace k::model::gen;
 using namespace k::parse;
 using namespace k::parse::ast;
+
+extern "C" int __k_test_disarm_duplicate_union_field_owner(void* source, void* copy) {
+    void* source_value = nullptr;
+    void* copy_value = nullptr;
+    std::memcpy(&source_value, source, sizeof(source_value));
+    std::memcpy(&copy_value, copy, sizeof(copy_value));
+    if (source_value && source_value == copy_value) {
+        void* empty = nullptr;
+        std::memcpy(copy, &empty, sizeof(empty));
+        return 1;
+    }
+    return 0;
+}
 
 TEST_CASE("Union lifecycle rejects an imported constructor with unknown exception contract",
           "[gen][union][copy][import][exceptions][regression]") {
@@ -1200,6 +1214,1179 @@ TEST_CASE("Copying a default union does not construct or destroy its first paylo
                 if (first.index() != 0 || second.index() != 0) return -1;
             }
             return constructs == 0 && drops == 0 ? 42 : -2;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Escaped reference mutation cleans up a default first union alternative",
+          "[gen][union][reference][default][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_escaped_default_mutation;
+        copies: int = 0;
+        drops: int = 0;
+        class Tracked {
+        public:
+            Tracked() {}
+            Tracked(other: const Tracked&) { ++copies; }
+            ~Tracked() { ++drops; }
+        }
+        union Inner { empty: int; value: Tracked; }
+        union Outer { value: Inner; number: int; }
+        borrow(value: Outer&): Inner& { return value.value; }
+        test(): int {
+            copies = 0; drops = 0;
+            {
+                source: Tracked;
+                {
+                    outer: Outer;
+                    if (outer.index() != 0) return -1;
+                    innerRef: Inner& = borrow(outer);
+                    innerRef.value = source;
+                    if (copies != 1 || drops != 0) return -2;
+                    outer.number = 7;
+                    if (drops != 1) return -3;
+                }
+            }
+            return drops == 2 ? 42 : -4;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Escaped first struct owner is cleaned on union replacement and drop",
+          "[gen][union][reference][default][struct][owner][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_escaped_default_struct_owner;
+        constructs: int = 0;
+        parentDrops: int = 0;
+        resourceDrops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++resourceDrops; }
+        }
+        struct Payload {
+            owned: Resource!;
+            Payload() { ++constructs; }
+            ~Payload() { ++parentDrops; }
+        }
+        union Storage { value: Payload; number: int; }
+        borrow(value: Storage&): Payload& { return value.value; }
+        install(value: Payload&) { value.owned = new Resource(); }
+        test(): int {
+            constructs = 0; parentDrops = 0; resourceDrops = 0;
+            result: int = 0;
+            {
+                storage: Storage;
+                install(borrow(storage));
+                if (constructs != 0 || parentDrops != 0 || resourceDrops != 0) result = -1;
+                storage.number = 7;
+                if (constructs != 0 || parentDrops != 0 || resourceDrops != 1) result = -2;
+            }
+            if (constructs != 0 || parentDrops != 0 || resourceDrops != 1) result = -3;
+            {
+                storage: Storage;
+                install(borrow(storage));
+                if (constructs != 0 || parentDrops != 0 || resourceDrops != 1) result = -4;
+            }
+            if (constructs != 0 || parentDrops != 0 || resourceDrops != 2) result = -5;
+            return result == 0 ? 42 : result;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Escaped first class owner is cleaned on union replacement and drop",
+          "[gen][union][reference][default][class][owner][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_escaped_default_class_owner;
+        constructs: int = 0;
+        parentDrops: int = 0;
+        resourceDrops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++resourceDrops; }
+        }
+        class Payload {
+        public:
+            owned: Resource!;
+            Payload() { ++constructs; }
+            ~Payload() { ++parentDrops; }
+        }
+        union Storage { value: Payload; number: int; }
+        borrow(value: Storage&): Payload& { return value.value; }
+        install(value: Payload&) { value.owned = new Resource(); }
+        test(): int {
+            constructs = 0; parentDrops = 0; resourceDrops = 0;
+            result: int = 0;
+            {
+                storage: Storage;
+                install(borrow(storage));
+                if (constructs != 0 || parentDrops != 0 || resourceDrops != 0) result = -1;
+                storage.number = 7;
+                if (constructs != 0 || parentDrops != 0 || resourceDrops != 1) result = -2;
+            }
+            if (constructs != 0 || parentDrops != 0 || resourceDrops != 1) result = -3;
+            {
+                storage: Storage;
+                install(borrow(storage));
+                if (constructs != 0 || parentDrops != 0 || resourceDrops != 1) result = -4;
+            }
+            if (constructs != 0 || parentDrops != 0 || resourceDrops != 2) result = -5;
+            return result == 0 ? 42 : result;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Copy rejects an escaped owner in a default first struct",
+          "[gen][union][reference][default][struct][owner][copy][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_escaped_default_struct_owner_copy;
+        constructs: int = 0;
+        parentDrops: int = 0;
+        resourceDrops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++resourceDrops; }
+        }
+        struct Payload {
+            owned: Resource!;
+            Payload() { ++constructs; }
+            ~Payload() { ++parentDrops; }
+        }
+        union Storage { value: Payload; number: int; }
+        @ffi::Extern("C")
+        __k_test_disarm_duplicate_union_field_owner(source: Resource!*, copy: Resource!*): int;
+        borrow(value: Storage&): Payload& { return value.value; }
+        install(value: Payload&) { value.owned = new Resource(); }
+        test(): int {
+            constructs = 0; parentDrops = 0; resourceDrops = 0;
+            result: int = 0;
+            {
+                source: Storage;
+                payload: Payload& = borrow(source);
+                install(payload);
+                caught: bool = false;
+                try {
+                    copy: Storage = source;
+                    __k_test_disarm_duplicate_union_field_owner(&payload.owned, &copy.value.owned);
+                    result = -1;
+                }
+                catch (error: FatalError&) { caught = error.getCode() == 0x55434f50; }
+                if (!caught || payload.owned == null || constructs != 0 ||
+                    parentDrops != 0 || resourceDrops != 0) result = -2;
+                payload.owned = null;
+                if (resourceDrops != 1) result = -3;
+            }
+            if (constructs != 0 || parentDrops != 0 || resourceDrops != 1) result = -4;
+            return result == 0 ? 42 : result;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Default aggregate owner cleanup continues after one destructor throws",
+          "[gen][union][reference][default][struct][owner][exceptions][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_default_owner_fields_throw;
+        trace: int = 0;
+        parentDrops: int = 0;
+        struct Resource {
+            id: int;
+            Resource(value: int): id(value) {}
+            ~Resource() {
+                trace = trace * 10 + id;
+                if (id == 2) throw FatalError(933);
+            }
+        }
+        struct Payload {
+            first: Resource!;
+            second: Resource!;
+            Payload() {}
+            ~Payload() { ++parentDrops; }
+        }
+        union Storage { value: Payload; number: int; }
+        borrow(value: Storage&): Payload& { return value.value; }
+        install(value: Payload&) {
+            value.first = new Resource(1);
+            value.second = new Resource(2);
+        }
+        test(): int {
+            trace = 0; parentDrops = 0;
+            {
+                storage: Storage;
+                install(borrow(storage));
+                caught: bool = false;
+                try { storage.number = 7; }
+                catch (error: FatalError&) { caught = error.getCode() == 933; }
+                if (!caught || trace != 21 || parentDrops != 0) return -1;
+                storage.number = 9;
+            }
+            return trace == 21 && parentDrops == 0 ? 42 : -2;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Default aggregate copies preserve scalar fields and owner self assignment",
+          "[gen][union][reference][default][struct][owner][copy][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_default_owner_fields_self;
+        drops: int = 0;
+        parentDrops: int = 0;
+        struct Resource { Resource() {} ~Resource() { ++drops; } }
+        struct Payload {
+            number: int;
+            first: Resource!;
+            second: Resource!;
+            Payload() {}
+            ~Payload() { ++parentDrops; }
+        }
+        union Storage { value: Payload; other: int; }
+        borrow(value: Storage&): Payload& { return value.value; }
+        test(): int {
+            drops = 0; parentDrops = 0;
+            {
+                source: Storage;
+                payload: Payload& = borrow(source);
+                payload.number = 37;
+                copy: Storage = source;
+                if (copy.value.number != 37 || copy.value.first != null ||
+                    copy.value.second != null) return -1;
+                payload.second = new Resource();
+                sourceRef: Storage& = source;
+                source = sourceRef;
+                if (payload.second == null || drops != 0 || parentDrops != 0) return -2;
+                source.other = 7;
+                if (drops != 1 || parentDrops != 0) return -3;
+            }
+            return drops == 1 && parentDrops == 0 ? 42 : -4;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Default aggregate same alternative replacement cleans fields but not the parent",
+          "[gen][union][reference][default][struct][owner][copy][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_default_owner_same_alternative;
+        drops: int = 0;
+        parentDrops: int = 0;
+        copies: int = 0;
+        struct Resource { Resource() {} ~Resource() { ++drops; } }
+        struct Payload {
+            owned: Resource!;
+            Payload() { owned = new Resource(); }
+            Payload(other: const Payload&) { owned = new Resource(); ++copies; }
+            ~Payload() { ++parentDrops; }
+        }
+        union Storage { value: Payload; other: int; }
+        borrow(value: Storage&): Payload& { return value.value; }
+        test(): int {
+            drops = 0; parentDrops = 0; copies = 0;
+            {
+                source: Payload;
+                storage: Storage;
+                payload: Payload& = borrow(storage);
+                payload.owned = new Resource();
+                storage.value = payload;
+                if (drops != 0 || parentDrops != 0 || copies != 0 || payload.owned == null)
+                    return -1;
+                storage.value = source;
+                if (drops != 1 || parentDrops != 0 || copies != 1 || storage.value.owned == null)
+                    return -2;
+                copied: Storage = storage;
+                if (drops != 1 || parentDrops != 0 || copies != 2 || copied.value.owned == null)
+                    return -3;
+            }
+            return drops == 4 && parentDrops == 3 && copies == 2 ? 42 : -4;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Default aggregate copy rechecks owners after destination destruction",
+          "[gen][union][reference][default][struct][owner][copy][reentrant][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_default_owner_copy_reentrant;
+        drops: int = 0;
+        parentDrops: int = 0;
+        struct Resource { Resource() {} ~Resource() { ++drops; } }
+        slot: Resource!* = null;
+        struct Payload {
+            owned: Resource!;
+            Payload() {}
+            ~Payload() { ++parentDrops; }
+        }
+        class Trigger {
+        public:
+            ~Trigger() { if (slot != null) *slot = new Resource(); }
+        }
+        union Storage { value: Payload; trigger: Trigger; }
+        @ffi::Extern("C")
+        __k_test_disarm_duplicate_union_field_owner(source: Resource!*, copy: Resource!*): int;
+        borrow(value: Storage&): Payload& { return value.value; }
+        test(): int {
+            drops = 0; parentDrops = 0;
+            result: int = 0;
+            {
+                source: Storage;
+                payload: Payload& = borrow(source);
+                destination: Storage(Trigger());
+                slot = &payload.owned;
+                caught: bool = false;
+                try {
+                    destination = source;
+                    __k_test_disarm_duplicate_union_field_owner(&payload.owned, &destination.value.owned);
+                    result = -1;
+                }
+                catch (error: FatalError&) { caught = error.getCode() == 0x55434f50; }
+                slot = null;
+                if (!caught || payload.owned == null || drops != 0 || parentDrops != 0) result = -2;
+            }
+            if (drops != 1 || parentDrops != 0) result = -3;
+            return result == 0 ? 42 : result;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Default aggregate copy redispatches a reentrantly changed source",
+          "[gen][union][reference][default][struct][owner][copy][reentrant][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_default_copy_reentrant_tag;
+        drops: int = 0;
+        struct Resource { ~Resource() {} }
+        struct Payload {
+            owned: Resource!;
+            Payload() {}
+            ~Payload() {}
+        }
+        class Trigger {
+        public:
+            ~Trigger() { rewriteSource(); }
+        }
+        union Storage { value: Payload; trigger: Trigger; number: int; }
+        sourcePointer: Storage* = null;
+        rewrite(value: Storage&) { value.number = 33; }
+        rewriteSource() {
+            if (sourcePointer != null) { ++drops; rewrite(*sourcePointer); }
+        }
+        test(): int {
+            drops = 0;
+            result: int = 0;
+            {
+                source: Storage;
+                destination: Storage(Trigger());
+                sourcePointer = &source;
+                destination = source;
+                sourcePointer = null;
+                if (drops != 1 || source.index() != 2 || destination.index() != 2)
+                    result = -1;
+                else if (destination.number != 33) result = -2;
+            }
+            return result == 0 && drops == 1 ? 42 : -3;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Union copy reads reentrantly changed default fields without reevaluating source",
+          "[gen][union][copy][default][reentrant][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_copy_reentrant_field;
+        drops: int = 0;
+        parentDrops: int = 0;
+        evaluations: int = 0;
+        field: int* = null;
+        struct Payload {
+            number: int;
+            Payload() {}
+            ~Payload() { ++parentDrops; }
+        }
+        class Trigger {
+        public:
+            ~Trigger() {
+                if (field != null) { ++drops; *field = 37; }
+            }
+        }
+        union Storage { value: Payload; trigger: Trigger; }
+        sourcePointer: Storage* = null;
+        getSource(): Storage& { ++evaluations; return *sourcePointer; }
+        test(): int {
+            drops = 0; parentDrops = 0; evaluations = 0;
+            {
+                source: Storage;
+                destination: Storage(Trigger());
+                field = &source.value.number;
+                sourcePointer = &source;
+                destination = getSource();
+                field = null; sourcePointer = null;
+                if (drops != 1 || evaluations != 1 || parentDrops != 0 ||
+                    source.value.number != 37 || destination.value.number != 37) return -1;
+                destination = destination;
+                copy: Storage = destination;
+                if (copy.value.number != 37 || drops != 1 || parentDrops != 0) return -2;
+            }
+            return drops == 1 && parentDrops == 0 ? 42 : -3;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Union copy redispatches when the first source payload becomes live",
+          "[gen][union][copy][default][lifecycle][reentrant][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_copy_reentrant_lifecycle;
+        copies: int = 0;
+        payloadDrops: int = 0;
+        triggerDrops: int = 0;
+        struct Payload {
+            number: int;
+            Payload(value: int): number(value) {}
+            Payload(other: const Payload&): number(other.number) { ++copies; }
+            ~Payload() { ++payloadDrops; }
+        }
+        class Trigger {
+        public:
+            ~Trigger() { replaceSource(); }
+        }
+        union Storage { value: Payload; trigger: Trigger; }
+        sourcePointer: Storage* = null;
+        seedPointer: Payload* = null;
+        activate(value: Storage&, seed: Payload&) { value.value = seed; }
+        replaceSource() {
+            if (sourcePointer != null) {
+                ++triggerDrops;
+                activate(*sourcePointer, *seedPointer);
+            }
+        }
+        test(): int {
+            copies = 0; payloadDrops = 0; triggerDrops = 0;
+            {
+                seed: Payload(33);
+                source: Storage;
+                destination: Storage(Trigger());
+                sourcePointer = &source; seedPointer = &seed;
+                destination = source;
+                sourcePointer = null; seedPointer = null;
+                if (copies != 2 || payloadDrops != 0 || triggerDrops != 1 ||
+                    source.value.number != 33 || destination.value.number != 33) return -1;
+                destination = destination;
+                if (copies != 2 || payloadDrops != 0 || triggerDrops != 1) return -2;
+            }
+            return copies == 2 && payloadDrops == 3 && triggerDrops == 1 ? 42 : -3;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Inherited union copy redispatches a reentrantly changed source",
+          "[gen][union][inheritance][copy][reentrant][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_copy_reentrant_inherited;
+        drops: int = 0;
+        class Trigger {
+        public:
+            ~Trigger() { replaceSource(); }
+        }
+        union Base { number: int; intermediate: byte; trigger: Trigger; }
+        union Derived : Base { special: int; }
+        sourcePointer: Derived* = null;
+        activate(value: Derived&) { value.special = 33; }
+        replaceSource() {
+            if (sourcePointer != null) { ++drops; activate(*sourcePointer); }
+        }
+        test(): int {
+            drops = 0;
+            {
+                source: Derived;
+                source.intermediate = 7;
+                destination: Derived(Trigger());
+                sourcePointer = &source;
+                destination = source;
+                sourcePointer = null;
+                if (drops != 1 || source.index() != 3 || destination.index() != 3)
+                    return -1;
+                if (destination.special != 33) return -2;
+                destination = destination;
+                if (drops != 1 || destination.special != 33) return -3;
+            }
+            return drops == 1 ? 42 : -4;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Throwing destination cleanup leaves union copy inactive",
+          "[gen][union][copy][exceptions][reentrant][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_copy_reentrant_throw;
+        drops: int = 0;
+        class Trigger {
+        public:
+            ~Trigger() { replaceAndFail(); }
+        }
+        union Storage { number: int; trigger: Trigger; }
+        sourcePointer: Storage* = null;
+        rewrite(value: Storage&) { value.number = 33; }
+        replaceAndFail() {
+            if (sourcePointer != null) {
+                ++drops;
+                rewrite(*sourcePointer);
+                throw FatalError(934);
+            }
+        }
+        test(): int {
+            drops = 0;
+            {
+                source: Storage;
+                source.number = 5;
+                destination: Storage(Trigger());
+                sourcePointer = &source;
+                caught: bool = false;
+                try { destination = source; }
+                catch (error: FatalError&) { caught = error.getCode() == 934; }
+                sourcePointer = null;
+                if (!caught || drops != 1 || source.number != 33) return -1;
+                destination.number = 9;
+                destination = source;
+                if (drops != 1 || destination.number != 33) return -2;
+            }
+            return drops == 1 ? 42 : -3;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Default nested union aliases preserve copy and replacement lifetimes",
+          "[gen][union][reference][default][copy][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_nested_default_copy;
+        constructs: int = 0;
+        copies: int = 0;
+        drops: int = 0;
+        class Tracked {
+        public:
+            Tracked() { ++constructs; }
+            Tracked(other: const Tracked&) { ++copies; }
+            ~Tracked() { ++drops; }
+        }
+        union Inner { empty: int; value: Tracked; }
+        union Middle { value: Inner; number: int; }
+        union Outer { value: Middle; number: int; }
+        borrow(value: Outer&): Inner& { return value.value.value; }
+        test(): int {
+            constructs = 0; copies = 0; drops = 0;
+            {
+                source: Tracked;
+                outer: Outer;
+                emptyCopy: Outer = outer;
+                innerRef: Inner& = borrow(outer);
+                if (innerRef.empty != 0 || constructs != 1 || copies != 0) return -1;
+                innerRef.value = source;
+                copied: Outer = outer;
+                if (copies != 2 || drops != 0) return -2;
+                copied.number = 1;
+                if (drops != 1) return -3;
+                replacement: Middle;
+                replacement.number = 17;
+                outer.value = outer.value;
+                if (drops != 1) return -4;
+                outer.value = replacement;
+                if (drops != 2 || outer.value.number != 17) return -5;
+            }
+            return constructs == 1 && copies == 2 && drops == 3 ? 42 : -6;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Default nested union alias preserves ownership on failed copy",
+          "[gen][union][reference][default][copy][owner][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_nested_default_owner_copy;
+        drops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++drops; }
+        }
+        union Inner { empty: int; owned: Resource!; }
+        union Outer { value: Inner; number: int; }
+        borrow(value: Outer&): Inner& { return value.value; }
+        test(): int {
+            drops = 0;
+            {
+                outer: Outer;
+                emptyCopy: Outer = outer;
+                innerRef: Inner& = borrow(outer);
+                innerRef.owned = new Resource();
+                caught: bool = false;
+                try { forbidden: Outer = outer; }
+                catch (error: FatalError&) { caught = error.getCode() == 0x55434f50; }
+                if (!caught || drops != 0) return -1;
+                outer.number = 7;
+                if (drops != 1) return -2;
+            }
+            return drops == 1 ? 42 : -3;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Default nested union aliases leave failed transitions inactive",
+          "[gen][union][reference][default][exceptions][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_nested_default_throw;
+        fail: bool = false;
+        drops: int = 0;
+        class Tracked {
+        public:
+            Tracked() {}
+            Tracked(other: const Tracked&) {
+                if (fail) throw FatalError(921);
+            }
+            operator=(other: const Tracked&): Tracked& { return this; }
+            ~Tracked() { ++drops; }
+        }
+        union Inner { empty: int; first: Tracked; second: Tracked; }
+        union Outer { value: Inner; number: int; }
+        borrow(value: Outer&): Inner& { return value.value; }
+        test(): int {
+            fail = false; drops = 0;
+            {
+                source: Tracked;
+                outer: Outer;
+                innerRef: Inner& = borrow(outer);
+                innerRef.first = source;
+                fail = true;
+                caught: bool = false;
+                try { copied: Outer = outer; }
+                catch (error: FatalError&) { caught = error.getCode() == 921; }
+                if (!caught || drops != 0) return -1;
+                caught = false;
+                try { innerRef.second = source; }
+                catch (error: FatalError&) { caught = error.getCode() == 921; }
+                if (!caught) return -2;
+                if (drops != 1) return -3;
+                if (outer.value.index() == Inner::Kind::first ||
+                    outer.value.index() == Inner::Kind::second) return -4;
+                outer.number = 7;
+                if (drops != 1) return -5;
+            }
+            return drops == 2 ? 42 : -6;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Default nested union retains its payload when RHS evaluation throws",
+          "[gen][union][reference][default][exceptions][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_nested_default_rhs_throw;
+        fail: bool = false;
+        drops: int = 0;
+        class Tracked {
+        public:
+            Tracked() {}
+            Tracked(other: const Tracked&) {
+                if (fail) throw FatalError(923);
+            }
+            ~Tracked() { ++drops; }
+        }
+        union Inner { empty: int; first: Tracked; second: Tracked; }
+        union Outer { value: Inner; number: int; }
+        borrow(value: Outer&): Inner& { return value.value; }
+        test(): int {
+            fail = false; drops = 0;
+            {
+                source: Tracked;
+                outer: Outer;
+                innerRef: Inner& = borrow(outer);
+                innerRef.first = source;
+                fail = true;
+                caught: bool = false;
+                try { innerRef.second = source; }
+                catch (error: FatalError&) { caught = error.getCode() == 923; }
+                if (!caught) return -1;
+                if (drops != 0 || outer.value.index() != Inner::Kind::first) return -2;
+                outer.number = 7;
+                if (drops != 1) return -3;
+            }
+            return drops == 2 ? 42 : -4;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Nested union activation enforces the selected copy exception contract",
+          "[gen][union][reference][exceptions][contract][regression]") {
+    const std::string declarations = R"K(
+        module union_nested_activation_contract;
+        class CopyError : public Exception {}
+        class Payload {
+        public:
+            Payload() {}
+            Payload(other: const Payload&) throws(CopyError) {}
+            operator=(other: const Payload&): Payload& { return this; }
+        }
+        union Inner { empty: int; value: Payload; }
+        union Outer { value: Inner; number: int; }
+    )K";
+    auto compile = [&](const std::string& body) {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        compiler->set_file_resolver(resolver);
+        compiler->parse_source("union_nested_activation_contract.k", declarations + body, false, false);
+    };
+    auto uncaught = Catch::Matchers::Predicate<k::log::compiler_error>(
+        [](const auto& error) {
+            return error.get_diagnostic().message.find("neither caught nor declared") != std::string::npos;
+        }, "rejects an unhandled copy constructor exception");
+    REQUIRE_NOTHROW(compile(R"K(
+        activate(outer: Outer&, value: const Payload&) throws(CopyError) {
+            innerRef: Inner& = outer.value;
+            innerRef.value = value;
+        }
+    )K"));
+    REQUIRE_THROWS_MATCHES(compile(R"K(
+        activate(outer: Outer&, value: const Payload&) throws() {
+            innerRef: Inner& = outer.value;
+            innerRef.value = value;
+        }
+    )K"), k::log::compiler_error, uncaught);
+}
+
+TEST_CASE("Default nested union cleanup disarms before a throwing destructor",
+          "[gen][union][reference][default][exceptions][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_nested_default_throwing_drop;
+        failDrop: bool = false;
+        drops: int = 0;
+        class Tracked {
+        public:
+            Tracked() {}
+            Tracked(other: const Tracked&) {}
+            ~Tracked() {
+                ++drops;
+                if (failDrop) throw FatalError(922);
+            }
+        }
+        union Inner { empty: int; value: Tracked; }
+        union Outer { value: Inner; number: int; }
+        borrow(value: Outer&): Inner& { return value.value; }
+        test(): int {
+            failDrop = false; drops = 0;
+            {
+                source: Tracked;
+                outer: Outer;
+                innerRef: Inner& = borrow(outer);
+                innerRef.value = source;
+                failDrop = true;
+                caught: bool = false;
+                try { outer.number = 7; }
+                catch (error: FatalError&) { caught = error.getCode() == 922; }
+                failDrop = false;
+                if (!caught || drops != 1) return -1;
+                outer.number = 8;
+                if (drops != 1) return -2;
+            }
+            return drops == 2 ? 42 : -3;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Borrowing a default nested class alternative does not construct it",
+          "[gen][union][reference][default][class][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_nested_default_class_borrow;
+        constructs: int = 0;
+        drops: int = 0;
+        class Tracked {
+        public:
+            Tracked() { ++constructs; }
+            Tracked(other: const Tracked&) { ++constructs; }
+            ~Tracked() { ++drops; }
+        }
+        union Inner { value: Tracked; number: int; }
+        union Outer { value: Inner; number: int; }
+        borrow(value: Outer&): Inner& { return value.value; }
+        test(): int {
+            constructs = 0; drops = 0;
+            {
+                outer: Outer;
+                innerRef: Inner& = borrow(outer);
+                valueRef: Tracked& = innerRef.value;
+                copied: Outer = outer;
+                if (outer.index() != 0 || constructs != 0 || drops != 0) return -1;
+            }
+            return constructs == 0 && drops == 0 ? 42 : -2;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("First nested class alternatives activate and copy through escaped references",
+          "[gen][union][nested-default-expanded][class][copy][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_expanded_default_class;
+        constructs: int = 0;
+        copies: int = 0;
+        drops: int = 0;
+        class Value {
+        public:
+            Value() { ++constructs; }
+            Value(other: const Value&) { ++copies; }
+            operator=(other: const Value&): Value& { return this; }
+            ~Value() { ++drops; }
+        }
+        union Inner { value: Value; number: int; }
+        union Middle { value: Inner; number: int; }
+        union Outer { value: Middle; number: int; }
+        borrow(value: Outer&): Inner& { return value.value.value; }
+        test(): int {
+            constructs = 0; copies = 0; drops = 0;
+            {
+                cold: Outer;
+                coldCopy: Outer = cold;
+                innerRef: Inner& = borrow(cold);
+                valueRef: Value& = innerRef.value;
+                if (constructs != 0 || copies != 0 || drops != 0) return -1;
+                source: Value;
+                innerRef.value = source;
+                copied: Outer = cold;
+                readonly: const Outer& = cold;
+                constCopy: Outer = readonly;
+                if (constructs != 1 || copies != 3 || drops != 0) return -2;
+                cold.number = 1;
+                if (drops != 1) return -3;
+            }
+            return constructs == 1 && copies == 3 && drops == 4 ? 42 : -4;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("First nested owner alternatives preserve default copies and reject live owners",
+          "[gen][union][nested-default-expanded][owner][copy][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_expanded_default_owner;
+        drops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++drops; }
+        }
+        union Inner { owned: Resource!; number: int; }
+        union Middle { value: Inner; number: int; }
+        union Outer { value: Middle; number: int; }
+        borrow(value: Outer&): Resource!& { return value.value.value.owned; }
+        test(): int {
+            drops = 0;
+            {
+                outer: Outer;
+                copied: Outer = outer;
+                readonly: const Outer& = outer;
+                constCopy: Outer = readonly;
+                if (copied.value.value.owned != null || drops != 0) return -1;
+                standalone: Inner;
+                caught: bool = false;
+                try { directCopy: Inner = standalone; }
+                catch (error: FatalError&) { caught = error.getCode() == 0x55434f50; }
+                if (!caught) return -2;
+                ownerRef: Resource!& = borrow(outer);
+                ownerRef = new Resource();
+                caught = false;
+                try { forbidden: Outer = outer; }
+                catch (error: FatalError&) { caught = error.getCode() == 0x55434f50; }
+                if (!caught || drops != 0 || ownerRef == null) return -3;
+                outer.value.value.owned = new Resource();
+                if (drops != 1) return -4;
+                outer.number = 7;
+                if (drops != 2) return -5;
+                liveNull: Outer;
+                liveNull.value.value.owned = null;
+                caught = false;
+                try { forbiddenNull: Outer = liveNull; }
+                catch (error: FatalError&) { caught = error.getCode() == 0x55434f50; }
+                if (!caught) return -6;
+            }
+            return drops == 2 ? 42 : -7;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("First nested class copies preserve the source on a throwing copy",
+          "[gen][union][nested-default-expanded][class][exceptions][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_expanded_default_class_throw;
+        fail: bool = false;
+        drops: int = 0;
+        class Value {
+        public:
+            Value() {}
+            Value(other: const Value&) { if (fail) throw FatalError(921); }
+            operator=(other: const Value&): Value& { return this; }
+            ~Value() { ++drops; }
+        }
+        union Inner { value: Value; number: int; }
+        union Outer { value: Inner; number: int; }
+        test(): int {
+            fail = false; drops = 0;
+            {
+                source: Value;
+                outer: Outer;
+                outer.value.value = source;
+                fail = true;
+                caught: bool = false;
+                try { copied: Outer = outer; }
+                catch (error: FatalError&) { caught = error.getCode() == 921; }
+                fail = false;
+                if (!caught || drops != 0 || outer.value.index() != Inner::Kind::value) return -1;
+                outer.number = 7;
+                if (drops != 1) return -2;
+            }
+            return drops == 2 ? 42 : -3;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Indirect first nested owner cleanup disarms before throwing",
+          "[gen][union][nested-default-expanded][owner][exceptions][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_expanded_default_owner_throw;
+        fail: bool = false;
+        drops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++drops; if (fail) throw FatalError(922); }
+        }
+        union Inner { owned: Resource!; number: int; }
+        union Outer { value: Inner; number: int; }
+        borrow(value: Outer&): Resource!& { return value.value.owned; }
+        test(): int {
+            fail = false; drops = 0;
+            {
+                outer: Outer;
+                ownerRef: Resource!& = borrow(outer);
+                ownerRef = new Resource();
+                fail = true;
+                caught: bool = false;
+                try { outer.number = 7; }
+                catch (error: FatalError&) { caught = error.getCode() == 922; }
+                fail = false;
+                if (!caught || drops != 1) return -1;
+                outer.number = 8;
+                if (drops != 1) return -2;
+            }
+            return drops == 1 ? 42 : -3;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("First nested callable alternatives preserve empty defaults and drop live closures",
+          "[gen][union][nested-default-expanded][callable][copy][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_expanded_default_callable;
+        drops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++drops; }
+        }
+        answer(): int { return 42; }
+        alias UnionTask: !():int;
+        union Inner { callback: UnionTask; number: int; }
+        union Outer { value: Inner; number: int; }
+        test(): int {
+            drops = 0;
+            {
+                outer: Outer;
+                copied: Outer = outer;
+                emptyCallback: ?():int = copied.value.callback;
+                if (emptyCallback != null) return -1;
+                standalone: Inner;
+                caught: bool = false;
+                try { directCopy: Inner = standalone; }
+                catch (error: FatalError&) { caught = error.getCode() == 0x55434f50; }
+                if (!caught) return -2;
+                liveNull: Outer;
+                liveNull.value.callback = null;
+                caught = false;
+                try { forbiddenNull: Outer = liveNull; }
+                catch (error: FatalError&) { caught = error.getCode() == 0x55434f50; }
+                if (!caught) return -3;
+                outer.value.callback = answer;
+                caught = false;
+                try { forbidden: Outer = outer; }
+                catch (error: FatalError&) { caught = error.getCode() == 0x55434f50; }
+                activeCallback: &():int = outer.value.callback;
+                if (!caught || activeCallback() != 42) return -4;
+                outer.number = 1;
+                other: Outer;
+                resource: Resource! = new Resource();
+                task: !():int = [resource](): int { return 42; };
+                other.value.callback = task;
+                if (resource != null || task != null || drops != 0) return -5;
+                other.number = 2;
+                if (drops != 1) return -6;
+            }
+            return drops == 1 ? 42 : -7;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Nested union alternative assignment moves owning temporaries",
+          "[gen][union][nested-default-expanded][owner][move][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_expanded_nested_move;
+        drops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++drops; }
+        }
+        union Inner { owned: Resource!; number: int; }
+        union Outer { value: Inner; number: int; }
+        test(): int {
+            drops = 0;
+            {
+                outer: Outer;
+                outer.value = Inner(new Resource());
+                if (outer.value.owned == null || drops != 0) return -1;
+                outer.value = Inner(new Resource());
+                if (outer.value.owned == null || drops != 1) return -2;
+                outer.number = 3;
+                outer.value = Inner(new Resource());
+                if (outer.value.owned == null || drops != 2) return -3;
+            }
+            return drops == 3 ? 42 : -4;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Nested union temporary is cleaned when replacing its payload throws",
+          "[gen][union][nested-default-expanded][move][exceptions][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_expanded_nested_move_throw;
+        oldDrops: int = 0;
+        resourceDrops: int = 0;
+        class Old {
+        public:
+            Old() {}
+            ~Old() { ++oldDrops; throw FatalError(929); }
+        }
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++resourceDrops; }
+        }
+        union Inner { empty: int; old: Old; owned: Resource!; }
+        union Outer { value: Inner; number: int; }
+        test(): int {
+            oldDrops = 0; resourceDrops = 0;
+            {
+                outer: Outer;
+                outer.value = Inner(Old());
+                caught: bool = false;
+                try { outer.value = Inner(new Resource()); }
+                catch (error: FatalError&) { caught = error.getCode() == 929; }
+                if (!caught || oldDrops != 1 || resourceDrops != 1) return -1;
+                outer.number = 7;
+                if (oldDrops != 1 || resourceDrops != 1) return -2;
+            }
+            return oldDrops == 1 && resourceDrops == 1 ? 42 : -3;
         }
     )K");
     REQUIRE(jit);

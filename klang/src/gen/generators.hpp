@@ -687,6 +687,8 @@ public:
 
     llvm::Value* process_unary_expression(unary_expression&);
     std::pair<llvm::Value*,llvm::Value*> process_binary_expression(binary_expression&);
+    place_result evaluate_assignment_place(expression&);
+    std::pair<place_result, llvm::Value*> process_assignment_operands(assignation_expression&);
 
     /**
      * Generate a function call for a binary operator overload.
@@ -960,9 +962,11 @@ public:
     void activate_default_union_alternative(llvm::Value* storage, union_type_def& udef);
     void emit_union_copy(llvm::Value* dest, llvm::Value* source, union_type_def& dest_def,
                          union_type_def& source_def,
-                         bool destroy_dest_first, bool source_const);
+                         bool destroy_dest_first, bool source_const,
+                         llvm::Value* allow_empty_default_owner = nullptr);
     bool emit_union_payload_copy(llvm::Value* dest, llvm::Value* source,
-                                 const std::shared_ptr<type>& payload_type, bool source_const);
+                                 const std::shared_ptr<type>& payload_type, bool source_const,
+                                 llvm::Value* allow_empty_default_owner = nullptr);
     bool emit_scalar_union_wrapper_copy(llvm::Value* dest, llvm::Value* source,
                                         const std::shared_ptr<aggregate>& wrapper,
                                         bool destroy_dest_first, bool source_const,

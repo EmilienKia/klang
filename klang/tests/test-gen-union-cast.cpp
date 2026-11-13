@@ -16,7 +16,312 @@
  * limitations under the License.
  */
 #include <catch2/catch_all.hpp>
+#include <cstring>
+
 #include "helpers.hpp"
+
+extern "C" void __k_test_clear_duplicate_union_owner(void* slot, void* extracted) {
+    void* stored = nullptr;
+    std::memcpy(&stored, slot, sizeof(stored));
+    if (stored == extracted) {
+        // Avoid double deletion when the regression duplicates the owner.
+        void* empty = nullptr;
+        std::memcpy(slot, &empty, sizeof(empty));
+    }
+}
+
+TEST_CASE("Union owner value cast transfers the active owner slot",
+          "[gen][union][cast][owner][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module union_owner_value_cast;
+        drops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++drops; }
+        }
+        union Storage { empty: byte; value: Resource!; }
+        @ffi::Extern("C")
+        __k_test_clear_duplicate_union_owner(slot: Resource!*, value: Resource*);
+
+        test(): int {
+            drops = 0;
+            result: int = 0;
+            {
+                source: Storage(new Resource());
+                {
+                    value: Resource! = (Resource!) source;
+                    if (value == null) result = -2;
+                    else if (source.value != null) {
+                        __k_test_clear_duplicate_union_owner(&source.value, (Resource*) value);
+                        result = -1;
+                    }
+                    if (drops != 0 && result == 0) result = -3;
+                    if (source.index() != 1 && result == 0) result = -6;
+                }
+                if (drops != 1 && result == 0) result = -4;
+            }
+            if (drops != 1 && result == 0) result = -5;
+            return result == 0 ? 42 : result;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Union owner argument adaptation transfers the active owner slot",
+          "[gen][union][cast][owner][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module union_owner_argument;
+        drops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++drops; }
+        }
+        union Storage { empty: byte; value: Resource!; }
+        @ffi::Extern("C")
+        __k_test_clear_duplicate_union_owner(slot: Resource!*, value: Resource*);
+
+        consume(value: Resource!, source: Storage&): int {
+            if (value == null) return -2;
+            if (source.value != null) {
+                __k_test_clear_duplicate_union_owner(&source.value, (Resource*) value);
+                return -1;
+            }
+            if (drops != 0) return -3;
+            if (source.index() != 1) return -6;
+            return 0;
+        }
+        test(): int {
+            drops = 0;
+            result: int = 0;
+            {
+                source: Storage(new Resource());
+                result = consume(source, source);
+                if (drops != 1 && result == 0) result = -4;
+            }
+            if (drops != 1 && result == 0) result = -5;
+            return result == 0 ? 42 : result;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Union owner extraction checks once and preserves borrowed and null slots",
+          "[gen][union][cast][owner][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module union_owner_extract_edges;
+        drops: int = 0;
+        evaluations: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++drops; }
+        }
+        union Storage { empty: byte; value: Resource!; }
+        @ffi::Extern("C")
+        __k_test_clear_duplicate_union_owner(slot: Resource!*, value: Resource*);
+        select(source: Storage&): Storage& { ++evaluations; return source; }
+        inspect(value: Resource!&): bool { return value != null; }
+        consume(value: Resource!, source: Storage&): int {
+            if (value == null) return -2;
+            if (source.value != null) {
+                __k_test_clear_duplicate_union_owner(&source.value, (Resource*) value);
+                return -1;
+            }
+            return evaluations == 1 && source.index() == 1 ? 0 : -3;
+        }
+        empty(value: Resource!, source: Storage&): bool {
+            return value == null && source.value == null && source.index() == 1;
+        }
+        mismatch(): int {
+            source: Storage;
+            source.empty = 17;
+            if (value: Resource! = (Resource!) source) {
+                return -1;
+            }
+            return source.index() == 0 && source.empty == 17 ? 42 : -2;
+        }
+        test(): int {
+            drops = 0;
+            evaluations = 0;
+            result: int = 0;
+            {
+                source: Storage(new Resource());
+                if (!inspect((Resource!&) source) || source.value == null) return -4;
+                {
+                    value: Resource! = (Resource!) select(source);
+                    if (value == null) result = -5;
+                    else if (source.value != null) {
+                        __k_test_clear_duplicate_union_owner(&source.value, (Resource*) value);
+                        result = -1;
+                    }
+                    if (evaluations != 1 && result == 0) result = -6;
+                }
+            }
+            if (result != 0 || drops != 1) return -7;
+            evaluations = 0;
+            {
+                source: Storage(new Resource());
+                result = consume(select(source), source);
+            }
+            if (result != 0 || drops != 2) return -8;
+            {
+                noValue: Resource! = null;
+                source: Storage(noValue);
+                value: Resource! = (Resource!) source;
+                if (value != null || source.value != null || source.index() != 1) return -9;
+                if (!empty(source, source)) return -10;
+            }
+            return drops == 2 ? 42 : -11;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    auto mismatch = jit->lookup_symbol<int (*)()>("mismatch");
+    REQUIRE(fn);
+    REQUIRE(mismatch);
+    CHECK(fn() == 42);
+    CHECK(mismatch() == 42);
+}
+
+TEST_CASE("Union owner if-let cleans up on early return",
+          "[gen][union][cast][owner][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module union_owner_if_let_return;
+        drops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++drops; }
+        }
+        union Storage { empty: byte; value: Resource!; }
+        @ffi::Extern("C")
+        __k_test_clear_duplicate_union_owner(slot: Resource!*, value: Resource*);
+        take(): int {
+            source: Storage(new Resource());
+            if (value: Resource! = (Resource!) source) {
+                if (source.value != null) {
+                    __k_test_clear_duplicate_union_owner(&source.value, (Resource*) value);
+                    return -1;
+                }
+                return 42;
+            }
+            return -2;
+        }
+        test(): int {
+            drops = 0;
+            result: int = take();
+            return result == 42 && drops == 1 ? 42 : -3;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Union owner extraction transfers temporary and returned union payloads",
+          "[gen][union][cast][owner][temporary][regression]") {
+    const bool optimize = GENERATE(false, true);
+    auto jit = gen_jit(R"K(
+        module union_owner_extract_temporary;
+        drops: int = 0;
+        evaluations: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() {
+                if (destination != null)
+                    __k_test_clear_duplicate_union_owner(&destination, (Resource*) destination);
+                ++drops;
+            }
+        }
+        union Storage { empty: byte; value: Resource!; }
+        destination: Resource!;
+        @ffi::Extern("C")
+        __k_test_clear_duplicate_union_owner(slot: Resource!*, value: Resource*);
+        make(): Storage {
+            ++evaluations;
+            return Storage(new Resource());
+        }
+        consume(value: Resource!) { destination = value; }
+        test(): int {
+            drops = 0;
+            evaluations = 0;
+            destination = (Resource!) Storage(new Resource());
+            if (destination == null || drops != 0) return -1;
+            delete destination;
+            if (drops != 1) return -2;
+            consume(Storage(new Resource()));
+            if (destination == null || drops != 1) return -3;
+            delete destination;
+            if (drops != 2) return -4;
+            destination = (Resource!) make();
+            if (destination == null || drops != 2 || evaluations != 1) return -5;
+            delete destination;
+            if (drops != 3) return -6;
+            consume(make());
+            if (destination == null || drops != 3 || evaluations != 2) return -7;
+            delete destination;
+            return drops == 4 ? 42 : -8;
+        }
+    )K", false, optimize);
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Union owner extraction respects const bindings",
+          "[gen][union][cast][owner][const][regression]") {
+    const std::string declarations = R"K(
+        module union_owner_extract_const;
+        class Resource {}
+        union Storage { empty: byte; value: Resource!; }
+        union Frozen { empty: byte; const value: Resource!; }
+        union ConstPointee { empty: byte; value: const Resource!; }
+        consume(value: Resource!) {}
+        consumeConst(value: const Resource!) {}
+    )K";
+    auto immutable = Catch::Matchers::Predicate<k::log::compiler_error>(
+        [](const auto& error) {
+            return error.get_diagnostic().message.find(
+                "Cannot move owner alternative") != std::string::npos;
+        }, "rejects moving an owner out of a const union or alternative");
+    auto compile = [&](const std::string& body) {
+        return gen_jit_throws(declarations + body);
+    };
+    REQUIRE_THROWS_MATCHES(compile(R"K(
+        test(source: const Storage&) { value: Resource! = (Resource!) source; }
+    )K"), k::log::compiler_error, immutable);
+    REQUIRE_THROWS_MATCHES(compile(R"K(
+        test(source: const Storage&) { consume(source); }
+    )K"), k::log::compiler_error, immutable);
+    REQUIRE_THROWS_MATCHES(compile(R"K(
+        test(source: Frozen&) { value: Resource! = (Resource!) source; }
+    )K"), k::log::compiler_error, immutable);
+    REQUIRE_THROWS_MATCHES(compile(R"K(
+        test(source: Frozen&) { consume(source); }
+    )K"), k::log::compiler_error, immutable);
+    REQUIRE_THROWS_MATCHES(compile(R"K(
+        test(source: const Storage*) { value: Resource! = (Resource!) source; }
+    )K"), k::log::compiler_error, immutable);
+    auto jit = compile(R"K(
+        test(source: ConstPointee&) { consumeConst(source); }
+    )K");
+    REQUIRE(jit);
+}
 
 TEST_CASE("Union value casts copy their alternative while references borrow",
           "[gen][union][cast][copy][regression]") {

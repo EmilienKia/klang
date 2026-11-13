@@ -310,6 +310,12 @@ cr : const int& = (const int&) v; // Cast by const reference
 - **Ambiguity Rule**: If multiple alternatives share the exact same type, casting to that type
   is rejected at compile-time (`ERR_UNION_CAST_AMBIGUOUS`). Explicit member access (`v.alt`)
   must be used instead.
+- **Owner value**: extracting a `T!` alternative transfers its owner and sets the
+  source alternative to `null`, while retaining the active discriminant. This
+  applies to explicit value casts and implicit argument adaptation, including
+  temporary unions. A `const` union or `const` alternative cannot be consumed
+  this way. An owner of a const pointee remains movable from a mutable slot.
+  Reference and observer conversions borrow instead of transferring ownership.
 
 ### 6.2 Implicit Type Adaptation
 

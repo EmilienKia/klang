@@ -61,6 +61,26 @@ bool is_generic_erasure_pair(const std::shared_ptr<type>& a, const std::shared_p
 
 } // anonymous namespace
 
+void type_reference_resolver::check_union_owner_extraction(
+    const std::shared_ptr<expression>& source, const union_alternative& alternative) {
+    auto source_type = type::canonical(source->get_type());
+    if (type::is_reference(source_type)) {
+        source_type = type::canonical(source_type->get_subtype());
+    }
+    auto bare_source = type::remove_const(source_type);
+    bool const_union = type::is_const(source_type);
+    if (type::is_pointer(bare_source) || type::is_link(bare_source) || type::is_view(bare_source)) {
+        const_union = type::is_const(type::canonical(bare_source->get_subtype()));
+    }
+    if (const_union || alternative.is_const ||
+        type::is_const(type::canonical(alternative.resolved_type))) {
+        throw_error(static_cast<unsigned int>(k::diag::operator_diag::ERR_ASSIGN_TO_CONST),
+            source->first_lexeme(),
+            "Cannot move owner alternative '{}' from a const union or const alternative",
+            {alternative.name});
+    }
+}
+
 
 // ── adapt_callable_type ──────────────────────────────────────────────────
 
@@ -213,6 +233,7 @@ type_reference_resolver::adapt_callable_type(
                                                        : callable_bind_expression::kind::free_function)
                             : callable_bind_expression::kind::bound_method,
                         fn);
+                    bind->set_ast_expression(expr->get_ast_expression());
                     bind->set_type(tgt_frt);
                     return bind;
                 }
@@ -949,6 +970,9 @@ type_reference_resolver::adapt_from_reference(
                     }
                 }
                 if (matches.size() == 1) {
+                    if (type::is_owner(type::remove_const(type::canonical(type_nc)))) {
+                        check_union_owner_extraction(expr, *matches[0]);
+                    }
                     if (!type::is_reference(type_nc)
                         && !std::dynamic_pointer_cast<temporary_construction_expression>(expr)) {
                         auto tgt_st = std::dynamic_pointer_cast<struct_type>(bare_tgt);
@@ -1401,6 +1425,9 @@ type_reference_resolver::adapt_primitive_or_struct_type(
                         }
                     }
                     if (matches.size() == 1) {
+                        if (type::is_owner(type::remove_const(type::canonical(type_nc)))) {
+                            check_union_owner_extraction(expr, *matches[0]);
+                        }
                         auto cast = cast_expression::make_shared(expr, type_nc, true);
                         cast->set_type(type_nc);
                         return cast;
