@@ -3232,6 +3232,30 @@ bool type_reference_resolver::types_match_array_const_compatible(
     return false;
 }
 
+type_reference_resolver::fixed_array_reference_match
+type_reference_resolver::match_fixed_array_reference(
+        const std::shared_ptr<type>& src_sub,
+        const std::shared_ptr<type>& tgt_sub) {
+    auto src = std::dynamic_pointer_cast<sized_array_type>(type::remove_const(src_sub));
+    auto tgt = std::dynamic_pointer_cast<sized_array_type>(type::remove_const(tgt_sub));
+    if (!src || !tgt) return fixed_array_reference_match::not_applicable;
+
+    auto src_elem = src->get_subtype();
+    auto tgt_elem = tgt->get_subtype();
+    if (src->get_size() != tgt->get_size()
+        || !type::are_equal(type::remove_const(src_elem), type::remove_const(tgt_elem))) {
+        return fixed_array_reference_match::incompatible;
+    }
+
+    // Array const qualifies the element slot, not the referent of an addresser.
+    const bool src_readonly = type::is_const(src_sub) || type::is_const(src_elem);
+    const bool tgt_readonly = type::is_const(tgt_sub) || type::is_const(tgt_elem);
+    if (src_readonly && !tgt_readonly) return fixed_array_reference_match::incompatible;
+    return src_readonly == tgt_readonly
+        ? fixed_array_reference_match::exact
+        : fixed_array_reference_match::widening;
+}
+
 type_reference_resolver::cast_weight
 /**
  * Compute the cost (weight) of an implicit conversion from expr's type to the target type.
@@ -3928,6 +3952,12 @@ type_reference_resolver::compute_cast_weight(const std::shared_ptr<expression>& 
             auto tgt_sub = tgt_ref->get_referenced_type();
             auto src_sub_nc = type::remove_const(src_sub);
             auto tgt_sub_nc = type::remove_const(tgt_sub);
+            switch (match_fixed_array_reference(src_sub, tgt_sub)) {
+            case fixed_array_reference_match::incompatible: return CAST_IMPOSSIBLE;
+            case fixed_array_reference_match::exact: return CAST_NONE;
+            case fixed_array_reference_match::widening: return CAST_WIDENING;
+            case fixed_array_reference_match::not_applicable: break;
+            }
             // ref<T> → ref<const T>: allowed if base types are the same (strip const)
             if (src_sub_nc == tgt_sub_nc || type::are_equal(src_sub_nc, tgt_sub_nc)) {
                 // If target has const but source doesn't: widening

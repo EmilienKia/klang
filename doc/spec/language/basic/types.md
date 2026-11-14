@@ -820,6 +820,11 @@ Let `dst : T[N]& = src` where `src` has type `T[M]` or `T[M]&`:
 
 5. **No null** — An array reference is always bound to a valid array.
 
+For fixed-array reference parameters and returns, `const` on the array or on its
+immediate element slots makes those slots readonly. Binding preserves the fixed
+extent and element type and must not discard slot constness. For an array of
+addressers, slot constness is separate from the qualification of the referent.
+
 ---
 
 ### 9.4 Unsized array reference — `T[]` (= `T[]&`)

@@ -209,6 +209,9 @@ Internal representation: `{ uint32 count; T[N] data; }`.
 | `T[]!`         | Owner of a runtime-sized dynamic array          |
 
 - Implicit conversion `T[N]` → `T[]` (sized → unsized): zero-cost.
+- A fixed-array reference parameter or return retains its extent and element
+  type. Array-level or immediate element-slot `const` makes the slots readonly;
+  binding must not discard that qualification or change a slot's referent type.
 - Subscript: `arr[i]` — runtime bounds check (unsigned comparison). Out-of-bounds throws `IndexOutOfBoundsError`.
 - Virtual member `size`: `arr.size` returns `unsigned int` (element count).
 - Indirection arrays: `int+[]`, `int*[]`, `int?[]`, `int![]` are supported. Each element is an address slot.

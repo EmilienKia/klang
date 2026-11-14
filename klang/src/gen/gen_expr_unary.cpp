@@ -525,14 +525,15 @@ void type_reference_resolver::visit_dereference_expression(dereference_expressio
         return;
     }
 
-    // Unwrap one level of reference if the referred-to type is an indirection
+    // Slot constness does not qualify the indirection's referent.
     if(auto ref_type = std::dynamic_pointer_cast<reference_type>(type)) {
         auto sub = ref_type->get_subtype();
-        if(std::dynamic_pointer_cast<pointer_type>(sub) ||
-           std::dynamic_pointer_cast<link_type>(sub) ||
-           std::dynamic_pointer_cast<view_type>(sub) ||
-           std::dynamic_pointer_cast<owner_type>(sub)) {
-            type = sub;
+        auto indirection = type::remove_const(sub);
+        if(std::dynamic_pointer_cast<pointer_type>(indirection) ||
+           std::dynamic_pointer_cast<link_type>(indirection) ||
+           std::dynamic_pointer_cast<view_type>(indirection) ||
+           std::dynamic_pointer_cast<owner_type>(indirection)) {
+            type = indirection;
         } else {
             throw_error(static_cast<unsigned int>(k::diag::type_diag::ERR_DEREF_VOID_POINTER), expr.first_lexeme(),
                 "Cannot dereference a reference to a non-pointer type: "
@@ -540,6 +541,8 @@ void type_reference_resolver::visit_dereference_expression(dereference_expressio
                 "but '{}' is not a pointer-like type",
                 {sub ? sub->to_string() : "?"});
         }
+    } else {
+        type = type::remove_const(type);
     }
 
     if(auto ptr_type = std::dynamic_pointer_cast<pointer_type>(type)) {
@@ -592,11 +595,11 @@ void implementation_generator::visit_dereference_expression(dereference_expressi
     value_result address{nullptr};
     std::shared_ptr<k::model::type> inner_type;
     if(auto ref_type = std::dynamic_pointer_cast<reference_type>(sub_type)) {
-        inner_type = ref_type->get_subtype();
+        inner_type = type::remove_const(ref_type->get_subtype());
         llvm::Type* llvm_inner = _context->get_llvm_type(inner_type);
         address = load_place(require_place(operand, *expr.sub_expr()), llvm_inner, "deref_load");
     } else {
-        inner_type = sub_type;
+        inner_type = type::remove_const(sub_type);
         address = require_value(operand, *expr.sub_expr());
     }
 

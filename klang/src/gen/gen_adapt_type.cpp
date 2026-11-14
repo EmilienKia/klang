@@ -1054,6 +1054,18 @@ type_reference_resolver::adapt_from_reference(
             if (adapted) adapted->set_parent(parent);
             return adapted;
         }
+        switch (match_fixed_array_reference(src_sub, tgt_sub)) {
+        case fixed_array_reference_match::incompatible:
+            return {};
+        case fixed_array_reference_match::exact:
+        case fixed_array_reference_match::widening: {
+            auto cast = cast_expression::make_shared(expr, type_nc);
+            cast->set_type(type_nc);
+            return cast;
+        }
+        case fixed_array_reference_match::not_applicable:
+            break;
+        }
         // Exact match: ref<T> → ref<T> (structural equality, not just pointer identity)
         if (type::are_equal(src_sub_nc, tgt_sub_nc) && type::is_const(src_sub) == type::is_const(tgt_sub)) {
             return expr;

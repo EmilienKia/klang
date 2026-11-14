@@ -343,15 +343,15 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-control` | statements/control-flow/init-order/static ctor-dtor |
 | `klang-tests-gen-exceptions` | throw/catch/contracts/rethrow/unwinding; CTest shards 0-2 |
 | `klang-tests-gen-ternary` | ternary expression behavior matrix |
-| `klang-tests-gen-arithmetic-int8-16` | 8/16-bit integer arithmetic (byte..uint16); CTest shards 0–1 |
+| `klang-tests-gen-arithmetic-int8-16` | 8/16-bit integer arithmetic (byte..uint16); CTest shards 0–2 |
 | `klang-tests-gen-arithmetic-int32-64` | 32/64-bit integer arithmetic (int32..uint64) |
-| `klang-tests-gen-arithmetic-float` | float/double/bool/incr-decr arithmetic |
+| `klang-tests-gen-arithmetic-float` | float/double/bool/incr-decr arithmetic; CTest shards 0–1 |
 | `klang-tests-gen-operators` | operator overload/comparison/spaceship/assign |
 | `klang-tests-gen-casts` | scalar casts and indirection casts; CTest shards 0–1 |
 | `klang-tests-gen-types-enums-unions` | enums, typed enums, and union hierarchies; CTest shards 0–4 |
-| `klang-tests-gen-types-const` | const semantics (`test-gen-const.cpp`) |
+| `klang-tests-gen-types-const` | const semantics (`test-gen-const.cpp`); CTest shards 0–1 |
 | `klang-tests-gen-types-null` | null semantics (`test-gen-null-semantics.cpp`) |
-| `klang-tests-gen-types-meta-designated` | annotations and designated init (`test-gen-annotation-meta.cpp`, `test-gen-designated-init.cpp`) |
+| `klang-tests-gen-types-meta-designated` | annotations and designated init (`test-gen-annotation-meta.cpp`, `test-gen-designated-init.cpp`); CTest shards 0–1 |
 | `klang-tests-gen-aliases` | alias/typedef/callable-alias; CTest shards 0–2 |
 | `klang-tests-gen-classes` | class basics/inheritance/upcasts |
 | `klang-tests-gen-virtuality` | virtual/interface/override/diamond; CTest shards 0–4 |
@@ -359,7 +359,7 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-arrays` | fixed/dynamic arrays and foreach; CTest shards 0–4 |
 | `klang-tests-gen-oop-lifecycle` | lifecycle and RVO; CTest shards 0–2 |
 | `klang-tests-gen-oop-temporary` | named return + temporary construction; CTest shards 0–2 |
-| `klang-tests-gen-scoping` | using/friend |
+| `klang-tests-gen-scoping` | using/friend; CTest shards 0–2 |
 | `klang-tests-gen-templates-core` | template functions/instantiation/mangling/members; CTest shards 0–1 |
 | `klang-tests-gen-templates-deduction` | template deduction/constraints/packs/value params; CTest shards 0–4 |
 | `klang-tests-gen-generics` | generic (type-erased) declarations, restrictions, single synthesis |

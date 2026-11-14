@@ -633,6 +633,16 @@ protected:
      */
     static bool types_match_array_const_compatible(const std::shared_ptr<type>& src_nc, const std::shared_ptr<type>& tgt_nc);
 
+    enum class fixed_array_reference_match {
+        not_applicable,
+        incompatible,
+        exact,
+        widening
+    };
+
+    static fixed_array_reference_match match_fixed_array_reference(
+        const std::shared_ptr<type>& src_sub, const std::shared_ptr<type>& tgt_sub);
+
     /**
      * Check inheritance-based type compatibility and insert cast expressions
      * for upcast/downcast when necessary.

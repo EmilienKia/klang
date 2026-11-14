@@ -22,6 +22,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include "helpers.hpp"
+#include "../src/errors.hpp"
 
 #include <string>
 #include <string_view>
@@ -1187,4 +1188,274 @@ TEST_CASE("Const pointer-to-container field: get() returning const T& where T is
     auto fn = jit->lookup_symbol<int(*)()>("test");
     REQUIRE(fn != nullptr);
     REQUIRE(fn() == 42);
+}
+
+namespace {
+
+void require_fixed_array_error(std::string_view source, unsigned int expected) {
+    try {
+        gen_jit_throws(source);
+        FAIL("Expected a compiler error");
+    } catch (const k::log::compiler_error& error) {
+        CHECK(error.get_diagnostic().code == expected);
+    }
+}
+
+}
+
+TEST_CASE("Readonly fixed array references bind members and direct arrays",
+          "[gen][const][readonly-fixed-array-binding]") {
+    auto jit = gen_jit(R"SRC(
+        module readonly_fixed_array_binding;
+
+        struct Item {
+            value : int;
+            Item(value : int) : value(value) {}
+        }
+        struct Box {
+            values : Item[2]{Item(11), Item(13)};
+            Box() {}
+        }
+        alias FrozenInts : const int[2];
+        alias WholeInts : int[2];
+        alias PointerSlot : int*;
+        alias FrozenPointerSlot : const PointerSlot;
+        alias OwnerSlot : int!;
+        alias FrozenOwnerSlot : const OwnerSlot;
+        struct PointerBox { values : PointerSlot[2]; }
+        struct OwnerBox { values : OwnerSlot[2]; }
+
+        sum(values : const Item[2]&) : int {
+            return values[0].value + values[1].value;
+        }
+        fromMember(box : const Box&) : int { return sum(box.values); }
+        memberReference(box : const Box&) : const Item[2]& { return box.values; }
+        sumInts(values : FrozenInts&) : int { return values[0] + values[1]; }
+        outerReference(values : const int[2]&) : const WholeInts& { return values; }
+        pointerSlots(box : const PointerBox&) : FrozenPointerSlot[2]& { return box.values; }
+        ownerSlots(box : const OwnerBox&) : FrozenOwnerSlot[2]& { return box.values; }
+        pick(values : int[2]&) : int { return 100; }
+        pick(values : const int[2]&) : int { return 200; }
+
+        test() : int {
+            box : Box;
+            mutableValues : Item[2]{Item(2), Item(3)};
+            mutableInts : int[2]{6, 7};
+            const frozenValues : int[2]{4, 5};
+            return fromMember(box) + sum(memberReference(box))
+                 + sum(mutableValues) + sumInts(frozenValues)
+                 + sumInts(outerReference(frozenValues))
+                 + pick(mutableInts) + pick(frozenValues);
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn() == 371);
+}
+
+TEST_CASE("Readonly fixed array references require matching extent and element type",
+          "[gen][const][readonly-fixed-array-binding][error]") {
+    SECTION("different extent") {
+        require_fixed_array_error(R"SRC(
+            module readonly_fixed_array_extent;
+            struct Box { values : int[2]; }
+            read(values : const int[3]&) {}
+            test(box : const Box&) { read(box.values); }
+        )SRC", static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_NO_MATCH));
+        require_fixed_array_error(R"SRC(
+            module readonly_fixed_array_return_extent;
+            struct Box { values : int[2]; }
+            test(box : const Box&) : const int[3]& { return box.values; }
+        )SRC", static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH));
+    }
+    SECTION("different nominal element") {
+        require_fixed_array_error(R"SRC(
+            module readonly_fixed_array_nominal;
+            struct First { value : int; }
+            struct Second { value : int; }
+            struct Box { values : First[2]; }
+            read(values : const Second[2]&) {}
+            test(box : const Box&) { read(box.values); }
+        )SRC", static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_NO_MATCH));
+        require_fixed_array_error(R"SRC(
+            module readonly_fixed_array_return_nominal;
+            struct First { value : int; }
+            struct Second { value : int; }
+            struct Box { values : First[2]; }
+            test(box : const Box&) : const Second[2]& { return box.values; }
+        )SRC", static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH));
+    }
+}
+
+TEST_CASE("Readonly fixed array references cannot expose writable elements",
+          "[gen][const][readonly-fixed-array-binding][error]") {
+    SECTION("return a readonly member as writable") {
+        require_fixed_array_error(R"SRC(
+            module readonly_fixed_array_return_mutable;
+            struct Box { values : int[2]; }
+            test(box : const Box&) : int[2]& { return box.values; }
+        )SRC", static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH));
+    }
+    SECTION("pass readonly elements to a writable parameter") {
+        require_fixed_array_error(R"SRC(
+            module readonly_fixed_array_argument_mutable;
+            mutate(values : int[2]&) { values[0] = 7; }
+            test(values : const int[2]&) { mutate(values); }
+        )SRC", static_cast<unsigned int>(k::diag::symbol_diag::ERR_OVERLOAD_NO_MATCH));
+    }
+    SECTION("write through a readonly reference") {
+        require_fixed_array_error(R"SRC(
+            module readonly_fixed_array_write;
+            test(values : const int[2]&) { values[0] = 7; }
+        )SRC", static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_CALL_NO_MATCH));
+    }
+}
+
+TEST_CASE("Readonly fixed array references retain nested addresser qualifiers",
+          "[gen][const][readonly-fixed-array-binding][error]") {
+    SECTION("pointer referent") {
+        require_fixed_array_error(R"SRC(
+            module readonly_fixed_array_pointer_qualifiers;
+            alias ConstPointee : const int*;
+            alias ConstPointeeSlot : const ConstPointee;
+            struct Box { values : int*[2]; }
+            test(box : const Box&) : ConstPointeeSlot[2]& { return box.values; }
+        )SRC", static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH));
+    }
+    SECTION("owner referent") {
+        require_fixed_array_error(R"SRC(
+            module readonly_fixed_array_owner_qualifiers;
+            alias ConstPointee : const int!;
+            alias ConstPointeeSlot : const ConstPointee;
+            struct Box { values : int![2]; }
+            test(box : const Box&) : ConstPointeeSlot[2]& { return box.values; }
+        )SRC", static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH));
+    }
+}
+
+namespace {
+
+void require_readonly_dereference_error(std::string_view source, unsigned int expected) {
+    try {
+        gen_jit_throws(source);
+        FAIL("Expected a compiler error");
+    } catch (const k::log::compiler_error& error) {
+        CHECK(error.get_diagnostic().code == expected);
+    }
+}
+
+}
+
+TEST_CASE("Readonly owner slot dereference aliases its fixed array without consuming it",
+          "[gen][const][readonly-addressor-dereference]") {
+    auto jit = gen_jit(R"SRC(
+        module readonly_owner_array_dereference;
+        drops : int = 0;
+        struct HeapOwner {
+            values : int[2]!;
+            HeapOwner() : values(new int[2]{3, 4}) {}
+            ~HeapOwner() { ++drops; }
+        }
+        select(owner : const HeapOwner&) : const int[2]& { return *owner.values; }
+        read(values : const int[2]&) : int {
+            if (values.size != 2u) return -1;
+            return values[0] * 10 + values[1];
+        }
+        setFirst(values : int[2]&) { values[0] = 8; }
+        mutateReferent(owner : const HeapOwner&) { setFirst(*owner.values); }
+        test() : int {
+            drops = 0;
+            result : int = 0;
+            {
+                owner : HeapOwner;
+                if (read(select(owner)) != 34 || drops != 0) return 0;
+                mutateReferent(owner);
+                if (read(select(owner)) != 84 || read(*owner.values) != 84 || drops != 0) return 0;
+                result = 1;
+            }
+            return result == 1 && drops == 1 ? 1 : 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    CHECK(test() == 1);
+}
+
+TEST_CASE("Readonly observer slots dereference their original referents",
+          "[gen][const][readonly-addressor-dereference]") {
+    auto jit = gen_jit(R"SRC(
+        module readonly_observer_dereference;
+        struct Observers {
+            pointer : int*;
+            link : int+;
+            view : int?;
+            Observers(addr : int+) : pointer(addr), link(addr), view(addr) {}
+        }
+        read(value : const Observers&) : int {
+            return *value.pointer + *value.link + *value.view;
+        }
+        write(value : const Observers&) { *value.pointer = 7; }
+        test() : int {
+            number : int = 3;
+            observers : Observers(&number);
+            if (read(observers) != 9) return 0;
+            write(observers);
+            return number == 7 && read(observers) == 21 && *observers.pointer == 7 ? 1 : 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+    auto test = jit->lookup_symbol<int(*)()>("test");
+    REQUIRE(test != nullptr);
+    CHECK(test() == 1);
+}
+
+TEST_CASE("Readonly addresser dereference retains referent const and array extent",
+          "[gen][const][readonly-addressor-dereference][error]") {
+    SECTION("owner of const") {
+        require_readonly_dereference_error(R"SRC(
+            module readonly_owner_const_referent;
+            struct Box { value : const int!; }
+            test(box : const Box&) { *box.value = 7; }
+        )SRC", static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_CALL_NO_MATCH));
+    }
+    SECTION("pointer to const") {
+        require_readonly_dereference_error(R"SRC(
+            module readonly_pointer_const_referent;
+            struct Box { value : const int*; }
+            test(box : const Box&) { *box.value = 7; }
+        )SRC", static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_CALL_NO_MATCH));
+    }
+    SECTION("fixed array extent") {
+        require_readonly_dereference_error(R"SRC(
+            module readonly_owner_array_extent;
+            struct Box { values : int[2]!; }
+            test(box : const Box&) : const int[3]& { return *box.values; }
+        )SRC", static_cast<unsigned int>(k::diag::statement_diag::ERR_RETURN_TYPE_MISMATCH));
+    }
+}
+
+TEST_CASE("Observing a readonly owner slot does not permit changing or draining it",
+          "[gen][const][readonly-addressor-dereference][error]") {
+    SECTION("reassign") {
+        require_readonly_dereference_error(R"SRC(
+            module readonly_owner_slot_reassign;
+            struct Box { value : int!; }
+            test(box : const Box&) {
+                observed : int = *box.value;
+                box.value = null;
+            }
+        )SRC", static_cast<unsigned int>(k::diag::operator_diag::ERR_OVERLOAD_CALL_NO_MATCH));
+    }
+    SECTION("drain") {
+        require_readonly_dereference_error(R"SRC(
+            module readonly_owner_slot_drain;
+            struct Box { value : int!; }
+            test(box : const Box&) {
+                observed : int = *box.value;
+                moved : int! = #box.value;
+            }
+        )SRC", static_cast<unsigned int>(k::diag::operator_diag::ERR_PM_EXPR_NOT_MEMBER_PTR));
+    }
 }
