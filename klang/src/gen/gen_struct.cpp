@@ -37,6 +37,7 @@
 #include <llvm/IR/Verifier.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 
+#include <functional>
 #include <limits>
 #include <queue>
 #include <unordered_map>
@@ -1652,11 +1653,56 @@ void declaration_generator::visit_union(union_type_def& un) {
     auto& llvm_ctx = _context->llvm_context();
     auto& data_layout = _context->module().getDataLayout();
 
+    auto layout_error = [&](const std::string& reason) {
+        lex::opt_any_lexeme location;
+        if (auto ast_decl = un.get_ast_aggregate_decl()) location = lex::any_lexeme{ast_decl->kw_aggregate_type};
+        throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F024), location,
+            "Cannot compute the layout of union '{}': {}", {un.get_short_name(), reason});
+    };
+
+    // A union held by value (directly, or through struct fields, bases and sized arrays)
+    // by one of its alternatives must have its own body before this union is sized,
+    // whatever the declaration order. Owners, pointers, links and views are not traversed.
+    thread_local std::unordered_set<const union_type_def*> in_progress;
+    if (!in_progress.insert(&un).second) layout_error("it contains itself by value");
+    struct progress_guard {
+        const union_type_def* definition;
+        ~progress_guard() { in_progress.erase(definition); }
+    } guard{&un};
+
     // Ensure the base union's body is set first (so DataLayout sees its types correctly)
     if (un.has_base_union()) {
         if (auto base = un.get_base_union()) {
             visit_union(*base); // no-op if body already set
         }
+    }
+
+    std::unordered_set<const aggregate*> visited_aggregates;
+    std::function<void(const std::shared_ptr<type>&)> finalize_by_value_unions =
+        [&](const std::shared_ptr<type>& value_type) {
+            auto bare = type::canonical(type::remove_const(type::canonical(value_type)));
+            if (!bare) return;
+            if (auto array = std::dynamic_pointer_cast<sized_array_type>(bare)) {
+                finalize_by_value_unions(array->get_subtype());
+                return;
+            }
+            auto st = std::dynamic_pointer_cast<struct_type>(bare);
+            if (!st) return;
+            if (auto nested = st->get_union()) {
+                visit_union(*nested);
+                return;
+            }
+            auto agg = st->get_struct();
+            if (!agg || agg->is_template() || agg->is_imported()
+                || !visited_aggregates.insert(agg.get()).second) return;
+            for (const auto& child : agg->get_children()) {
+                if (auto member = std::dynamic_pointer_cast<member_variable_definition>(child))
+                    finalize_by_value_unions(member->get_type());
+            }
+        };
+    for (const auto* alt_ptr : un.all_alternatives_ptrs()) {
+        if (alt_ptr && alt_ptr->resolved_type && type::is_resolved(alt_ptr->resolved_type))
+            finalize_by_value_unions(alt_ptr->resolved_type);
     }
 
     // Compute max size of ALL alternatives in the full inheritance chain
@@ -1667,6 +1713,12 @@ void declaration_generator::visit_union(union_type_def& un) {
             if (llvm_type && llvm_type->isSized()) {
                 uint64_t alt_size = data_layout.getTypeAllocSize(llvm_type);
                 if (alt_size > max_size) max_size = alt_size;
+            } else if (llvm_type) {
+                auto bare_alt = type::canonical(type::remove_const(type::canonical(alt_ptr->resolved_type)));
+                if (std::dynamic_pointer_cast<struct_type>(bare_alt)
+                    || std::dynamic_pointer_cast<sized_array_type>(bare_alt))
+                    layout_error("alternative '" + alt_ptr->name
+                        + "' has an incomplete by-value layout");
             }
         }
     }

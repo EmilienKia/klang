@@ -3982,6 +3982,91 @@ TEST_CASE("Escaped first class owner in a local union array is released once",
     CHECK(unwinding() == 42);
 }
 
+TEST_CASE("Escaped default first struct with nested owner unions is released once as an aggregate member",
+          "[gen][union][reference][default][struct][nested][owner][exceptions][lifecycle][regression]") {
+    // LateHolder is declared before the types it depends on, EarlyHolder after them: the
+    // implicit destructor of the holder must not depend on the declaration order.
+    auto jit = gen_jit(R"K(
+        module union_member_escaped_default_nested_owners;
+        constructs: int = 0;
+        resourceDrops: int = 0;
+        class Resource {
+        public:
+            Resource() {}
+            ~Resource() { ++resourceDrops; }
+        }
+        struct LateHolder { storage: LateStorage; mark: int; }
+        union LateStorage { value: LatePayload; number: int; }
+        struct LatePayload {
+            early: Early;
+            late: Late;
+            LatePayload() { ++constructs; }
+        }
+        union Early { owned: Resource!; number: int; }
+        union Late { number: int; owned: Resource!; }
+        struct EarlyPayload {
+            early: Early;
+            late: Late;
+            EarlyPayload() { ++constructs; }
+        }
+        union EarlyStorage { value: EarlyPayload; number: int; }
+        struct EarlyHolder { storage: EarlyStorage; mark: int; }
+        borrowLate(value: LateStorage&): LatePayload& { return value.value; }
+        borrowEarly(value: EarlyStorage&): EarlyPayload& { return value.value; }
+        installLate(value: LatePayload&) {
+            value.early.owned = new Resource();
+            value.late.owned = new Resource();
+        }
+        installEarly(value: EarlyPayload&) {
+            value.early.owned = new Resource();
+            value.late.owned = new Resource();
+        }
+        normal(): int {
+            constructs = 0; resourceDrops = 0;
+            {
+                holder: LateHolder;
+                installLate(borrowLate(holder.storage));
+                if (constructs != 0 || resourceDrops != 0) return -1;
+            }
+            if (constructs != 0 || resourceDrops != 2) return -2;
+            {
+                holder: EarlyHolder;
+                installEarly(borrowEarly(holder.storage));
+                if (constructs != 0 || resourceDrops != 2) return -3;
+            }
+            return constructs == 0 && resourceDrops == 4 ? 42 : -4;
+        }
+        unwinding(): int {
+            constructs = 0; resourceDrops = 0;
+            caught: bool = false;
+            try {
+                holder: LateHolder;
+                installLate(borrowLate(holder.storage));
+                throw Exception(9);
+            } catch (error: Throwable&) {
+                caught = error.getCode() == 9;
+            }
+            if (!caught || constructs != 0 || resourceDrops != 2) return -5;
+            caught = false;
+            try {
+                holder: EarlyHolder;
+                installEarly(borrowEarly(holder.storage));
+                throw Exception(10);
+            } catch (error: Throwable&) {
+                caught = error.getCode() == 10;
+            }
+            return caught && constructs == 0 && resourceDrops == 4 ? 42 : -6;
+        }
+    )K");
+    REQUIRE(jit);
+    auto normal = jit->lookup_symbol<int (*)()>("normal");
+    auto unwinding = jit->lookup_symbol<int (*)()>("unwinding");
+    REQUIRE(normal);
+    REQUIRE(unwinding);
+    CHECK(normal() == 42);
+    CHECK(unwinding() == 42);
+}
+
 TEST_CASE("Union ownership cleanup: direct owners leave scope exactly once",
           "[gen][union][owner][lifecycle][union-owner-cleanup][regression]") {
     auto jit = gen_jit(R"SRC(
