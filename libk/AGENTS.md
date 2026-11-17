@@ -172,7 +172,11 @@ Unless fully qualified, paths below are relative to `libk/libk/src/`.
   barriers; every actual runtime shutdown executes in a fresh subprocess
   (120-second budget).
 - `libk-tests-io`: synchronous stream/file/path I/O tests.
-- `libk-tests-io-text`: print, text, codec, reader/scanner and UTF-8 pipeline tests.
+- `libk-tests-io-print-stream`: `PrintStream` tests (39 cases, own executable and
+  120-second budget; split from the text group, no case removed).
+- `libk-tests-io-text`: text, codec, reader/scanner, printer and UTF-8 pipeline tests
+  (35 cases; together with `libk-tests-io-print-stream` they cover the 74 former
+  text-I/O cases).
 - `libk-tests-collections-sequential`: sequential collection tests (List, Vector, Sequences).
 - `libk-tests-collections-associative`: associative collection test binary;
   CTest entries `-set-shard-0/1` and `-non-set` cover Set and its complement.
@@ -198,7 +202,7 @@ If in a working session, only `libk` changes (`.c` and/or `.k`), only recompile 
 ```bash
 # Build libk tests
 cd cmake-build-debug && ninja -j3 libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-io libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests libk-tests-module
-ninja -C cmake-build-debug -j3 libk_stdlib libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-big-integer-native libk-tests-io libk-tests-io-text libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests libk-tests-io-proactor libk-tests-io-proactor-kernel libk-tests-io-foundations-api libk-tests-file-channel-fully libk-tests-stream-channels libk-tests-datagram-channels libk-tests-application-lifecycle libk-tests-executor libk-tests-uuid libk-tests-time
+ninja -C cmake-build-debug -j3 libk_stdlib libk-tests-rtti-exceptions libk-tests-strings libk-tests-types libk-tests-big-integer-native libk-tests-io libk-tests-io-text libk-tests-io-print-stream libk-tests-collections-sequential libk-tests-collections-associative libk-thread-io-tests libk-tests-io-proactor libk-tests-io-proactor-kernel libk-tests-io-foundations-api libk-tests-file-channel-fully libk-tests-stream-channels libk-tests-datagram-channels libk-tests-application-lifecycle libk-tests-executor libk-tests-uuid libk-tests-time
 
 # Run libk tests
 /usr/bin/ctest --test-dir cmake-build-debug -j1 -R "^(libk-tests-.*|libk-thread-io-tests(-shard-[0-9]+)?)$" --output-on-failure

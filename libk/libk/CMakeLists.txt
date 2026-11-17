@@ -1120,8 +1120,13 @@ libk_add_test_sharded(libk-tests-io 120 2
 )
 
 # ── libk text stream I/O tests ───────────────────────────────────────────────
-libk_add_test(libk-tests-io-text 120
+# PrintStream (39 cases, each compiling and JITting a K program) has its own
+# executable so that the text/codec group keeps a comfortable budget margin.
+libk_add_test(libk-tests-io-print-stream 120
     tests/test-io-print-stream.cpp
+)
+
+libk_add_test(libk-tests-io-text 120
     tests/test-io-text-codecs.cpp
     tests/test-io-codecs.cpp
     tests/test-io-buffered-reader.cpp
