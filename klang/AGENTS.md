@@ -363,7 +363,7 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-templates-core` | template functions/instantiation/mangling/members; CTest shards 0–1 |
 | `klang-tests-gen-templates-deduction` | template deduction/constraints/packs/value params; CTest shards 0–4 |
 | `klang-tests-gen-generics` | generic (type-erased) declarations, restrictions, single synthesis |
-| `klang-tests-import-core` | KDI import core, namespaces, enums, transitive; CTest shards 0–3 |
+| `klang-tests-import-core` | KDI import core, namespaces, enums, transitive; CTest shards 0–15 |
 | `klang-tests-import-templates` | KDI cross-module template instantiation; CTest shards 0–14 |
 | `klang-tests-import-interop` | KDI aliases, typedefs, callables, prod-lib; CTest shards 0-1 |
 | `klangc-tests` | CLI/integration behavior; CTest shards 0–1 |
@@ -374,7 +374,8 @@ Grouping policy:
 - register new/redistributed files with `klang_gen_test(<target> 120 ...)`.
 - `SHARD_COUNT 5` follows the same scheme with shards `0` to `4`
   (`gen-types-enums-unions`, `gen-templates-deduction`, `gen-virtuality`, `gen-arrays`).
-- `SHARD_COUNT 4` likewise registers shards `0` to `3` (`import-core`).
+- `SHARD_COUNT 16` registers shards `0` to `15` (`import-core`) with the same
+  executable, sources, lexical order, RNG seed and 120-second timeout.
 - `SHARD_COUNT 3` keeps heavy-suite executable names and build dependencies
   unchanged, but replaces their unsharded CTest entry with
   `<target>-shard-0`, `<target>-shard-1`, and `<target>-shard-2`.

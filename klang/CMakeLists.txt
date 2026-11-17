@@ -528,7 +528,7 @@ klang_gen_test(klang-tests-gen-generics 120
 # Split into core import, templates cross-module, and interop test executables.
 # Catch2 shards keep core import compilation below the 120-second budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-import-core 120 SHARD_COUNT 4
+klang_gen_test(klang-tests-import-core 120 SHARD_COUNT 16
         tests/test-import-core.cpp
         tests/test-import-private-concrete.cpp
 )
