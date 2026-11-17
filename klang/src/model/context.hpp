@@ -394,6 +394,16 @@ public:
      */
     llvm::Function* lookup_llvm_function(const std::shared_ptr<function>& func) const;
 
+    /**
+     * The LLVM Function registered for exactly this model function (no symbol-name
+     * fallback). Same-owner covariant twins share one mangled name, so only the
+     * registration identifies the body that was actually emitted for each of them.
+     */
+    llvm::Function* registered_llvm_function(const std::shared_ptr<function>& func) const {
+        auto it = _functions.find(func);
+        return it != _functions.end() ? it->second : nullptr;
+    }
+
 protected:
 
     std::shared_ptr<unresolved_type> create_unresolved(const name& type_id);

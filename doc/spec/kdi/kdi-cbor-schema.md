@@ -333,8 +333,10 @@ Method = {
   ?"vtable_slot"     : uint,   -- omitted when -1
   "return_type"      : Type,
   "params"           : array[Param],
-  "mangled_name"     : text,   -- may be empty when deleted
-  "llvm_def"         : text,   -- empty for deleted methods; otherwise LLVM IR prototype
+  "mangled_name"     : text,   -- may be empty when deleted; provider linkage symbol of the
+                               -- emitted body (a same-mangling covariant twin keeps its own
+                               -- symbol, see kdi-schema-abstract.md)
+  "llvm_def"         : text,   -- empty for deleted methods; otherwise bodiless `declare` prototype
   ?"doc"             : DocFunction
   ?"redirect_target" : RedirectTarget
 }
@@ -430,7 +432,7 @@ Destructor = {
 VtableSlot = {
   "slot_index"       : uint,
   "introducing_func" : text,    -- fq_name
-  "override_symbol"  : text,    -- mangled name; empty string if abstract
+  "override_symbol"  : text,    -- provider symbol; empty string if abstract
   ?"is_abstract"     : bool
 }
 ```
@@ -442,7 +444,7 @@ VtableSlot = {
 ```
 Thunk = {
   "slot_index"       : uint,
-  "real_func_symbol" : text,
+  "real_func_symbol" : text,    -- provider symbol of the concrete override
   "this_adjustment"  : int,
   ?"needs_thunk"     : bool
 }

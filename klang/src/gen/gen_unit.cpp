@@ -906,8 +906,20 @@ void declaration_generator::visit_unit(unit &unit) {
                     {fn->get_fq_name(), mangled});
             }
         }
-        // Fallback: derive signature from K types (old path)
+        // Fallback: derive signature from K types (old path). A provider symbol that is
+        // already declared must never be silently auto-renamed to a symbol nobody exports.
+        auto* occupied = mangled.empty() ? nullptr : _context->_module->getNamedValue(mangled);
         fn->accept(*this);
+        if (occupied) {
+            if (auto declared = _context->_functions.find(fn);
+                declared != _context->_functions.end() && declared->second != occupied) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::ERR_DUPLICATE_MANGLED_NAME),
+                    fn->get_first_lexeme(),
+                    "Imported symbol '{0}' for '{1}' collides with another declaration and its "
+                    "provider metadata does not identify a distinct body",
+                    {mangled, fn->get_fq_name()});
+            }
+        }
     };
 
     // imported_function

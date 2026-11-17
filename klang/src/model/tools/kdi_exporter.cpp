@@ -312,28 +312,41 @@ static bool is_synthetic_member_name(const std::string& name) {
  */
 std::string llvm_fn_prototype(const llvm::Function* fn, const std::string& symbol = {}) {
     if (!fn) return {};
-    std::unique_ptr<llvm::Function> alias_prototype;
-    if (!symbol.empty() && symbol != fn->getName()) {
-        alias_prototype.reset(llvm::Function::Create(
-            fn->getFunctionType(), llvm::GlobalValue::ExternalLinkage, symbol));
-        alias_prototype->setAttributes(fn->getAttributes());
-        alias_prototype->setCallingConv(fn->getCallingConv());
-        fn = alias_prototype.get();
-    }
+    // Always print a detached external prototype: a function with a body would print as a
+    // bodiless `define` (and possibly `linkonce_odr`) that no consumer can parse back. The
+    // calling convention, return/parameter attributes (sret, byval, ext) and argument names
+    // are printed by LLVM; the function attributes are appended inline below, because a
+    // detached function cannot reference module-level attribute groups (`#N`).
+    auto prototype = std::unique_ptr<llvm::Function>(llvm::Function::Create(
+        fn->getFunctionType(), llvm::GlobalValue::ExternalLinkage,
+        symbol.empty() ? fn->getName() : llvm::StringRef(symbol)));
+    prototype->setAttributes(fn->getAttributes().removeFnAttributes(fn->getContext()));
+    prototype->setCallingConv(fn->getCallingConv());
+    for (unsigned index = 0; index < fn->arg_size(); ++index)
+        prototype->getArg(index)->setName(fn->getArg(index)->getName());
     std::string out;
     llvm::raw_string_ostream os(out);
-    fn->print(os, /*AAW=*/nullptr, /*IsForDebug=*/false, /*IsDeclaration=*/true);
+    prototype->print(os, /*AAW=*/nullptr, /*IsForDebug=*/false, /*IsDeclaration=*/true);
     os.flush();
-    // The print() output contains a full definition or declaration block.
-    // We only want the first line (the prototype), stripped of trailing whitespace.
+    // The print() output contains the prototype line; keep only the first line.
     auto nl = out.find('\n');
     if (nl != std::string::npos) out.resize(nl);
-    // Trim trailing whitespace / '{'
     while (!out.empty() && (out.back() == ' ' || out.back() == '{'))
         out.pop_back();
     while (!out.empty() && out.back() == ' ')
         out.pop_back();
+    if (auto function_attributes = fn->getAttributes().getFnAttrs(); function_attributes.hasAttributes())
+        out += " " + function_attributes.getAsString(/*InAttrGrp=*/false);
     return out;
+}
+
+// Symbol of the body actually emitted for @p fn. LLVM auto-renames the later of two
+// same-owner covariant twins (identical mangling), so the model name is not enough.
+std::string provider_symbol(const context& ctx, const std::shared_ptr<function>& fn) {
+    if (!fn) return {};
+    if (!fn->is_external() && !fn->is_redirected() && !dynamic_cast<const destructor*>(fn.get()))
+        if (auto* emitted = ctx.registered_llvm_function(fn)) return emitted->getName().str();
+    return fn->get_mangled_name();
 }
 
 /**
@@ -1302,7 +1315,7 @@ std::optional<kdi::kdi_vtable> kdi_builder::build_vtable(const aggregate& agg) c
                                 ? entry.introducing_func->get_fq_name() : "";
         slot.is_abstract      = entry.func && entry.func->is_abstract_func();
         slot.override_symbol  = (!slot.is_abstract && entry.func)
-                                ? entry.func->get_mangled_name() : "";
+                                ? provider_symbol(_ctx, entry.func) : "";
         kvt.slots.push_back(std::move(slot));
     }
 
@@ -1324,7 +1337,7 @@ std::optional<kdi::kdi_vtable> kdi_builder::build_vtable(const aggregate& agg) c
         for (auto& ti : sec.slot_thunks) {
             kdi::kdi_thunk kt;
             kt.slot_index       = static_cast<uint32_t>(ti.slot_index);
-            kt.real_func_symbol = ti.real_func ? ti.real_func->get_mangled_name() : "";
+            kt.real_func_symbol = ti.real_func ? provider_symbol(_ctx, ti.real_func) : "";
             kt.this_adjustment  = static_cast<int32_t>(sec.base_offset);
             kt.needs_thunk      = ti.needs_thunk;
             ksec.thunks.push_back(std::move(kt));
@@ -1999,6 +2012,10 @@ void kdi_builder::visit_function(function& fn) {
         llvm_lookup_name = fn.get_redirect_target()->get_mangled_name();
     }
     std::string linkage_name = fn.get_mangled_name();
+    if (!fn.is_redirected()) {
+        // Two same-owner covariant twins share one mangled name: export each body's own symbol.
+        llvm_lookup_name = linkage_name = provider_symbol(_ctx, fn.shared_as<function>());
+    }
     if (fn.is_redirected() && gen::implementation_provider_is_external(fn)) {
         auto* target = _ctx.module().getFunction(llvm_lookup_name);
         if (target) linkage_name = target->getName().str();

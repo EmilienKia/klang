@@ -1130,3 +1130,139 @@ TEST_CASE("import multi-lib — imported aliases do not collide across dependenc
     if (!result.err.empty()) INFO("stderr: " << result.err);
     REQUIRE(result.exit_code == 0);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Same-owner covariant twins share one mangled name (return types are not
+// mangled) but are two distinct provider bodies. The KDI must record the symbol
+// of the body each method actually has, with a parseable bodiless prototype.
+// The fixture uses concrete classes only: abstract methods and interface vtables
+// carry an empty llvm_def, which kdi_validate rejects (known open contract mismatch
+// tracked in TODO.md, independent of this regression).
+// ─────────────────────────────────────────────────────────────────────────────
+namespace {
+
+constexpr const char* COVARIANT_TWIN_LIB_SRC = R"K(
+    module covariant_twin_provider;
+    public:
+    struct Big { a : long; b : long; c : long; }
+    makeBig(seed : long) : Big {
+        result : Big;
+        result.a = seed;
+        result.b = seed;
+        result.c = seed;
+        return result;
+    }
+    class Sink { write(value : int) : Sink& { return this; } }
+    class Tagged : public Sink {
+        write(value : int) : Tagged& { return this; }
+        tag() : int { return 1; }
+    }
+    class Twin : public Tagged {
+        plain : int = 0;
+        tagged : int = 0;
+        override write(value : int) : Sink& { ++plain; return this; }
+        override write(value : int) : Tagged& { ++tagged; return this; }
+        override tag() : int { return 7; }
+        plainCount() : int { return plain; }
+        taggedCount() : int { return tagged; }
+    }
+)K";
+
+} // anonymous namespace
+
+TEST_CASE("KDI exports each covariant twin body with a parseable exact prototype",
+          "[import][covariant-twin][regression]") {
+    auto compiler = k::compiler::create(make_pic_target_machine());
+    compiler->parse_source("covariant-twin-provider.k", COVARIANT_TWIN_LIB_SRC, false, false);
+    auto context = compiler->get_context_for_test();
+    // Function attributes of the emitted fixture must survive the exported prototype.
+    llvm::Function* attributed = nullptr;
+    for (auto& candidate : context->module())
+        if (!candidate.isDeclaration() && candidate.getName().contains("makeBig")) attributed = &candidate;
+    REQUIRE(attributed);
+    attributed->addFnAttr(llvm::Attribute::NoUnwind);
+    attributed->addFnAttr(llvm::Attribute::getWithStackAlignment(
+        context->llvm_context(), llvm::Align(16)));
+    k::model::kdi_builder builder(*context);
+    compiler->get_unit()->accept(builder);
+    auto file = builder.take();
+    const auto validation = kdi::kdi_validate(file);
+    for (const auto& error : validation.errors)
+        UNSCOPED_INFO("KDI validation error: " << error.path << ": " << error.message);
+    REQUIRE(validation.is_valid());
+
+    const auto& root = file.unit.root_ns;
+    auto twin = std::find_if(root.aggregates.begin(), root.aggregates.end(),
+        [](const auto& aggregate) { return aggregate.name == "Twin"; });
+    REQUIRE(twin != root.aggregates.end());
+    std::vector<const kdi::kdi_method*> writes;
+    for (const auto& method : twin->methods)
+        if (method.name == "write") writes.push_back(&method);
+    REQUIRE(writes.size() == 2);
+
+    // Distinct bodies, each declared exactly as the provider emitted it.
+    CHECK(writes[0]->mangled_name != writes[1]->mangled_name);
+    for (const auto* method : writes) {
+        CAPTURE(method->mangled_name, method->llvm_def);
+        auto* emitted = context->module().getFunction(method->mangled_name);
+        REQUIRE(emitted);
+        CHECK(method->llvm_def.rfind("declare ", 0) == 0);
+        CHECK(method->llvm_def.find("@" + method->mangled_name + "(") != std::string::npos);
+        CHECK(context->declare_llvm_function_from_def(method->llvm_def, method->mangled_name) == emitted);
+    }
+    REQUIRE(twin->vtable);
+    for (const auto* method : writes) {
+        CHECK(std::any_of(twin->vtable->slots.begin(), twin->vtable->slots.end(),
+            [&](const auto& slot) { return slot.override_symbol == method->mangled_name; }));
+        const auto& table = twin->vtable->llvm_def;
+        CHECK((table.find("@" + method->mangled_name + ",") != std::string::npos
+               || table.find("@" + method->mangled_name + " }") != std::string::npos));
+    }
+
+    // A struct result keeps its sret attribute and calling convention in the prototype.
+    auto make_big = std::find_if(root.functions.begin(), root.functions.end(),
+        [](const auto& function) { return function.name == "makeBig"; });
+    REQUIRE(make_big != root.functions.end());
+    CAPTURE(make_big->llvm_def);
+    CHECK(make_big->llvm_def.rfind("declare ", 0) == 0);
+    CHECK(make_big->llvm_def.find("sret(") != std::string::npos);
+    CHECK(make_big->llvm_def.find("nounwind") != std::string::npos);
+    CHECK(make_big->llvm_def.find("alignstack(16)") != std::string::npos);
+    auto* big = context->module().getFunction(make_big->mangled_name);
+    REQUIRE(big);
+    CHECK(big->hasParamAttribute(0, llvm::Attribute::StructRet));
+    CHECK(big->hasFnAttribute(llvm::Attribute::NoUnwind));
+    CHECK(big->getFnStackAlign() == llvm::Align(16));
+    // Re-declaring the exported text must reproduce the exact function type, calling
+    // convention and attributes (strict comparison against the emitted function).
+    CHECK(context->declare_llvm_function_from_def(make_big->llvm_def, make_big->mangled_name) == big);
+}
+
+TEST_CASE("imported covariant twins dispatch to their own body and return their own subobject",
+          "[import][covariant-twin][e2e][regression]") {
+    auto result = build_exec_with_lib(COVARIANT_TWIN_LIB_SRC, R"K(
+        module covariant_twin_consumer;
+        import covariant_twin_provider;
+        class Derived : public covariant_twin_provider::Twin {}
+        main() : int {
+            object : Derived;
+            sink : covariant_twin_provider::Sink& = object;
+            tagged : covariant_twin_provider::Tagged& = object;
+            sink.write(1);
+            tagged.write(2);
+            if (object.plainCount() != 1 || object.taggedCount() != 1) return 1;
+            again : covariant_twin_provider::Tagged& = tagged.write(3);
+            if (again.tag() != 7) return 2;
+            if (object.plainCount() != 1 || object.taggedCount() != 2) return 3;
+            plain : covariant_twin_provider::Sink& = sink.write(4);
+            if (object.plainCount() != 2 || object.taggedCount() != 2) return 4;
+            if (&again != &tagged || &plain != &sink) return 5;
+            big : covariant_twin_provider::Big = covariant_twin_provider::makeBig(5);
+            if (big.a != 5 || big.b != 5 || big.c != 5) return 6;
+            return 42;
+        }
+    )K");
+    INFO(result.out);
+    INFO(result.err);
+    CHECK(result.exit_code == 42);
+}

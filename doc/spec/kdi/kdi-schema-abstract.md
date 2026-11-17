@@ -593,7 +593,7 @@ KdiVtable {
 KdiVtableSlot {
   slot_index       : uint
   introducing_func : string        -- fq_name of the introducing function
-  override_symbol  : string        -- mangled name of the concrete implementation
+  override_symbol  : string        -- provider symbol of the concrete implementation
                                    -- (empty string if abstract)
   is_abstract      : bool
 }
@@ -608,7 +608,7 @@ KdiSecondaryVtable {
 
 KdiThunk {
   slot_index      : uint
-  real_func_symbol: string         -- mangled name of concrete override
+  real_func_symbol: string         -- provider symbol of concrete override
   this_adjustment : int            -- bytes to subtract from 'this'
   needs_thunk     : bool
 }
@@ -787,7 +787,8 @@ KdiMethod {
   vtable_slot    : int             -- -1 if not virtual
   return_type    : KdiType
   params         : [KdiParam]     -- excluding 'this'
-  mangled_name   : string          -- may be empty when deleted
+  mangled_name   : string          -- may be empty when deleted; the linkage symbol of the
+                                   -- emitted body (see "Provider symbol of covariant twins")
   llvm_def       : string          -- empty when deleted, else prototype (with implicit 'this'
                                    -- as first arg), e.g.
                                    -- "declare i32 @_ZN2ns5Adder3addEi
@@ -952,6 +953,22 @@ KdiVariable {
   It must not be empty except for a deleted method or constructor, which has
   no implementation and may also have an empty `mangled_name`. This field carries the exact LLVM IR text emitted
   by the exporting compiler and is authoritative for ABI-faithful import.
+  Function, method, constructor and destructor `llvm_def` values are always a
+  parseable bodiless `declare` prototype with external linkage (never a
+  `define` header or an ODR linkage); they keep the calling convention, the
+  return/parameter attributes (`sret`, `byval`, extension attributes) and the
+  function attributes, written inline.
+* **Provider symbol of covariant twins.** Two methods of one aggregate may
+  share the same mangling when only their return types differ (covariant
+  overrides, e.g. one `write(const char[])` returning each of two bases). They
+  are distinct bodies, so the exporter writes the symbol of the body actually
+  emitted for each method: `KdiMethod.mangled_name`, the `llvm_def` symbol,
+  `KdiVtableSlot.override_symbol` and `KdiThunk.real_func_symbol` all carry that
+  symbol, which may include an LLVM disambiguation suffix (`.N`) for the later
+  twin. Consumers use the recorded symbol as is; they must not derive, strip or
+  guess it, and must not bind two distinct methods to one body by name. A
+  recorded symbol that is already declared incompatibly is a compile-time
+  error, not a silent rename.
 * The `dependencies` field in `KdiHeader` is **optional** (omitted when the
   module has no imports).  When present, it lists the canonical module names
   of all direct imports of the compiled module in declaration order.  A
