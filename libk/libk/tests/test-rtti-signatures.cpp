@@ -1839,7 +1839,13 @@ TEST_CASE("RTTI recursive lifecycle graphs, deleted entries and fixed source-var
     for (const auto* name : {"StrongReference", "StrongDrain", "StrongWrapper"}) {
         auto aggregate = find_klass(compiler, name);
         REQUIRE(aggregate != nullptr);
-        CHECK(aggregate->get_copy_constructor() == nullptr);
+        REQUIRE(aggregate->constructors().size() == 1);
+        // Model copy selection is canonical; reflected lifecycle classification stays nominal.
+        if (std::string(name) == "StrongDrain") {
+            CHECK(aggregate->get_copy_constructor() == nullptr);
+        } else {
+            CHECK(aggregate->get_copy_constructor() == aggregate->constructors()[0]);
+        }
         auto* rtti = record(aggregate->get_vtable()->llvm_rtti_global);
         auto* type = record(field(rtti, 14));
         for (auto* pointer : array(field(type, 14))) {
