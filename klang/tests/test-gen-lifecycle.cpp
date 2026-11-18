@@ -1904,3 +1904,187 @@ TEST_CASE("Lifecycle Cat8: no memberwise copy when a member is not implicitly co
     CHECK(has_type_not_copyable);
 }
 
+TEST_CASE("Lifecycle Cat8: throwing memberwise copy destroys only the completed prefix once",
+          "[gen][lifecycle][cat8][value-semantics][memberwise-copy][exceptions][regression]") {
+    auto jit = gen_jit(R"SRC(
+        module gen_lifecycle_memberwise_unwind;
+
+        live      : int = 0;
+        attempts  : int = 0;
+        drops     : int = 0;
+        dropOrder : int = 0;
+        failId    : int = -1;
+        snapCode  : int = 0;
+        snapAttempts : int = 0;
+        snapDrops : int = 0;
+        snapOrder : int = 0;
+        snapLive  : int = 0;
+        marks     : int = 0;
+        snapMarks : int = 0;
+
+        struct Mark { n : int; ~Mark() { marks = marks * 10 + n; } }
+
+        struct Part {
+            id : int;
+            Part() : id(0) { ++live; }
+            Part(other : const Part&) : id(other.id) {
+                ++attempts;
+                if (id == failId) throw Exception(931);
+                ++live;
+            }
+            ~Part() { --live; ++drops; dropOrder = dropOrder * 10 + id; }
+        }
+
+        struct Stem   { root : Part; }
+        struct Holder : Stem { m1 : Part; m2 : Part; m3 : Part; }
+        struct Inner  { m1 : Part; m2 : Part; }
+        struct Outer  { m1 : Part; m2 : Inner; }
+        struct ArrayHolder : Stem { items : Part[3]; }
+        struct Tagged : Stem { a : Mark; m1 : Part; m2 : Part; z : Mark; }
+        struct TaggedArray : Stem { a : Mark[2]; m1 : Part; m2 : Part; z : Mark; }
+
+        reset() {
+            live = 0; attempts = 0; drops = 0; dropOrder = 0; failId = -1; marks = 0;
+        }
+        snap(code : int) {
+            snapCode = code; snapAttempts = attempts; snapDrops = drops;
+            snapOrder = dropOrder; snapLive = live; snapMarks = marks;
+        }
+        getCode()     : int { return snapCode; }
+        getAttempts() : int { return snapAttempts; }
+        getDrops()    : int { return snapDrops; }
+        getOrder()    : int { return snapOrder; }
+        getLive()     : int { return snapLive; }
+        getMarks()    : int { return snapMarks; }
+
+        baseThenMember() : int {
+            reset();
+            valid : bool = true;
+            {
+                h : Holder;
+                h.root.id = 1; h.m1.id = 2; h.m2.id = 3; h.m3.id = 4;
+                failId = 3;
+                code : int = 0;
+                try { c : Holder = h; }
+                catch (e : Throwable&) { code = e.getCode(); }
+                snap(code);
+                valid = valid && code == 931 && attempts == 3 && drops == 2;
+                valid = valid && dropOrder == 21 && live == 4;
+                valid = valid && h.root.id == 1 && h.m1.id == 2 && h.m2.id == 3 && h.m3.id == 4;
+                failId = -1;
+            }
+            return valid && drops == 6 && live == 0 ? 1 : 0;
+        }
+
+        nestedGeneratedCopy() : int {
+            reset();
+            valid : bool = true;
+            {
+                o : Outer;
+                o.m1.id = 1; o.m2.m1.id = 2; o.m2.m2.id = 3;
+                failId = 3;
+                code : int = 0;
+                try { c : Outer = o; }
+                catch (e : Throwable&) { code = e.getCode(); }
+                snap(code);
+                valid = valid && code == 931 && attempts == 3 && drops == 2;
+                valid = valid && dropOrder == 21 && live == 3;
+                valid = valid && o.m1.id == 1 && o.m2.m1.id == 2 && o.m2.m2.id == 3;
+                failId = -1;
+            }
+            return valid && drops == 5 && live == 0 ? 1 : 0;
+        }
+
+        arrayMemberCopy() : int {
+            reset();
+            valid : bool = true;
+            {
+                h : ArrayHolder;
+                h.root.id = 1;
+                h.items[0].id = 2; h.items[1].id = 3; h.items[2].id = 4;
+                failId = 3;
+                code : int = 0;
+                try { c : ArrayHolder = h; }
+                catch (e : Throwable&) { code = e.getCode(); }
+                snap(code);
+                valid = valid && code == 931 && attempts == 3 && drops == 2;
+                valid = valid && dropOrder == 21 && live == 4;
+                valid = valid && h.root.id == 1 && h.items[0].id == 2
+                    && h.items[1].id == 3 && h.items[2].id == 4;
+                failId = -1;
+            }
+            return valid && drops == 6 && live == 0 ? 1 : 0;
+        }
+
+        plainMemberCopy() : int {
+            reset();
+            valid : bool = true;
+            {
+                t : Tagged;
+                t.root.id = 1; t.m1.id = 2; t.m2.id = 3; t.a.n = 5; t.z.n = 9;
+                failId = 3;
+                code : int = 0;
+                try { c : Tagged = t; }
+                catch (e : Throwable&) { code = e.getCode(); }
+                snap(code);
+                valid = valid && code == 931 && attempts == 3 && drops == 2;
+                valid = valid && dropOrder == 21 && live == 3 && marks == 5;
+                valid = valid && t.root.id == 1 && t.m1.id == 2 && t.m2.id == 3
+                    && t.a.n == 5 && t.z.n == 9;
+                failId = -1;
+            }
+            return valid && drops == 5 && live == 0 && marks == 595 ? 1 : 0;
+        }
+
+        plainArrayMemberCopy() : int {
+            reset();
+            valid : bool = true;
+            {
+                t : TaggedArray;
+                t.root.id = 1; t.m1.id = 2; t.m2.id = 3;
+                t.a[0].n = 5; t.a[1].n = 6; t.z.n = 9;
+                failId = 3;
+                code : int = 0;
+                try { c : TaggedArray = t; }
+                catch (e : Throwable&) { code = e.getCode(); }
+                snap(code);
+                valid = valid && code == 931 && attempts == 3 && drops == 2;
+                valid = valid && dropOrder == 21 && live == 3 && marks == 65;
+                valid = valid && t.root.id == 1 && t.m1.id == 2 && t.m2.id == 3
+                    && t.a[0].n == 5 && t.a[1].n == 6 && t.z.n == 9;
+                failId = -1;
+            }
+            return valid && drops == 5 && live == 0 && marks == 65965 ? 1 : 0;
+        }
+    )SRC");
+    REQUIRE(jit);
+
+    auto code     = jit->lookup_symbol<int (*)()>("getCode");
+    auto attempts = jit->lookup_symbol<int (*)()>("getAttempts");
+    auto drops    = jit->lookup_symbol<int (*)()>("getDrops");
+    auto order    = jit->lookup_symbol<int (*)()>("getOrder");
+    auto live     = jit->lookup_symbol<int (*)()>("getLive");
+    auto marks    = jit->lookup_symbol<int (*)()>("getMarks");
+    REQUIRE(code);
+    REQUIRE(attempts);
+    REQUIRE(drops);
+    REQUIRE(order);
+    REQUIRE(live);
+    REQUIRE(marks);
+
+    for (const auto* name : {"baseThenMember", "nestedGeneratedCopy", "arrayMemberCopy",
+                             "plainMemberCopy", "plainArrayMemberCopy"}) {
+        INFO(name);
+        auto run = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(run);
+        for (int iteration = 0; iteration < 2; ++iteration) {
+            INFO(iteration);
+            int result = 0;
+            REQUIRE_NOTHROW(result = run());
+            INFO("code=" << code() << " attempts=" << attempts() << " drops=" << drops()
+                 << " order=" << order() << " live=" << live() << " marks=" << marks());
+            CHECK(result == 1);
+        }
+    }
+}
+

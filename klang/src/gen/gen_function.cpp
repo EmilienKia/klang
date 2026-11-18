@@ -2182,7 +2182,10 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
                         _builder->getInt64(size)
                     );
                     if (ctor->is_memberwise_copy()) {
-                        emit_memberwise_copy_fields(st, this_ptr, other_ptr);
+                        const auto other_type = model::type::canonical(other_param->get_type());
+                        const bool source_const = other_type && model::type::is_reference(other_type)
+                            && model::type::is_const(other_type->get_subtype());
+                        emit_memberwise_copy_fields(st, this_ptr, other_ptr, source_const);
                         if (auto kl = std::dynamic_pointer_cast<klass>(st); kl && kl->has_vtable()) {
                             emit_vptr_store(*_builder, *kl, this_ptr, _context);
                         }
@@ -2272,77 +2275,85 @@ bool implementation_generator::emit_constructor_pre_block(function& function, ll
 }
 
 /**
- * Finish a synthesized memberwise copy: the whole object was already copied bytewise, so
- * every base or member that has its own copy constructor is re-initialised in place
- * (zeroed, then copy-constructed from the source) to replace the aliased bytes.
+ * The initial bytewise copy leaves aliased subobjects. Replace constructed subobjects
+ * in the existing copy order and unwind only completed lifetimes.
  */
 void implementation_generator::emit_memberwise_copy_fields(const std::shared_ptr<aggregate>& st,
-                                                           llvm::Value* dest, llvm::Value* source) {
+                                                           llvm::Value* dest, llvm::Value* source,
+                                                           bool source_const) {
     auto st_type = st->get_struct_type();
     auto st_llvm = _context->get_llvm_type(st_type);
 
-    std::function<void(const std::shared_ptr<type>&, llvm::Value*, llvm::Value*)> copy_value;
-    copy_value = [&](const std::shared_ptr<type>& t, llvm::Value* d, llvm::Value* s) {
-        auto nt = type::canonical(type::remove_const(t));
-        if (member_copy_kind_of(nt) != member_copy_kind::constructed) return;
-        if (auto arr = std::dynamic_pointer_cast<sized_array_type>(nt)) {
-            auto* arr_type = arr->get_llvm_struct_type();
-            auto* data_type = arr->get_llvm_data_array_type();
-            auto* dst_data = _builder->CreateStructGEP(arr_type, d, sized_array_type::FIELD_DATA, "mwc_dst_data");
-            auto* src_data = _builder->CreateStructGEP(arr_type, s, sized_array_type::FIELD_DATA, "mwc_src_data");
-            auto* fn = _builder->GetInsertBlock()->getParent();
-            auto* entry = _builder->GetInsertBlock();
-            auto* test = llvm::BasicBlock::Create(**_context, "mwc_test", fn);
-            auto* body = llvm::BasicBlock::Create(**_context, "mwc_elem", fn);
-            auto* done = llvm::BasicBlock::Create(**_context, "mwc_done", fn);
-            _builder->CreateBr(test);
-            _builder->SetInsertPoint(test);
-            auto* index = _builder->CreatePHI(_builder->getInt32Ty(), 2, "mwc_index");
-            index->addIncoming(_builder->getInt32(0), entry);
-            _builder->CreateCondBr(_builder->CreateICmpULT(index, _builder->getInt32((uint32_t)arr->get_size())),
-                                   body, done);
-            _builder->SetInsertPoint(body);
-            auto* dst_elem = _builder->CreateInBoundsGEP(data_type, dst_data, {_builder->getInt32(0), index});
-            auto* src_elem = _builder->CreateInBoundsGEP(data_type, src_data, {_builder->getInt32(0), index});
-            copy_value(arr->get_subtype(), dst_elem, src_elem);
-            auto* next = _builder->CreateAdd(index, _builder->getInt32(1), "mwc_next");
-            index->addIncoming(next, _builder->GetInsertBlock());
-            _builder->CreateBr(test);
-            _builder->SetInsertPoint(done);
-            return;
+    auto has_leaf_copy = [](std::shared_ptr<type> value_type) {
+        value_type = type::canonical(type::remove_const(value_type));
+        while (auto array = std::dynamic_pointer_cast<sized_array_type>(value_type)) {
+            value_type = type::canonical(type::remove_const(array->get_subtype()));
         }
-        auto member_type = std::dynamic_pointer_cast<struct_type>(nt);
+        auto member_type = std::dynamic_pointer_cast<struct_type>(value_type);
         auto agg = member_type ? member_type->get_struct() : nullptr;
-        auto copy = agg ? agg->get_copy_constructor() : nullptr;
-        if (!copy) return;
-        auto it = _context->_functions.find(copy->shared_as<function>());
-        if (it == _context->_functions.end()) {
-            throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F031), {},
-                "LLVM declaration not found for the copy constructor of member type '{}'",
-                {nt->to_string()});
-        }
-        _builder->CreateStore(llvm::Constant::getNullValue(_context->get_llvm_type(member_type)), d);
-        create_call_or_invoke(it->second->getFunctionType(), it->second, {d, s});
+        return agg && agg->get_copy_constructor();
     };
 
-    auto copy_field = [&](const std::string& field_name, const std::shared_ptr<type>& field_type) {
+    struct copy_step {
+        unsigned field;
+        std::shared_ptr<type> value_type;
+        bool source_const;
+        bool construct;
+    };
+    std::vector<copy_step> steps;
+    auto add_step = [&](const std::string& field_name, const std::shared_ptr<type>& field_type,
+                        bool readonly) {
         auto field = st_type->get_member(field_name);
         if (!field) return;
-        auto* d = _builder->CreateStructGEP(st_llvm, dest, (unsigned)field->index, "mwc_dst_" + field_name);
-        auto* s = _builder->CreateStructGEP(st_llvm, source, (unsigned)field->index, "mwc_src_" + field_name);
-        copy_value(field_type, d, s);
+        const auto kind = member_copy_kind_of(field_type);
+        const auto bare_type = type::canonical(type::remove_const(field_type));
+        // Plain bytes are already copied, but their cleanup must start at the ordered step.
+        if (kind == member_copy_kind::plain && value_type_needs_cleanup(bare_type)) {
+            steps.push_back({static_cast<unsigned>(field->index), bare_type, false, false});
+            return;
+        }
+        if (kind != member_copy_kind::constructed || !has_leaf_copy(field_type)) return;
+        const bool const_source = source_const || readonly || type::is_const(field_type)
+            || type::is_const(type::canonical(field_type));
+        steps.push_back({static_cast<unsigned>(field->index), bare_type, const_source, true});
     };
-
     for (const auto& bs : st->get_bases()) {
         if (bs.base && bs.base->get_struct_type()) {
-            copy_field("__base_" + bs.sanitised_name() + "__", bs.base->get_struct_type());
+            add_step("__base_" + bs.sanitised_name() + "__", bs.base->get_struct_type(), false);
         }
     }
     for (const auto& entry : st->variables()) {
         auto mv = std::dynamic_pointer_cast<member_variable_definition>(entry.second);
         if (!mv || entry.first.rfind("__", 0) == 0) continue;
-        copy_field(entry.first, mv->get_type());
+        add_step(entry.first, mv->get_type(), mv->is_const());
     }
+    size_t last_copy = steps.size();
+    for (size_t i = 0; i < steps.size(); ++i) {
+        if (steps[i].construct) last_copy = i;
+    }
+    if (last_copy == steps.size()) return;
+
+    // Every address must dominate the first copy's shared unwind edges.
+    std::vector<llvm::Value*> targets, sources;
+    for (const auto& step : steps) {
+        targets.push_back(_builder->CreateStructGEP(st_llvm, dest, step.field, "mwc_dst"));
+        sources.push_back(_builder->CreateStructGEP(st_llvm, source, step.field, "mwc_src"));
+    }
+
+    // Only steps before the last potentially throwing copy need cleanup tracking.
+    call_argument_cleanup_scope completed(*this, last_copy > 0);
+    for (size_t i = 0; i <= last_copy; ++i) {
+        if (steps[i].construct) {
+            if (!std::dynamic_pointer_cast<sized_array_type>(steps[i].value_type)) {
+                _builder->CreateStore(
+                    llvm::Constant::getNullValue(_context->get_llvm_type(steps[i].value_type)), targets[i]);
+            }
+            emit_value_copy_or_move(targets[i], sources[i], steps[i].value_type, false, {},
+                                    "memberwise copy", false, false, nullptr, steps[i].source_const);
+        }
+        if (i < last_copy) completed.track_storage(steps[i].value_type, targets[i]);
+    }
+    completed.transfer();
 }
 
 /**

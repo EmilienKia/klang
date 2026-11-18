@@ -573,6 +573,8 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
             auto* source_count = _builder->CreateLoad(_builder->getInt32Ty(), source_count_ptr);
             _builder->CreateStore(llvm::Constant::getNullValue(layout), dest);
             auto element = type::remove_const(type::canonical(array_type->get_subtype()));
+            const bool element_const = source_const || type::is_const(array_type->get_subtype())
+                || type::is_const(type::canonical(array_type->get_subtype()));
             auto& ctx = _builder->getContext();
             auto* ptr_type = llvm::PointerType::get(ctx, 0);
             auto* exception_type = llvm::StructType::get(ctx, {ptr_type, _builder->getInt32Ty()});
@@ -616,7 +618,8 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
             auto* target = _builder->CreateInBoundsGEP(data_type, target_data, {_builder->getInt32(0), index});
             auto* source = _builder->CreateInBoundsGEP(data_type, source_data, {_builder->getInt32(0), index});
             if (type::is_struct(element) || type::is_sized_array(element))
-                emit_value_copy_or_move(target, source, element, false, lexeme, copy_context, false, false);
+                emit_value_copy_or_move(target, source, element, false, lexeme, copy_context, false, false,
+                                        nullptr, element_const);
             else
                 _builder->CreateStore(_builder->CreateLoad(_context->get_llvm_type(element), source), target);
             _builder->CreateStore(_builder->CreateAdd(index, _builder->getInt32(1)), target_count);
@@ -630,7 +633,12 @@ void implementation_generator::emit_value_copy_or_move(llvm::Value* dest, llvm::
             _builder->CreateStore(_builder->CreateExtractValue(exception, 1), _exc_sel_slot);
             _builder->CreateBr(cleanup.cleanup_code_bb);
             _builder->SetInsertPoint(cleanup.cleanup_code_bb);
-            emit_value_cleanup(_builder.get(), get_module(), _context->_functions, dest, nt);
+            auto pending_metadata = save_pending_exception_metadata();
+            cleanup_fault_guard fault(*this, cleanup.cleanup_code_bb, has_catch);
+            emit_value_cleanup(_builder.get(), get_module(), _context->_functions, dest, nt,
+                               make_virtual_call_emitter());
+            fault.close();
+            restore_pending_exception_metadata(pending_metadata);
             if (cleanup.continuation == cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP) {
                 _builder->CreateBr(cleanup.chain_target_bb);
             } else {

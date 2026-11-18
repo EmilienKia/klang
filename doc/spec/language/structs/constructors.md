@@ -238,7 +238,10 @@ can be copied implicitly:
 - A constructor-call initializer (`a : Box = Box()`) is a prvalue, not an lvalue copy: it is moved into
   the variable and never requires a copy constructor.
 
-A copy that throws part-way does not destroy the sub-objects already copied (documented limitation).
+A memberwise copy that throws part-way destroys the bases and members already copied, in the
+reverse of the copy order, and rethrows. Subobjects not copied yet are not destroyed, and the
+source is untouched. If one of those destructors throws, the remaining completed subobjects
+are destroyed before that exception propagates in place of the pending one.
 
 ---
 ## 8. Examples

@@ -1014,8 +1014,9 @@ public:
                                         const std::shared_ptr<aggregate>& wrapper,
                                         bool destroy_dest_first, bool source_const,
                                         bool move = false);
-    /** Copy-construct the bases and members of `st` that own resources (synthesized memberwise copy). */
-    void emit_memberwise_copy_fields(const std::shared_ptr<aggregate>& st, llvm::Value* dest, llvm::Value* source);
+    /** Complete a synthesized memberwise copy, unwinding only completed subobjects on failure. */
+    void emit_memberwise_copy_fields(const std::shared_ptr<aggregate>& st, llvm::Value* dest,
+                                    llvm::Value* source, bool source_const);
     void emit_union_copy_failure();
     llvm::Value* union_live_state_ptr(llvm::Value* storage, union_type_def& udef);
     void set_union_live_state(llvm::Value* storage, union_type_def& udef, bool live);

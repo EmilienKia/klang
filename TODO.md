@@ -140,6 +140,42 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **STATIC candidate: failed reconstructive assignment leaves its target live.**
+      `emit_value_copy_or_move` in `gen_operators_assign.cpp` disarms and rearms
+      a destination's constructed flag only for named-result assignment.
+      An ordinary local's flag appears to stay set when destruction succeeds
+      but the following copy constructor throws. Scope cleanup can then call
+      the whole destructor on a target whose reconstruction never completed.
+      The generated assignment body in `gen_function.cpp` also destroys first
+      and copies without access to the caller's lifetime flag.
+      Reproduce independently of generated memberwise copying with an inline
+      `Part` counter: default construction increments `live`, its user-written
+      copy constructor throws code 931 for source id 3 before incrementing
+      `live`, and destruction decrements `live` and increments `drops`.
+      Construct target id 5 and source id 3, catch `target = source`, then leave
+      their scope. Expected totals are `drops == 2` and `live == 0`; an extra
+      target destruction would give `drops == 3` and `live == -1`. These are
+      derived expectations, not runtime observations. Also cover a generated
+      memberwise target whose completed copy prefix has already been unwound.
+      A locals-only flag fix is insufficient: fields, array elements, reference
+      targets, parameters and globals need coherent failed-target lifetime
+      handling. Preserve destroy-then-copy assignment order; do not silently
+      introduce copy-before-destroy or claim this is fixed by copy-constructor
+      prefix cleanup.
+
+- [ ] **STATIC candidate: constness of union array-alternative assignment.**
+      In `gen_operators_assign.cpp`, the `union_moe` array-alternative branch
+      calls `emit_value_copy_or_move` without the source-const flag, although
+      resolution checks the copy contract using the source qualification.
+      A possible reproducer assigns a const source array of inner unions into
+      an outer union's array alternative, with distinct mutable/const payload
+      copy constructors. First establish that the source shape is accepted:
+      `const Cell[2]&` denotes const elements and may encounter existing array
+      compatibility restrictions. Do not broaden those rules merely to make
+      the fixture compile. The ordinary partial union-array assignment loop
+      already has separate source-const handling; forwarding through generic
+      array recursion alone does not establish correctness of this caller.
+
 - [ ] **STATIC candidate: release displaced exceptions in cleanup landing pads.**
       A destructor throwing during an existing unwind can abandon the first
       exception without a balanced `__cxa_begin_catch` / `__cxa_end_catch`.

@@ -4833,6 +4833,7 @@ TEST_CASE("Exception unwinding: a throwing destructor does not skip the remainin
         }
         struct Part {
             id : int;
+            Part() : id(0) {}
             Part(value : int) : id(value) {}
             Part(other : const Part&) : id(other.id + 10) {
                 if (other.id == 3) throw Exception(931);
@@ -4846,6 +4847,9 @@ TEST_CASE("Exception unwinding: a throwing destructor does not skip the remainin
             }
         }
         consume3(a : Part, b : Part, c : Part) {}
+        struct Stem { root : Part; }
+        struct Holder : Stem { m1 : Part; m2 : Part; }
+        struct ArrayHolder : Stem { items : Part[3]; }
         propagate() {
             x1 : Part(1); x2 : Part(2); x3 : Part(3);
             consume3(x1, x2, x3);
@@ -4871,10 +4875,37 @@ TEST_CASE("Exception unwinding: a throwing destructor does not skip the remainin
         propagatedFault() : int { return propagated(true); }
         localPlain() : int { return local(false); }
         localFault() : int { return local(true); }
+        copyFields(fail : bool, useArray : bool) : int {
+            order = 0; copyDrops = 0; failCleanup = fail;
+            valid : bool = true;
+            {
+                h : Holder;
+                a : ArrayHolder;
+                h.root.id = 1; h.m1.id = 2; h.m2.id = 3;
+                a.root.id = 1; a.items[0].id = 2; a.items[1].id = 3; a.items[2].id = 4;
+                code : int = 0;
+                replacement : bool = false;
+                try {
+                    if (useArray) { c : ArrayHolder = a; }
+                    else { c : Holder = h; }
+                }
+                catch (e : Cleanup&) { code = e.getCode(); replacement = true; }
+                catch (e : Throwable&) { code = e.getCode(); }
+                valid = code == (fail ? 82 : 931) && replacement == fail
+                    && order == 1211 && copyDrops == 2;
+            }
+            return valid ? 0 : 1;
+        }
+        memberwisePlain() : int { return copyFields(false, false); }
+        memberwiseFault() : int { return copyFields(true, false); }
+        arrayMemberPlain() : int { return copyFields(false, true); }
+        arrayMemberFault() : int { return copyFields(true, true); }
     )K", false, optimize);
     REQUIRE(jit);
     INFO("optimize=" << optimize);
-    for (const auto* name : {"propagatedPlain", "propagatedFault", "localPlain", "localFault"}) {
+    for (const auto* name : {"propagatedPlain", "propagatedFault", "localPlain", "localFault",
+                             "memberwisePlain", "memberwiseFault", "arrayMemberPlain",
+                             "arrayMemberFault"}) {
         INFO(name);
         auto probe = jit->lookup_symbol<int (*)()>(name);
         REQUIRE(probe);
