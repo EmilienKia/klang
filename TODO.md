@@ -140,28 +140,50 @@
 
 #### Current bugs and gaps to fix
 
-- [ ] **STATIC candidate: failed reconstructive assignment leaves its target live.**
-      `emit_value_copy_or_move` in `gen_operators_assign.cpp` disarms and rearms
-      a destination's constructed flag only for named-result assignment.
-      An ordinary local's flag appears to stay set when destruction succeeds
-      but the following copy constructor throws. Scope cleanup can then call
-      the whole destructor on a target whose reconstruction never completed.
-      The generated assignment body in `gen_function.cpp` also destroys first
-      and copies without access to the caller's lifetime flag.
-      Reproduce independently of generated memberwise copying with an inline
-      `Part` counter: default construction increments `live`, its user-written
-      copy constructor throws code 931 for source id 3 before incrementing
-      `live`, and destruction decrements `live` and increments `drops`.
-      Construct target id 5 and source id 3, catch `target = source`, then leave
-      their scope. Expected totals are `drops == 2` and `live == 0`; an extra
-      target destruction would give `drops == 3` and `live == -1`. These are
-      derived expectations, not runtime observations. Also cover a generated
-      memberwise target whose completed copy prefix has already been unwound.
-      A locals-only flag fix is insufficient: fields, array elements, reference
-      targets, parameters and globals need coherent failed-target lifetime
-      handling. Preserve destroy-then-copy assignment order; do not silently
-      introduce copy-before-destroy or claim this is fixed by copy-constructor
-      prefix cleanup.
+- [ ] **Confirmed: failed generated memberwise assignment destroys its target twice.**
+      Deferred separately from the RTTI invocation prerequisites. The generated
+      `__operator_aS_` body in `gen_function.cpp` destroys its target, zeroes it,
+      then invokes its generated memberwise copy constructor. If that copy
+      throws, it unwinds its completed prefix, but the caller still considers
+      the whole target live and destroys it again at scope exit.
+      Reproducer: a `Holder : Stem` with `Stem.root : Part` and three `Part`
+      members. Default construction increments `live`; `Part(const Part&)`
+      increments `attempts`, throws code 931 for source id 3 before incrementing
+      `live`, and otherwise completes. Destruction decrements `live` and
+      increments `drops`. Construct source ids 1..4 and target ids 5..8, catch
+      `target = source`, then leave their scope. Observed at the catch:
+      code 931, attempts 3, drops 6, live 4. Observed after scope exit:
+      attempts 3, drops 14, live -4, demonstrating four extra destructions.
+      A scalar-only `Part` assignment control invokes no copy constructor
+      (attempts 0, drops 2, live 0); it does not reproduce this failure.
+      Ordinary structs have no persistent per-object liveness state. The
+      named-result constructed-flag guard in `emit_value_copy_or_move` does
+      not protect arbitrary assignment destinations. A locals-only fix is
+      insufficient for fields, array elements, reference aliases and globals.
+      A complete repair needs an explicit choice between staged replacement
+      and persistent liveness tracking. Preserve the current documented
+      destroy-then-copy order until that separate change is approved.
+
+- [ ] **STATIC candidate: generated assignment shallow-copies user-copy types.**
+      `emit_copy_assignment_operator` in `gen_function.cpp` reconstructs
+      generated memberwise-copy types, but its other branch uses `memcpy`,
+      including aggregates with a user-written copy constructor. The scalar
+      `Part` control above confirms that assignment skips that constructor.
+      Reproduce ownership consequences separately with a user-copy type
+      containing an owner: check whether assignment aliases its resource and
+      later releases it twice. That ownership failure is not runtime-confirmed.
+
+- [ ] **Confirmed: nested aggregate construction omits its enclosing argument.**
+      A non-static `Host.Inner` containing a copy-constructed `Part` fails even
+      without copying: construct `Inner` inside a `Host` instance method.
+      The emitted C1 call has too few arguments for its injected `Host&`
+      parameter and fails LLVM verification with internal error 0F055.
+      Generated, manual and explicit nested-copy variants also fail resolution:
+      "No constructor found with 1 argument(s); available constructors have:
+      2 parameter(s)". Their top-level controls return 42 with one copy and
+      two destructions. Fix enclosing-instance argument assembly and copy
+      recognition consistently; a generated-copy-only ABI shortcut does not
+      establish correct ordinary nested construction or manual copying.
 
 - [ ] **STATIC candidate: constness of union array-alternative assignment.**
       In `gen_operators_assign.cpp`, the `union_moe` array-alternative branch
