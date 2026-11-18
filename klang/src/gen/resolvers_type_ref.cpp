@@ -241,6 +241,27 @@ void type_reference_resolver::check_constructor_visibility(const constructor& ct
          vis == PROTECTED ? " or its subclasses or friends" : " or its friends"});
 }
 
+// Mirrors the copy-site sequence of adapt_reference_load_value, including its
+// early deleted-constructor diagnostic (throw_on_failure).
+std::shared_ptr<constructor> type_reference_resolver::resolve_copy_constructor(
+    const std::shared_ptr<type>& value_type, const std::shared_ptr<expression>& source,
+    const element& access_site) {
+    auto structure = std::dynamic_pointer_cast<struct_type>(
+        type::canonical(type::remove_const(type::canonical(value_type))));
+    auto owner = structure ? structure->get_struct() : nullptr;
+    if (!owner) return nullptr;
+    std::vector<std::shared_ptr<constructor>> copies;
+    for (const auto& ctor : owner->constructors()) {
+        if (ctor && owner->is_copy_constructor(*ctor)) copies.push_back(ctor);
+    }
+    if (copies.empty()) return nullptr;
+    auto [selected, adapted] = get_best_matching_constructor(
+        copies, {source}, true, access_site.get_interest_lexeme());
+    check_constructor_visibility(*selected, access_site);
+    check_call_contract(*selected, access_site.get_interest_lexeme());
+    return selected;
+}
+
 /**
  * Resolve an aggregate (structure or class) by qualified name descending from elem, without climbing to parents.
  */

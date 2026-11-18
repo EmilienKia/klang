@@ -81,6 +81,7 @@ void context::reset() {
     _unresolved.clear();
     _global_vars.clear();
     _functions.clear();
+    _generated_copy_constructors.clear();
     _parameter_variables.clear();
     _function_this_variables.clear();
     _variables.clear();

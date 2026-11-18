@@ -691,6 +691,12 @@ protected:
      */
     void check_constructor_visibility(const constructor& ctor, const element& access_site);
 
+    // Copy-site selection for a generated subobject copy. Null when the type is
+    // not a struct or declares no copy constructor.
+    std::shared_ptr<constructor> resolve_copy_constructor(
+        const std::shared_ptr<type>& value_type, const std::shared_ptr<expression>& source,
+        const element& access_site);
+
     void visit_block(block&) override;
     void visit_return_statement(return_statement&) override;
     void visit_break_statement(break_statement&) override;

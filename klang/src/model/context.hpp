@@ -56,6 +56,7 @@ class constant_value;
 class variable_statement;
 class parameter;
 class function;
+class constructor;
 class global_variable_definition;
 
 namespace gen {
@@ -107,6 +108,10 @@ protected:
     // Filled alongside actual LLVM prototype construction. -1 = sret,
     // -2 = receiver, nonnegative = declared parameter position.
     std::map<const function*, std::vector<int>> _native_argument_sources;
+    // Generated copy plans: function -> mangled source-qualified subobject type
+    // -> selected copy constructor. A null selection means none was made;
+    // consumers classify eligibility. Cleared by reset().
+    std::map<const function*, std::map<std::string, std::shared_ptr<constructor>>> _generated_copy_constructors;
     // Pin semantic nodes as well as forward globals: recursive signatures may
     // revisit freshly resolved wrappers that otherwise have only weak owners.
     std::vector<std::pair<std::shared_ptr<type>, llvm::GlobalVariable*>> _rtti_types;
