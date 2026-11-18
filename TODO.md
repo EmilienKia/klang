@@ -140,6 +140,23 @@
 
 #### Current bugs and gaps to fix
 
+- [ ] **STATIC candidate: release displaced exceptions in cleanup landing pads.**
+      A destructor throwing during an existing unwind can abandon the first
+      exception without a balanced `__cxa_begin_catch` / `__cxa_end_catch`.
+      `emit_abandoned_exception_cleanup` in `gen_statements.cpp` already performs
+      that release for `finally` replacement, preserving thrown-state metadata,
+      but plain argument, array, block and constructor/destructor cleanup paths
+      do not consistently use it. Possible consequences are a retained exception
+      object/cause and an inflated ABI uncaught-exception count; these effects
+      have not been runtime-confirmed for those cleanup paths.
+      Adapt the existing "displaced pending exceptions release their objects"
+      test in `test-gen-exceptions.cpp`: throw from a destructor during plain
+      unwind, count both generated `__k_exc_dtor_*` callbacks, and compare
+      `std::uncaught_exceptions()` before and after the caught replacement.
+      Check same-object rethrows and preserve replacement metadata when releasing
+      an abandoned exception. The argument cleanup retry fix does not establish
+      ownership correctness for all these paths.
+
 - [x] **Root-qualified imported base classes are not found.** Fixed:
       `scope_lookup::lookup_structure_or_import` now treats a leading `::` as a
       root marker (the scope chain is not searched, and a repeated module name

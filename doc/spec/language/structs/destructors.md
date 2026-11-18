@@ -185,7 +185,9 @@ Exception cleanup must not destroy the same copy again.
 
 Argument copies are constructed before entry into the callee. If a later
 argument copy throws, the callee must not execute; earlier completed argument
-copies and transferred owner arguments must be cleaned up exactly once.
+copies and transferred owner arguments must be cleaned up exactly once. If
+cleaning one of them throws, the remaining ones are still cleaned up before the
+exception thrown by that cleanup propagates in place of the pending one.
 
 ---
 

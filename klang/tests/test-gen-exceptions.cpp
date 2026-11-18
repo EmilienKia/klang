@@ -4818,6 +4818,70 @@ TEST_CASE("Exception unwinding: constructor finally cleans completed members",
     }
 }
 
+TEST_CASE("Exception unwinding: a throwing destructor does not skip the remaining argument copies",
+          "[gen][exceptions][unwinding][copy-arguments][destructor-throw][regression]") {
+    const bool optimize = GENERATE(false, true);
+    CAPTURE(optimize);
+    auto jit = gen_jit(R"K(
+        module throwing_cleanup_unwind;
+        order : int = 0;
+        copyDrops : int = 0;
+        failCleanup : bool = false;
+        class Cleanup : public Exception {
+        public:
+            Cleanup() : Exception(82) {}
+        }
+        struct Part {
+            id : int;
+            Part(value : int) : id(value) {}
+            Part(other : const Part&) : id(other.id + 10) {
+                if (other.id == 3) throw Exception(931);
+            }
+            ~Part() {
+                if (id > 10) {
+                    ++copyDrops;
+                    order = order * 100 + id;
+                    if (id == 12 && failCleanup) throw Cleanup();
+                }
+            }
+        }
+        consume3(a : Part, b : Part, c : Part) {}
+        propagate() {
+            x1 : Part(1); x2 : Part(2); x3 : Part(3);
+            consume3(x1, x2, x3);
+        }
+        propagated(fail : bool) : int {
+            order = 0; copyDrops = 0; failCleanup = fail;
+            code : int = 0;
+            try { propagate(); }
+            catch (e : Throwable&) { code = e.getCode(); }
+            return code == (fail ? 82 : 931) && order == 1211 && copyDrops == 2 ? 0 : 1;
+        }
+        local(fail : bool) : int {
+            order = 0; copyDrops = 0; failCleanup = fail;
+            code : int = 0;
+            {
+                x1 : Part(1); x2 : Part(2); x3 : Part(3);
+                try { consume3(x1, x2, x3); }
+                catch (e : Throwable&) { code = e.getCode(); }
+            }
+            return code == (fail ? 82 : 931) && order == 1211 && copyDrops == 2 ? 0 : 1;
+        }
+        propagatedPlain() : int { return propagated(false); }
+        propagatedFault() : int { return propagated(true); }
+        localPlain() : int { return local(false); }
+        localFault() : int { return local(true); }
+    )K", false, optimize);
+    REQUIRE(jit);
+    INFO("optimize=" << optimize);
+    for (const auto* name : {"propagatedPlain", "propagatedFault", "localPlain", "localFault"}) {
+        INFO(name);
+        auto probe = jit->lookup_symbol<int (*)()>(name);
+        REQUIRE(probe);
+        check_bounded_exception_probe(probe);
+    }
+}
+
 TEST_CASE("Exception unwinding: sized array elements destroyed on throw",
           "[gen][exceptions][unwinding][array]") {
     auto res = build_and_exec(R"(

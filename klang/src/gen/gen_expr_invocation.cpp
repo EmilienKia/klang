@@ -2456,6 +2456,41 @@ void implementation_generator::call_argument_cleanup_scope::destroy(const entry&
     if (pending_children) _gen._builder->CreateStore(_gen._builder->getFalse(), value.live);
 }
 
+implementation_generator::cleanup_fault_guard::cleanup_fault_guard(
+    implementation_generator& gen, llvm::BasicBlock* retry, bool has_catch)
+    : _gen(gen), _retry(retry), _has_catch(has_catch) {
+    auto* func = gen._builder->GetInsertBlock()->getParent();
+    _lpad = llvm::BasicBlock::Create(gen._context->llvm_context(), "cleanup_fault_lpad", func);
+    cleanup_lpad_context context{};
+    context.lpad_bb = _lpad;
+    context.cleanup_code_bb = retry;
+    context.continuation = cleanup_lpad_context::RESUME;
+    context.depth = ++gen._lpad_depth_counter;
+    gen._cleanup_lpad_stack.push(context);
+}
+
+implementation_generator::cleanup_fault_guard::~cleanup_fault_guard() {
+    if (_open) _gen._cleanup_lpad_stack.pop();
+}
+
+void implementation_generator::cleanup_fault_guard::close() {
+    _open = false;
+    _gen._cleanup_lpad_stack.pop();
+    auto& llvm_ctx = _gen._context->llvm_context();
+    auto* ptr_ty = llvm::PointerType::get(llvm_ctx, 0);
+    auto* i32_ty = llvm::Type::getInt32Ty(llvm_ctx);
+    auto* resume_bb = _gen._builder->GetInsertBlock();
+    _gen._builder->SetInsertPoint(_lpad);
+    auto* lpad = _gen._builder->CreateLandingPad(llvm::StructType::get(llvm_ctx, {ptr_ty, i32_ty}),
+                                               _has_catch ? 1 : 0, "cleanup_fault_exception");
+    lpad->setCleanup(true);
+    if (_has_catch) lpad->addClause(llvm::ConstantPointerNull::get(ptr_ty));
+    _gen._builder->CreateStore(_gen._builder->CreateExtractValue(lpad, 0), _gen._exc_ptr_slot);
+    _gen._builder->CreateStore(_gen._builder->CreateExtractValue(lpad, 1), _gen._exc_sel_slot);
+    _gen._builder->CreateBr(_retry);
+    _gen._builder->SetInsertPoint(resume_bb);
+}
+
 implementation_generator::call_argument_cleanup_scope::~call_argument_cleanup_scope() noexcept(false) {
     if (!_enabled) return;
     if (std::uncaught_exceptions() > _uncaught_exceptions) {
@@ -2484,6 +2519,7 @@ implementation_generator::call_argument_cleanup_scope::~call_argument_cleanup_sc
     _gen._builder->CreateBr(_context.cleanup_code_bb);
     _gen._builder->SetInsertPoint(_context.cleanup_code_bb);
     auto pending_metadata = _gen.save_pending_exception_metadata();
+    cleanup_fault_guard fault(_gen, _context.cleanup_code_bb, _has_local_catch);
     for (auto it = _entries.rbegin(); it != _entries.rend(); ++it) {
         if (it->variable) {
             _gen.emit_scope_variable_cleanup({it->variable}, "pending_result", true);
@@ -2498,6 +2534,7 @@ implementation_generator::call_argument_cleanup_scope::~call_argument_cleanup_sc
         _gen._builder->CreateBr(next_bb);
         _gen._builder->SetInsertPoint(next_bb);
     }
+    fault.close();
     _gen.restore_pending_exception_metadata(pending_metadata);
     if (_context.continuation == cleanup_lpad_context::CHAIN_TO_OUTER_CLEANUP) {
         _gen._builder->CreateBr(_context.chain_target_bb);

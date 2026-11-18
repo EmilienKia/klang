@@ -403,6 +403,18 @@ protected:
         void transfer();
     };
 
+    class cleanup_fault_guard {
+        implementation_generator& _gen;
+        llvm::BasicBlock* _retry;
+        llvm::BasicBlock* _lpad;
+        bool _has_catch;
+        bool _open = true;
+    public:
+        cleanup_fault_guard(implementation_generator& gen, llvm::BasicBlock* retry, bool has_catch);
+        ~cleanup_fault_guard();
+        void close();
+    };
+
     /** Shared depth counter for landing pad nesting.
      *  Incremented each time a landing pad or cleanup lpad is pushed.
      *  Used by create_call_or_invoke to determine the innermost handler. */
