@@ -1965,30 +1965,26 @@
 
 #### Current bugs and gaps to fix
 
-- [ ] **Whole sized-array assignment bit-copies elements and never releases the old
-  destination.** `a = b` for `a, b : T[N]` takes the "Array assignment: element-wise
-  copy" branch of `assignation_expression` in `klang/src/gen/gen_operators_assign.cpp`
-  (~lines 1914-1975 at rebase step 17; the same branch exists in `origin/main` and in
-  `feature/rtti-invoke`). It loads and stores each element and emits no cleanup, no copy
-  constructor and no union live-state handling, so the replaced elements are overwritten
-  without being destroyed. The `destroy_dest_first` array branch of
-  `emit_value_copy_or_move` (~516-540) is not reached for sized arrays. Repro (union
-  with an owner first alternative, `Resource` counts drops in `resourceDrops`):
-  `union Storage { value: Payload; number: int; }` with
-  `borrow(v: Storage&): Payload& { return v.value; }`,
-  `install(p: Payload&) { p.owned = new Resource(); }`, then
-  `a: Storage[2]; b: Storage[2]; install(borrow(a[0])); a = b;`. After `a = b` the
-  expected state is `constructs == 0`, `parentDrops == 0`, `resourceDrops == 1`; the
-  observed `assigned()` returned -5 at that check (validation 03, same failure in the
-  detailed retry), so the check failed. The cleanup counters were not measured
-  individually; `resourceDrops == 0` (leak) is inferred from the code, and a plain
-  array of owner-bearing classes presumably has the same hole. The permanent repro is
-  archived as `rebase-main-nov14/pending-union-array-assignment-regression.patch` in
-  the session files; it is to be re-applied to "Escaped first class owner in a local
-  union array is released once" in `klang/tests/test-gen-union.cpp` once fixed. The
-  pinned stash `eec5ff0c` contains the excluded array-assignment/union-drain
-  prerequisite (`union_array_assign` blocks); it needs semantic reconciliation and an
-  isolated commit after the rebase. Do not copy it blindly.
+- [ ] **Some whole sized-array assignments still bit-copy resource-bearing elements.**
+  The cleanup-needing, non-move-only union-element case is fixed and covered by the
+  assignment, throwing-copy, noncopyable and exception-contract regressions in
+  `klang/tests/test-gen-union.cpp`. Other element kinds still take the plain
+  `CreateStore(CreateLoad(...))` in the "Array assignment: element-wise copy" branch of
+  `implementation_generator::visit_simple_assignation_expression`
+  (`klang/src/gen/gen_operators_assign.cpp`). Remaining STATIC candidates, not yet
+  reproduced at runtime: struct elements (`Tracked[3] = Tracked[2]` with counting
+  copy/destruction and private/deleted copy constructors); owner and owning-callable
+  elements (lvalue `Resource![2]` assignment); statically move-only unions (owner in
+  a non-first alternative); unions needing no cleanup but containing a struct with a
+  nontrivial copy constructor; nested arrays and structs with union/owner members.
+  Verify copy access, destination release, ownership duplication and unwind behavior
+  separately before changing these paths. The pinned stash `eec5ff0c` contains excluded
+  array-assignment/union-drain prerequisites (`union_array_assign` blocks), requiring
+  semantic reconciliation rather than blind restoration.
+  Existing confirmed limitation, unchanged here: assignment from an array of const elements
+  `copyReadonly(dest: Storage[2]&, source: const Storage[2]&) { dest = source; }`
+  is rejected with `00C0E` "element type mismatch" (`const Storage[2]&` to
+  `Storage[2]`). Readonly-array compatibility remains outside this fix.
 
 - [ ] **A variable declared `const` with a drain type is typed as a reference.**
   In `type_reference_resolver::visit_symbol_expression`

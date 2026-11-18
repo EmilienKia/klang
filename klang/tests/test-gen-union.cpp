@@ -133,6 +133,40 @@ TEST_CASE("Union payload copies enforce checked constructor exceptions",
     )K"), k::log::compiler_error, uncaught);
 }
 
+TEST_CASE("Union array assignment enforces the element copy exception contract only for cleanup-needing unions",
+          "[gen][union][array][assign][copy][exceptions][contract][regression]") {
+    const std::string declarations = R"K(
+        module union_array_checked_copy;
+        class CopyError : public Exception {}
+        struct Payload {
+            Payload() {}
+            Payload(other: const Payload&) throws(CopyError) {}
+            ~Payload() {}
+        }
+        union Storage { empty: byte; value: Payload; }
+    )K";
+    auto compile = [&](const std::string& body) {
+        auto compiler = k::compiler::create();
+        auto resolver = std::make_shared<k::path_lookup_file_resolver>();
+        resolver->add_search_dir(KLANG_STDLIB_LIB_DIR);
+        compiler->set_file_resolver(resolver);
+        compiler->parse_source("union_array_checked_copy.k", declarations + body, false, false);
+    };
+    auto uncaught = Catch::Matchers::Predicate<k::log::compiler_error>(
+        [](const auto& error) {
+            return error.get_diagnostic().message.find("neither caught nor declared") != std::string::npos;
+        }, "rejects an unhandled array element copy exception");
+    // Raw struct/int element arrays keep their untouched bit-copy path and add no diagnostic.
+    REQUIRE_NOTHROW(compile(R"K(
+        copy() throws(CopyError) { a: Storage[2]; b: Storage[2]; a = b; }
+        rawStructs() throws() { a: Payload[2]; b: Payload[2]; a = b; }
+        rawInts() throws() { a: int[2]; b: int[3]; a = b; }
+    )K"));
+    REQUIRE_THROWS_MATCHES(compile(R"K(
+        copy() throws() { a: Storage[2]; b: Storage[2]; a = b; }
+    )K"), k::log::compiler_error, uncaught);
+}
+
 TEST_CASE("Union copies respect const alternatives and unconstructed first payloads",
           "[gen][union][copy][const][lifecycle][regression]") {
     auto jit = gen_jit(R"K(
@@ -3972,14 +4006,169 @@ TEST_CASE("Escaped first class owner in a local union array is released once",
             if (!caught) return -3;
             return constructs == 0 && parentDrops == 0 && resourceDrops == 1 ? 42 : -4;
         }
+        assigned(): int {
+            constructs = 0; parentDrops = 0; resourceDrops = 0;
+            {
+                a: Storage[2];
+                b: Storage[2];
+                install(borrow(a[0]));
+                a = b;
+                if (constructs != 0 || parentDrops != 0 || resourceDrops != 1) return -5;
+            }
+            return constructs == 0 && parentDrops == 0 && resourceDrops == 1 ? 42 : -6;
+        }
+        selfAssigned(): int {
+            constructs = 0; parentDrops = 0; resourceDrops = 0;
+            {
+                a: Storage[2];
+                install(borrow(a[0]));
+                a = a;
+                if (constructs != 0 || parentDrops != 0 || resourceDrops != 0) return -7;
+            }
+            return constructs == 0 && parentDrops == 0 && resourceDrops == 1 ? 42 : -8;
+        }
+        partial(): int {
+            constructs = 0; parentDrops = 0; resourceDrops = 0;
+            {
+                a: Storage[3];
+                b: Storage[2];
+                install(borrow(a[0]));
+                install(borrow(a[2]));
+                a = b;
+                if (constructs != 0 || parentDrops != 0 || resourceDrops != 1) return -9;
+            }
+            return constructs == 0 && parentDrops == 0 && resourceDrops == 2 ? 42 : -10;
+        }
+        nonowningAlternative(): int {
+            constructs = 0; parentDrops = 0; resourceDrops = 0;
+            {
+                a: Storage[2];
+                b: Storage[2];
+                install(borrow(a[0]));
+                a[1].number = 5;
+                b[1].number = 9;
+                a = b;
+                if (resourceDrops != 1 || a[1].index() != Storage::Kind::number || a[1].number != 9)
+                    return -11;
+            }
+            return constructs == 0 && parentDrops == 0 && resourceDrops == 1 ? 42 : -12;
+        }
     )K");
     REQUIRE(jit);
     auto normal = jit->lookup_symbol<int (*)()>("normal");
     auto unwinding = jit->lookup_symbol<int (*)()>("unwinding");
+    auto assigned = jit->lookup_symbol<int (*)()>("assigned");
+    auto selfAssigned = jit->lookup_symbol<int (*)()>("selfAssigned");
+    auto partial = jit->lookup_symbol<int (*)()>("partial");
+    auto nonowningAlternative = jit->lookup_symbol<int (*)()>("nonowningAlternative");
     REQUIRE(normal);
     REQUIRE(unwinding);
+    REQUIRE(assigned);
+    REQUIRE(selfAssigned);
+    REQUIRE(partial);
+    REQUIRE(nonowningAlternative);
     CHECK(normal() == 42);
     CHECK(unwinding() == 42);
+    CHECK(assigned() == 42);
+    CHECK(selfAssigned() == 42);
+    CHECK(partial() == 42);
+    CHECK(nonowningAlternative() == 42);
+}
+
+TEST_CASE("Union array assignment disarms a throwing element copy and keeps the rest intact",
+          "[gen][union][array][assign][copy][exceptions][lifecycle][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_array_assign_throwing_copy;
+        fail: bool = false;
+        copies: int = 0;
+        drops: int = 0;
+        droppedIds: int = 0;
+        class Value {
+        public:
+            id: int;
+            Value() { id = 0; }
+            Value(other: Value&) {
+                if (fail && other.id == 99) throw FatalError(928);
+                id = other.id;
+                ++copies;
+            }
+            Value(other: const Value&) {
+                if (fail && other.id == 99) throw FatalError(927);
+                id = other.id;
+                ++copies;
+            }
+            ~Value() { ++drops; droppedIds += id; }
+        }
+        union Storage { value: Value; number: int; }
+        assign(dest: Storage[3]&, source: Storage[3]&) { dest = source; }
+        test(): int {
+            fail = false; copies = 0; drops = 0; droppedIds = 0;
+            code: int = 0;
+            {
+                source: Value;
+                a: Storage[3];
+                b: Storage[3];
+                source.id = 10; a[0] = Storage(source);
+                source.id = 20; a[1] = Storage(source);
+                source.id = 30; a[2] = Storage(source);
+                source.id = 1;  b[0] = Storage(source);
+                source.id = 99; b[1] = Storage(source);
+                source.id = 3;  b[2] = Storage(source);
+                copies = 0; drops = 0; droppedIds = 0;
+                fail = true;
+                try { assign(a, b); }
+                catch (error: FatalError&) { code = error.getCode(); }
+                fail = false;
+                if (code != 928) return -1;
+                // a[0] released once and replaced; a[1] released then disarmed; a[2] untouched.
+                if (copies != 1 || drops != 2 || droppedIds != 30) return -2;
+                if (a[0].value.id != 1 || a[2].value.id != 30) return -3;
+                if (b[0].value.id != 1 || b[1].value.id != 99 || b[2].value.id != 3) return -4;
+            }
+            // Scope exit: a[0], a[2], b[0..2] and source (id 3); the disarmed a[1] is not destroyed.
+            return drops == 8 && droppedIds == 167 ? 42 : -5;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
+}
+
+TEST_CASE("Union array assignment rejects a noncopyable active element and disarms the destination",
+          "[gen][union][array][assign][copy][private][exceptions][regression]") {
+    auto jit = gen_jit(R"K(
+        module union_array_assign_noncopyable;
+        drops: int = 0;
+        class Key {
+        private:
+            Key(other: const Key&) -> delete;
+        public:
+            Key() {}
+            ~Key() { ++drops; }
+        }
+        union Storage { number: int; key: Key; }
+        test(): int {
+            drops = 0;
+            {
+                a: Storage[2];
+                b: Storage[2];
+                a[0].number = 7;
+                b[0] = Storage(Key());
+                caught: bool = false;
+                try { a = b; }
+                catch (error: FatalError&) { caught = error.getCode() == 0x55434f50; }
+                if (!caught || drops != 0) return -1;
+                a[0].number = 5;
+                a[1].number = 19;
+            }
+            return drops == 1 ? 42 : -2;
+        }
+    )K");
+    REQUIRE(jit);
+    auto fn = jit->lookup_symbol<int (*)()>("test");
+    REQUIRE(fn);
+    CHECK(fn() == 42);
 }
 
 TEST_CASE("Escaped default first struct with nested owner unions is released once as an aggregate member",

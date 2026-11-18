@@ -348,7 +348,7 @@ Use this mapping to choose the smallest relevant executable first:
 | `klang-tests-gen-arithmetic-float` | float/double/bool/incr-decr arithmetic; CTest shards 0–1 |
 | `klang-tests-gen-operators` | operator overload/comparison/spaceship/assign |
 | `klang-tests-gen-casts` | scalar casts and indirection casts; CTest shards 0–1 |
-| `klang-tests-gen-types-enums-unions` | enums, typed enums, and union hierarchies; CTest shards 0–4 |
+| `klang-tests-gen-types-enums-unions` | enums, typed enums, and union hierarchies; CTest shards 0–7 |
 | `klang-tests-gen-types-const` | const semantics (`test-gen-const.cpp`); CTest shards 0–1 |
 | `klang-tests-gen-types-null` | null semantics (`test-gen-null-semantics.cpp`) |
 | `klang-tests-gen-types-meta-designated` | annotations and designated init (`test-gen-annotation-meta.cpp`, `test-gen-designated-init.cpp`); CTest shards 0–1 |
@@ -373,7 +373,10 @@ Grouping policy:
 - keep per-executable runtime under timeout budget,
 - register new/redistributed files with `klang_gen_test(<target> 120 ...)`.
 - `SHARD_COUNT 5` follows the same scheme with shards `0` to `4`
-  (`gen-types-enums-unions`, `gen-templates-deduction`, `gen-virtuality`, `gen-arrays`).
+  (`gen-templates-deduction`, `gen-virtuality`, `gen-arrays`).
+- `SHARD_COUNT 8` keeps the enum/union suite's executable and source selection
+  unchanged, registering shards `0` to `7` with the same lexical order, RNG seed
+  and 120-second timeout.
 - `SHARD_COUNT 16` registers shards `0` to `15` (`import-core`) with the same
   executable, sources, lexical order, RNG seed and 120-second timeout.
 - `SHARD_COUNT 3` keeps heavy-suite executable names and build dependencies

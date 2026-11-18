@@ -32,6 +32,35 @@
 
 namespace k::model::gen {
 
+namespace {
+
+std::shared_ptr<union_type_def> array_assignment_union_element(const std::shared_ptr<type>& element) {
+    auto st = std::dynamic_pointer_cast<struct_type>(
+        type::canonical(type::remove_const(type::canonical(element))));
+    auto un = st ? st->get_union() : nullptr;
+    return un && value_type_needs_cleanup(element) && !value_type_is_move_only(element) ? un : nullptr;
+}
+
+std::shared_ptr<sized_array_type> array_assignment_source_array(const std::shared_ptr<type>& source_type) {
+    auto inner = type::is_reference(source_type) || type::is_drain(source_type)
+        ? source_type->get_subtype() : source_type;
+    auto array = std::dynamic_pointer_cast<sized_array_type>(type::canonical(inner));
+    if (!array) {
+        array = std::dynamic_pointer_cast<sized_array_type>(
+            type::canonical(type::remove_const(type::canonical(inner))));
+    }
+    return array;
+}
+
+bool array_assignment_source_const(const std::shared_ptr<type>& source_type,
+                                   const std::shared_ptr<sized_array_type>& source_array) {
+    auto inner = type::is_reference(source_type) || type::is_drain(source_type)
+        ? source_type->get_subtype() : source_type;
+    return type::is_const(inner) || type::is_const(source_array->get_subtype());
+}
+
+} // namespace
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Value semantics for aggregates (IN-PROGRESS.md, phases F1/F3/F4)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1067,6 +1096,10 @@ void type_reference_resolver::visit_assignation_expression(assignation_expressio
                 && type::is_const(source_type->get_subtype());
             check_union_payload_copy_contract(dest_arr, source_const, expr.first_lexeme());
         }
+        if (array_assignment_union_element(dest_arr->get_subtype())) {
+            check_union_payload_copy_contract(dest_arr->get_subtype(),
+                array_assignment_source_const(source_type, src_arr), expr.first_lexeme());
+        }
         // Type of the assignment expression is ref<dest array>
         expr.set_type(ref_target_type);
         // Ensure the source is referenced (if it isn't already)
@@ -1937,15 +1970,29 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
         llvm::Value* copy_n = _builder->CreateSelect(
             _builder->CreateICmpULT(src_n, dest_n_val), src_n, dest_n_val, "copy_n");
 
+        auto element_union = array_assignment_union_element(dest_arr->get_subtype());
+        bool source_const = false;
+        if (element_union) {
+            auto source_array = array_assignment_source_array(expr.right()->get_type());
+            if (!source_array) {
+                throw_error(static_cast<unsigned int>(k::diag::codegen_diag::INTERNAL_ERR_F035),
+                    expr.first_lexeme(), "Internal error: array assignment source is not a sized array");
+            }
+            source_const = array_assignment_source_const(expr.right()->get_type(), source_array);
+        }
+
         // Emit copy loop
         auto* fn = _builder->GetInsertBlock()->getParent();
         auto* pre_bb   = _builder->GetInsertBlock();
         auto* loop_bb  = llvm::BasicBlock::Create(_builder->getContext(), "arr_asgn_loop", fn);
         auto* done_bb  = llvm::BasicBlock::Create(_builder->getContext(), "arr_asgn_done", fn);
 
-        _builder->CreateCondBr(
-            _builder->CreateICmpUGT(copy_n, llvm::ConstantInt::get(i32_t, 0, false)),
-            loop_bb, done_bb);
+        llvm::Value* enter_loop = _builder->CreateICmpUGT(
+            copy_n, llvm::ConstantInt::get(i32_t, 0, false));
+        if (element_union) {
+            enter_loop = _builder->CreateAnd(enter_loop, _builder->CreateICmpNE(left, right));
+        }
+        _builder->CreateCondBr(enter_loop, loop_bb, done_bb);
 
         _builder->SetInsertPoint(loop_bb);
         auto* idx = _builder->CreatePHI(i32_t, 2, "asgn_idx");
@@ -1955,10 +2002,16 @@ void implementation_generator::visit_simple_assignation_expression(simple_assign
             {_builder->getInt32(0), idx}, "s_elem");
         llvm::Value* d = _builder->CreateGEP(data_arr_llvm, dest_data,
             {_builder->getInt32(0), idx}, "d_elem");
-        _builder->CreateStore(_builder->CreateLoad(elem_llvm, s, "ev"), d);
+        if (element_union) {
+            emit_union_copy(d, s, *element_union, *element_union, true, source_const);
+        } else {
+            _builder->CreateStore(_builder->CreateLoad(elem_llvm, s, "ev"), d);
+        }
 
+        // Union copying can append blocks, so the back edge must use its actual latch.
+        auto* latch_bb = _builder->GetInsertBlock();
         auto* nxt = _builder->CreateAdd(idx, llvm::ConstantInt::get(i32_t, 1), "nxt");
-        idx->addIncoming(nxt, loop_bb);
+        idx->addIncoming(nxt, latch_bb);
         _builder->CreateCondBr(_builder->CreateICmpULT(nxt, copy_n), loop_bb, done_bb);
 
         _builder->SetInsertPoint(done_bb);

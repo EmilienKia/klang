@@ -871,6 +871,19 @@ never changes its size.
 > or default-construct the tail elements of the destination.  Only the copied range is
 > modified.
 
+For union elements that require cleanup and are not statically move-only, assignment
+must follow the whole-union copy rules. Each replaced alternative must be released
+before copying, including an escaped default first alternative. An unconstructed source
+must not cause an invented constructor or whole-object destructor call. The selected
+copy constructor's access and exception rules apply as for scalar union assignment:
+a deleted, inaccessible or missing selected constructor raises an unwinding `FatalError`.
+If copying throws, the failing element is left unconstructed; the completed prefix
+remains assigned and subsequent elements retain their previous values. The source is
+not consumed, and self-assignment must have no effect.
+
+Lifecycle-aware assignment for other resource-bearing element kinds remains a known
+limitation tracked in `TODO.md`.
+
 ```k
 a : int[3];
 a[0] = 1; a[1] = 2; a[2] = 3;

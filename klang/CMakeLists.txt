@@ -369,7 +369,7 @@ klang_gen_test(klang-tests-gen-casts 120 SHARD_COUNT 2
 # Split into enums/unions, const, null and metadata/designated-init executables.
 # Catch2 shards keep the enum/union suite below the 120-second CTest budget.
 # ---------------------------------------------------------------------------
-klang_gen_test(klang-tests-gen-types-enums-unions 120 SHARD_COUNT 5
+klang_gen_test(klang-tests-gen-types-enums-unions 120 SHARD_COUNT 8
         tests/test-gen-enum.cpp
         tests/test-gen-union.cpp
         tests/test-gen-union-template.cpp
